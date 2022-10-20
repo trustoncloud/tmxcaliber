@@ -1,19 +1,33 @@
+import sys
 import json
-from argparse import ArgumentParser
+import pkg_resources
 from argparse import Namespace
+from argparse import ArgumentParser, RawTextHelpFormatter
+
+
+def _get_version():
+    module_name = vars(sys.modules[__name__])['__package__']
+    return f'%(prog)s {pkg_resources.require(module_name)[0].version}'
 
 
 def get_params():
-    parser = ArgumentParser()
-    parser.add_argument("source", type=str, help="path to threat model JSON file.")
+    parser = ArgumentParser(formatter_class=RawTextHelpFormatter)
 
     parser.add_argument(
+        "source", type=str,
+        help="path to threat model JSON file."
+    )
+    parser.add_argument(
+        '-v', '--version', action='version', version=_get_version(),
+        help='show the installed version.\n\n'
+    )
+    parser.add_argument(
         "--severity", type=str, choices=["high", "medium", "low"],
-        help="filter data by threat severity."
+        help="filter data by threat severity.\n\n"
     )
     parser.add_argument(
         "--perms", nargs="*",
-        help="filter data by threat IAM permission(s)."
+        help="filter data by threat IAM permission(s).\n\n"
     )
     parser.add_argument(
         "--events", nargs="*",
@@ -77,7 +91,7 @@ def filter_down(args: Namespace, data: dict, display=False) -> dict:
     return threats
 
 
-if __name__ == "__main__":
+def main():
     params = get_params()
     try:
         data = json.load(open(params.source))
