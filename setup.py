@@ -10,7 +10,7 @@ def get_license():
 
 setup(
     name='xcaliber',
-    version='0.0.1',
+    version='0.0.2',
     description=(
         'CLI utility to filter down threat model and '
         'get more refined information.'

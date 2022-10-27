@@ -58,7 +58,7 @@ To get complete help on `xcaliber` command, run the following.
 ```sh
 $: xcaliber -h
 
-usage: xcaliber [-h] [-v] [--severity {high,medium,low}] [--perms [PERMS ...]] [--events [EVENTS ...]] source
+usage: xcaliber [-h] [-v] [--severity {high,medium,low}] [--perms [PERMS ...]] [--feature-class [FEATURE_CLASS ...]] [--events [EVENTS ...]] source
 
 positional arguments:
   source                path to threat model JSON file.
@@ -71,6 +71,9 @@ optional arguments:
                         filter data by threat severity.
 
   --perms [PERMS ...]   filter data by threat IAM permission(s).
+
+  --feature-class [FEATURE_CLASS ...]
+                        filter data by threat feature class.
 
   --events [EVENTS ...]
                         filter data by actions log events.
