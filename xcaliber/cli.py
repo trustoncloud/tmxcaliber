@@ -14,40 +14,59 @@ def get_params():
     parser = ArgumentParser(formatter_class=RawTextHelpFormatter)
 
     parser.add_argument(
+        "operation", type=str, choices=["filter", "map"],
+        help="Operation to apply on the ThreatModel JSON file."
+    )
+    parser.add_argument(
         "source", type=str,
-        help="path to threat model JSON file."
+        help="Path to ThreatModel JSON file."
     )
     parser.add_argument(
         '-v', '--version', action='version', version=_get_version(),
-        help='show the installed version.\n\n'
+        help='Show the installed version.\n\n'
     )
-    parser.add_argument(
-        "--severity", type=str, choices=["high", "medium", "low"],
-        help="filter data by threat severity.\n\n"
-    )
-    parser.add_argument(
-        "--perms", nargs="*",
-        help="filter data by threat IAM permission(s).\n\n"
-    )
-    parser.add_argument(
-        "--feature-class", nargs="*",
-        help="filter data by threat feature class.\n\n"
-    )
-    parser.add_argument(
-        "--events", nargs="*",
-        help="filter data by actions log events."
-    )
+    if parser.parse_known_args()[0].operation == "filter":
+        parser.add_argument(
+            "--severity", type=str, choices=["very high", "high", "medium", "low", "very low"],
+            help="Filter data by threat severity.\n\n"
+        )
+        parser.add_argument(
+            "--perms", nargs="*",
+            help="Filter data by threat IAM permission(s).\n\n"
+        )
+        parser.add_argument(
+            "--feature-class", nargs="*",
+            help="Filter data by threat feature class.\n\n"
+        )
+        parser.add_argument(
+            "--events", nargs="*",
+            help="Filter data by actions log events."
+        )
+    if parser.parse_known_args()[0].operation == "map":
+        parser.add_argument(
+            "--scf", type=str, required=True,
+            help="Path to the Secure Controls Framework OSCAL JSON data. Available at https://github.com/securecontrolsframework/scf-oscal-catalog-model/tree/main/SCF-OSCAL%20Releases\n\n"
+        )
+        parser.add_argument(
+            "--framework", type=str, required=True,
+            help="Framework to map to. It must be the exact name present in the SCF.\n\n"
+        )
+        parser.add_argument(
+            "--format", type=str, required=True, choices=["json", "csv"],
+            help="Format to output."
+        )
 
     return validate(parser.parse_args())
 
-
 def validate(args: Namespace):
-    args.severity = args.severity.lower() if args.severity else ""
-    args.events = [x.lower() for x in args.events or []]
-    args.perms = [x.lower() for x in args.perms or []]
-    args.feature_class = [x.lower() for x in args.feature_class or []]
+    if args.operation == 'filter':
+        args.severity = args.severity.lower() if args.severity else ""
+        args.events = [x.lower() for x in args.events or []]
+        args.perms = [x.lower() for x in args.perms or []]
+        args.feature_class = [x.lower() for x in args.feature_class or []]
+    if args.operation == 'map':
+        args.framework = args.framework.replace('\\n','\n')
     return args
-
 
 def get_permissions(access: dict) -> list:
     permissions = []
@@ -122,6 +141,30 @@ def get_actions(data: dict, feature_classes: dict) -> dict:
                 break
     return actions
 
+def get_classified_cvssed_control_ids_by_co(control_id_by_cvss_severity, control_obj_id, control_data):
+    severity_range = ('Very High', 'High', 'Medium', 'Low', 'Very Low')
+    control_id_list = {}
+
+    for i, severity in enumerate(severity_range):
+        if control_id_by_cvss_severity:
+            control_id_list[severity] = control_id_by_cvss_severity[severity]
+        else:
+            control_id_list[severity] = []
+        for control in control_data:
+            if control_data[control]['objective'] != control_obj_id:
+                continue
+            if control_data[control]['weighted_priority'] != severity:
+                continue
+            add_control = True
+            if control in control_id_list[severity]:
+                add_control = False
+            if i > 0:
+                for severity_prev in severity_range[0:i]:
+                    if control in control_id_list[severity_prev]:
+                        add_control = False 
+            if add_control:
+                control_id_list[severity].append(control)    
+    return control_id_list
 
 def filter_down(args: Namespace, data: dict) -> dict:
     threats: dict = data.get("threats")
@@ -156,15 +199,80 @@ def filter_down(args: Namespace, data: dict) -> dict:
         "actions": actions
     }
 
+def map(args: Namespace, data: dict) -> dict:
+    controls: dict = data.get("controls")
+    objectives: dict = data.get("control_objectives")
+    scf_data: list = json.load(open(args.scf))
+    framework: str = args.framework
+    framework2scf: dict = {}
+    for scf_line in scf_data:
+        scf_id = scf_line['SCF #']
+        if not framework in scf_line or not scf_line[framework]:
+            continue
+        for framework_id in scf_line[framework]:
+            try:
+                framework2scf[framework_id].append(scf_id)
+            except KeyError:
+                framework2scf[framework_id] = []
+                framework2scf[framework_id].append(scf_id)
+    scf2co: dict = {}
+    for objective in objectives:
+        scf_mapping = objectives[objective]['scf'].split(',')
+        for scf_id in scf_mapping:
+            try:
+                scf2co[scf_id].append(objective)
+            except KeyError:
+                scf2co[scf_id] = []
+                scf2co[scf_id].append(objective)
+    framework2co: dict = {}
+    for control_framework in framework2scf:
+        for scf_id in framework2scf[control_framework]:
+            if scf_id not in scf2co:
+                continue
+            try:
+                framework2co[control_framework]['control_objectives'].extend(scf2co[scf_id])
+            except KeyError:
+                framework2co[control_framework] = {}
+                framework2co[control_framework]['control_objectives'] = scf2co[scf_id]
+    framework2co = dict(sorted(framework2co.items()))
+
+    for control_framework in framework2co:
+        control_id_by_cvss_severity = []
+        for co_id in framework2co[control_framework]['control_objectives']:
+            control_id_by_cvss_severity = get_classified_cvssed_control_ids_by_co(control_id_by_cvss_severity, co_id, controls)
+        framework2co[control_framework]['controls'] = control_id_by_cvss_severity
+    return framework2co
 
 def main():
     params = get_params()
     try:
         data = json.load(open(params.source))
-        print(json.dumps(filter_down(params, data), indent=2))
+        if params.operation == 'filter':
+            print(json.dumps(filter_down(params, data), indent=2))
+        if params.operation == 'map':
+            map_json = map(params, data)
+            if params.format == 'json':
+                print(json.dumps(map_json, indent=2))
+            if params.format == 'csv':
+                csv_line = []
+                csv_line.append('Framework,"Control Objectives","Control - Very High","Control - High","Control - Medium","Control - Low","Control - Very Low"')
+                for framework_id in map_json:
+                    co: str = ",".join(map_json[framework_id]["control_objectives"])
+                    c_vh: str = ",".join(map_json[framework_id]["controls"]["Very High"])
+                    c_h: str = ",".join(map_json[framework_id]["controls"]["High"])
+                    c_m: str = ",".join(map_json[framework_id]["controls"]["Medium"])
+                    c_l: str = ",".join(map_json[framework_id]["controls"]["Low"])
+                    c_vl: str = ",".join(map_json[framework_id]["controls"]["Very Low"])
+                    csv_line.append(f'{framework_id},"{co}","{c_vh}","{c_h}","{c_m}","{c_l}","{c_vl}"')
+                output_file = f'output_{params.source.split(".")[0]}.csv'
+                with open(output_file, 'w') as csvfile:
+                    for service in csv_line[:-1]:
+                        csvfile.write(service+'\n')
+                    csvfile.write(csv_line[-1])
+                print(f'Mapping output in: {output_file}')
     except FileNotFoundError:
         print("File not found:", params.source)
         exit(1)
     except json.JSONDecodeError:
-        print("Invalid JSON data for the threat model:", params.source)
+        print("Invalid JSON data for the ThreatModel:", params.source)
         exit(1)
