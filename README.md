@@ -58,23 +58,13 @@ To get complete help on `xcaliber` command, run the following.
 ```sh
 $: xcaliber -h
 
-usage: xcaliber [-h] [-v] [--severity {high,medium,low}] [--perms [PERMS ...]] [--feature-class [FEATURE_CLASS ...]] [--events [EVENTS ...]] source
+usage: xcaliber [-h] [-v] {filter,map} source
 
 positional arguments:
-  source                path to threat model JSON file.
+  {filter,map}   Operation to apply on the ThreatModel JSON file.
+  source         Path to ThreatModel JSON file.
 
-optional arguments:
-  -h, --help            show this help message and exit
-  -v, --version         show the installed version.
-
-  --severity {high,medium,low}
-                        filter data by threat severity.
-
-  --perms [PERMS ...]   filter data by threat IAM permission(s).
-
-  --feature-class [FEATURE_CLASS ...]
-                        filter data by threat feature class.
-
-  --events [EVENTS ...]
-                        filter data by actions log events.
+options:
+  -h, --help     show this help message and exit
+  -v, --version  Show the installed version.
 ```
