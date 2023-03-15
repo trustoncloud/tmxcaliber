@@ -88,7 +88,7 @@ JSON_Data_SCF) and choose one of the supported framework. The tool will execute 
 
 **Example:**
 ```sh
-xcaliber map path/to/threatmodel.json --scf path/to/oscal --framework "ISO\n27001\nv2013" --format csv
+xcaliber map path/to/threatmodel.json --scf path/to/oscal.json --framework "ISO\n27001\nv2013" --format csv
 ```
 
 ### Map a framework not supported by the SCF
@@ -96,7 +96,7 @@ For non-supported frameworks, you must map your framework to the SCF within the 
 
 **Example:**
 ```sh
-xcaliber map path/to/threatmodel.json --scf path/to/oscal --framework "My Framework" --format csv
+xcaliber map path/to/threatmodel.json --scf path/to/oscal.json --framework "My Framework" --format csv
 ```
 
 ## Contributing
