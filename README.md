@@ -68,3 +68,37 @@ options:
   -h, --help     show this help message and exit
   -v, --version  Show the installed version.
 ```
+
+## Usage
+
+### Filter
+
+The `filter` operation allows you to filter relevant information from a ThreatModel JSON based on various criteria, such as future class, threat severity, or IAM permission.
+
+**Example:**
+
+```sh
+xcaliber filter path/to/threatmodel.json --severity high
+```
+
+### Map
+
+The `map` operation allows you to map a ThreatModel control objectives to various frameworks/standards/regulations from the Secure Control Framework (SCF). In order to map, you need to download the OSCAL version of the SCF ([here](https://github.com/securecontrolsframework/scf-oscal-catalog-model/tree/main/SCF-OSCAL%20Releases), starting with 
+JSON_Data_SCF) and choose one of the supported framework. The tool will execute and map every known control objective to SCF-supported frameworks.
+
+**Example:**
+```sh
+xcaliber map path/to/threatmodel.json --scf path/to/oscal --framework "ISO\n27001\nv2013" --format csv
+```
+
+### Map a framework not supported by the SCF
+For non-supported frameworks, you must map your framework to the SCF within the OSCAL JSON. Once the mapping is done, you will be able to generate your mapping.
+
+**Example:**
+```sh
+xcaliber map path/to/threatmodel.json --scf path/to/oscal --framework "My Framework" --format csv
+```
+
+## Contributing
+
+If you'd like to contribute to the development of TMXcaliber, please submit a pull request or open an issue on the project's GitHub repository.
