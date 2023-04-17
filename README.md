@@ -1,4 +1,4 @@
-# xcaliber
+# tmxcaliber
 
 This package is intended for `python3` and has been tested in `python3.8+`.
 
