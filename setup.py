@@ -1,4 +1,5 @@
 from setuptools import setup, find_packages
+from tmxcaliber import __version__ as tmxcaliber_version
 
 def readme():
     with open('README.md') as f:
@@ -9,8 +10,8 @@ def get_license():
         return f.read()
 
 setup(
-    name='xcaliber',
-    version='0.0.3',
+    name='tmxcaliber',
+    version=tmxcaliber_version,
     description=(
         'CLI utility to filter down a TrustOnCloud ThreatModel and '
         'get more refined information.'
@@ -25,5 +26,5 @@ setup(
         "*.tests", "*.tests.*", "tests.*", "tests"
     ]),
     license=get_license(),
-    entry_points={'console_scripts': ['xcaliber=xcaliber.cli:main']}
+    entry_points={'console_scripts': ['tmxcaliber=tmxcaliber.cli:main']}
 )

@@ -19,8 +19,8 @@ pip install git+ssh://git@github.com/trustoncloud/tmxcaliber.git
 
 Alternatively, you can pull the repo first and then install:
 ```sh
-git clone https://github.com/trustoncloud/tmxcaliber.git xcaliber
-cd xcaliber
+git clone https://github.com/trustoncloud/tmxcaliber.git
+cd tmxcaliber
 pip install .
 ```
 
@@ -32,8 +32,8 @@ python -m venv .venv
 ```
 Then, clone the git repository and install using `pip`.
 ```sh
-git clone https://github.com/trustoncloud/tmxcaliber.git xcaliber
-cd xcaliber
+git clone https://github.com/trustoncloud/tmxcaliber.git
+cd tmxcaliber
 pip install .
 ```
 
@@ -46,19 +46,19 @@ pip install git+ssh://git@github.com/trustoncloud/tmxcaliber.git@{VERSION_TAG}
 
 Alternatively, you can switch to a specific release after cloning the repository, and then install via `pip` as follows.
 ```sh
-git clone https://github.com/trustoncloud/tmxcaliber.git xcaliber
-cd xcaliber
+git clone https://github.com/trustoncloud/tmxcaliber.git tmxcaliber
+cd tmxcaliber
 git checkout tags/{VERSION_TAG}
 pip install .
 ```
 **`VERSION_TAG`** is the git tag associated with the release.
 
 ### Help Documentation
-To get complete help on `xcaliber` command, run the following.
+To get complete help on `tmxcaliber` command, run the following.
 ```sh
-$: xcaliber -h
+$: tmxcaliber -h
 
-usage: xcaliber [-h] [-v] {filter,map} source
+usage: tmxcaliber [-h] [-v] {filter,map} source
 
 positional arguments:
   {filter,map}   Operation to apply on the ThreatModel JSON file.
@@ -78,7 +78,7 @@ The `filter` operation allows you to filter relevant information from a ThreatMo
 **Example:**
 
 ```sh
-xcaliber filter path/to/threatmodel.json --severity high
+tmxcaliber filter path/to/threatmodel.json --severity high
 ```
 
 ### Map
@@ -88,7 +88,7 @@ JSON_Data_SCF) and choose one of the supported framework. The tool will execute 
 
 **Example:**
 ```sh
-xcaliber map path/to/threatmodel.json --scf path/to/oscal.json --framework "ISO\n27001\nv2013" --format csv
+tmxcaliber map path/to/threatmodel.json --scf path/to/oscal.json --framework "ISO\n27001\nv2013" --format csv
 ```
 
 ### Map a framework not supported by the SCF
@@ -96,7 +96,15 @@ For non-supported frameworks, you must map your framework to the SCF within the 
 
 **Example:**
 ```sh
-xcaliber map path/to/threatmodel.json --scf path/to/oscal.json --framework "My Framework" --format csv
+tmxcaliber map path/to/threatmodel.json --scf path/to/oscal.json --framework "My Framework" --format csv
+```
+
+### Scan control description based on pattern
+You can scan the description of all the controls for a given pattern. We added the currently known Amazon GuardDuty findings pattern for ease of use.
+
+**Example:**
+```sh
+tmxcaliber scan path/to/threatmodel.json --pattern regex_pattern|guardduty_findings
 ```
 
 ## Contributing
