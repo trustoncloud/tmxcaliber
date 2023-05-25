@@ -1,9 +1,19 @@
 import re
+import os
 import sys
 import json
+import shutil
 import pkg_resources
+from base64 import b64decode
 from argparse import Namespace
-from argparse import ArgumentParser, ArgumentTypeError, RawTextHelpFormatter
+from argparse import ArgumentParser
+from argparse import ArgumentTypeError
+from argparse import RawTextHelpFormatter
+
+from .opacity import CURR_DIR
+from .opacity import generate_xml
+from .opacity import generate_pngs
+
 
 GUARDDUTY_FINDINGS = "(" + "|".join([
     "Trojan",
@@ -26,6 +36,14 @@ GUARDDUTY_FINDINGS = "(" + "|".join([
 ]) + ")" + ":\w+\/[\w!.-]+"
 IDS_INPUT_SEPARATOR = ";"
 IDS_FORMAT_REGEX = r"^\w+\.(fc|t|c|co)\d+$"
+
+
+class Operation:
+    filter = "filter"
+    map = "map"
+    scan = "scan"
+    generate = "generate"
+
 
 def _get_version():
     module_name = vars(sys.modules[__name__])["__package__"]
@@ -67,11 +85,12 @@ def get_params():
         help="show the installed version.\n\n"
     )
 
-    subparsers = parser.add_subparsers(title="operation", required=True)
-
+    subparsers = parser.add_subparsers(
+        title="operation", dest="operation", required=True
+    )
     # subparser for filter operation.
     filter_parser = subparsers.add_parser(
-        "filter", help="filter down the threat model data.",
+        Operation.filter, help="filter down the threat model data.",
         formatter_class=RawTextHelpFormatter
     )
     filter_parser.add_argument(
@@ -106,7 +125,7 @@ def get_params():
 
     # subparser for map operation.
     map_parser = subparsers.add_parser(
-        "map", help="map threat model data to OSCAL framework.",
+        Operation.map, help="map threat model data to OSCAL framework.",
         formatter_class=RawTextHelpFormatter
     )
     map_parser.add_argument(
@@ -129,7 +148,7 @@ def get_params():
 
     # subparser for scan operation.
     scan_parser = subparsers.add_parser(
-        "scan", help="scan threat model data against patterns.",
+        Operation.scan, help="scan threat model data against patterns.",
         formatter_class=RawTextHelpFormatter
     )
     scan_parser.add_argument(
@@ -137,11 +156,37 @@ def get_params():
         help="regex pattern to find in control descriptions.\n\n"
     )
 
-    add_common_arguments(filter_parser, map_parser, scan_parser)
+    gen_parser = subparsers.add_parser(
+        Operation.generate, help="generate threat specific PNGs from XML data.",
+        formatter_class=RawTextHelpFormatter
+    )
+    gen_parser.add_argument(
+        "--threat-dir",
+        default=CURR_DIR,
+        help="directory to output threat files to (default ./)"
+    )
+    gen_parser.add_argument(
+        "--fc-dir",
+        default=CURR_DIR,
+        help="directory to output feature class files to (default ./)"
+    )
+    gen_parser.add_argument(
+        "--validate",
+        default=False,
+        action="store_true",
+        help="flag indicating whether to do validation or not."
+    )
+    gen_parser.add_argument(
+        "--out-dir",
+        default=os.path.join(CURR_DIR, "img"),
+        help="directory to output PNG files."
+    )
+
+    add_common_arguments(filter_parser, map_parser, scan_parser, gen_parser)
     return validate(parser.parse_args())
 
 def validate(args: Namespace) -> Namespace:
-    if args.operation == "filter":
+    if args.operation == Operation.filter:
         args.severity = args.severity.lower() if args.severity else ""
         args.events = [x.lower() for x in args.events or []]
         args.perms = [x.lower() for x in args.perms or []]
@@ -150,7 +195,7 @@ def validate(args: Namespace) -> Namespace:
             x.lower() for x in (args.ids and args.ids[0] or "")
                 .split(IDS_INPUT_SEPARATOR) if x
         ]
-    if args.operation == "map":
+    if args.operation == Operation.map:
         args.framework = args.framework.replace("\\n","\n")
     return args
 
@@ -379,10 +424,10 @@ def main():
         print("Invalid JSON data for the ThreatModel:", params.source)
         exit(1)
 
-    if params.operation == "filter":
+    if params.operation == Operation.filter:
         print(json.dumps(filter_down(params, data), indent=2))
 
-    if params.operation == "map":
+    elif params.operation == Operation.map:
         map_json = map(params, data)
         if params.format == "json":
             print(json.dumps(map_json, indent=2))
@@ -428,5 +473,32 @@ def main():
                 csvfile.write(csv_line[-1])
             print(f"Mapping output in: {output_file}")
 
-    if params.operation == "scan": 
+    elif params.operation == Operation.scan:
         print(json.dumps(scan_controls(params, data), indent=2))
+
+    elif params.operation == Operation.generate:
+        provider = data.get("metadata", dict()).get("provider")
+        service = data.get("metadata", dict()).get("service")
+        if not (provider and service):
+            print("Could not get `provider` or `service` from `metadata`.")
+            exit(1)
+
+        prefix = f"{provider}_{service}".upper()
+        body = data.get("dfd", dict()).get("body")
+        if not body:
+            print("Could not get `body` from `dfd`.")
+            exit(1)
+
+        main_xml = b64decode(body).decode("utf8")
+        generate_xml(
+            main_xml, prefix, params.threat_dir,
+            params.fc_dir, params.validate
+        )
+
+        main_dir = os.path.join(CURR_DIR, "main")
+        if not os.path.isdir(main_dir):
+            os.makedirs(main_dir)
+        generate_pngs(main_dir, params.out_dir, 1500)
+        generate_pngs(params.threat_dir, params.out_dir, 1200)
+        generate_pngs(params.fc_dir, params.out_dir, 1100)
+        shutil.rmtree(main_dir)

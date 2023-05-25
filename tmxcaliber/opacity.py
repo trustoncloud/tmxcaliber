@@ -1,10 +1,9 @@
-import os
 import re
-import copy
 import sys
-import base64
+import copy
 import zlib
-import argparse
+import base64
+import subprocess
 from pathlib import Path
 from urllib.parse import unquote
 from collections import defaultdict
@@ -208,7 +207,7 @@ def generate_FCx_Ty_files(
     objects/mxcells that haven't FCx_Ty values and saves new file into dest_dir
 
     :param original_soup BS4: BS4 object of original file
-    :param dest_dir Path: firectory to save the output files to
+    :param dest_dir Path: directory to save the output files to
     """
     # the new files will be generated based on these ones
     output_filename_tpl = prefix_service + '_{t_value}.xml'
@@ -281,10 +280,19 @@ def get_all_FCx_Tx_values(source_soup):
     # }
     return ret_dict
 
-def generate(data, service_prefix, threat_dirname, fc_dirname, validate=False):
+def generate_xml(data, service_prefix, threat_dir, fc_dir, validate=False):
+    """
+    generate threat and feature class focused XML files
 
-    threat_dir = Path(threat_dirname)
-    fc_dir = Path(fc_dirname)
+    :param data: XML data for DFD
+    :param service_prefix: prefix to add to generated XML filenames
+    :param threat_dir: output dirpath to store  threat focused XML files
+    :param fc_dir: output dirpath to store feature class focused XML files
+    :param validate: boolean to validate data
+    """
+
+    threat_dir = Path(threat_dir)
+    fc_dir = Path(fc_dir)
     threat_dir.mkdir(exist_ok=True)
     fc_dir.mkdir(exist_ok=True)
 
@@ -301,39 +309,17 @@ def generate(data, service_prefix, threat_dirname, fc_dirname, validate=False):
     fcx_tx_values = get_all_FCx_Tx_values(bsobj)
 
     # generate new ...FCx.xml files based on FCx values found
-    generate_FCx_files(bsobj, fcx_tx_values, fc_dirname, service_prefix)
+    generate_FCx_files(bsobj, fcx_tx_values, fc_dir, service_prefix)
 
     # generate new ...FCx_Ty.xml files based on FCx/Tx values found
-    generate_FCx_Ty_files(bsobj, fcx_tx_values, threat_dirname, service_prefix)
+    generate_FCx_Ty_files(bsobj, fcx_tx_values, threat_dir, service_prefix)
 
-def main():
-
-    parser = argparse.ArgumentParser(description='draw.io tool')
-    parser.add_argument('input_filename', help='Source XML filename')
-    parser.add_argument(
-        '--threat-dir',
-        default=CURR_DIR,
-        help='Directory to output threat files to (default ./)',
-    )
-    parser.add_argument(
-        '--fc-dir',
-        default=CURR_DIR,
-        help='Directory to output threat files to (default ./)',
-    )
-    parser.add_argument(
-        '--validate',
-        default=False,
-        action='store_true',
-        help='Flag indicating whether do validation or not',
-    )
-
-    args = parser.parse_args()
-    filename = args.input_filename
-
-    if not os.path.exists(filename):
-        sys.exit(f'{filename} does not exist. Aborting.')
-    if not os.path.isfile(filename):
-        sys.exit(f'{filename} is not a file. Aborting.')
-
-    with open(filename) as fp:
-        generate(fp.read(), str(filename)[:-4], args.threat_dir, args.fc_dir)
+def generate_pngs(input_dir, output_dir, width):
+    command = [
+        *"xvfb-run -a".split(" "),
+        *f"drawio -x --width {width} -f png".split(" "),
+        *f"-o {output_dir} {input_dir} --no-sandbox".split(" ")
+    ]
+    print("Calling:", " ".join(command))
+    result = subprocess.run(command)
+    result.check_returncode()
