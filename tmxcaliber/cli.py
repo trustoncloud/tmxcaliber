@@ -1,9 +1,19 @@
 import re
+import os
 import sys
 import json
+import shutil
 import pkg_resources
+from base64 import b64decode
 from argparse import Namespace
-from argparse import ArgumentParser, RawTextHelpFormatter
+from argparse import ArgumentParser
+from argparse import ArgumentTypeError
+from argparse import RawTextHelpFormatter
+
+from .opacity import CURR_DIR
+from .opacity import generate_xml
+from .opacity import generate_pngs
+
 
 GUARDDUTY_FINDINGS = "(" + "|".join([
     "Trojan",
@@ -27,110 +37,156 @@ GUARDDUTY_FINDINGS = "(" + "|".join([
 IDS_INPUT_SEPARATOR = ";"
 IDS_FORMAT_REGEX = r"^\w+\.(fc|t|c|co)\d+$"
 
+
+class Operation:
+    filter = "filter"
+    map = "map"
+    scan = "scan"
+    generate = "generate"
+
+
 def _get_version():
     module_name = vars(sys.modules[__name__])["__package__"]
     return f"%(prog)s {pkg_resources.require(module_name)[0].version}"
 
+def validate_id_format(input_ids: str) -> str:
+    id_prefix = None
+    for value in [
+        x.lower() for x in input_ids.split(IDS_INPUT_SEPARATOR) or []
+    ]:
+        match = re.match(IDS_FORMAT_REGEX, value)
+        if not match:
+            ArgumentTypeError(
+                f"invalid ID format: {value}. Expected format is "
+                "'somestring.(FC|T|C|CO)somenumber'"
+            )
+
+        current_prefix = match.group(1)
+        if id_prefix is None:
+            id_prefix = current_prefix
+        elif id_prefix != current_prefix:
+            ArgumentTypeError(
+                "inconsistent ID types. Please provide IDs "
+                "with the same prefix (FC|T|C|CO)"
+            )
+    return input_ids
+
+def add_common_arguments(*parsers: ArgumentParser):
+    for parser in parsers:
+        parser.add_argument(
+            "source", type=str,
+            help="path to the threat model JSON file."
+        )
+
 def get_params():
     parser = ArgumentParser(formatter_class=RawTextHelpFormatter)
-
-    parser.add_argument(
-        "operation", type=str, choices=["filter", "map", "scan"],
-        help="Operation to apply on the ThreatModel JSON file."
-    )
-    parser.add_argument(
-        "source", type=str,
-        help="Path to ThreatModel JSON file."
-    )
     parser.add_argument(
         "-v", "--version", action="version", version=_get_version(),
-        help="Show the installed version.\n\n"
+        help="show the installed version.\n\n"
     )
 
-    if parser.parse_known_args()[0].operation == "filter":
-        parser.add_argument(
-            "--severity", type=str, choices=[
-                "very high", "high", "medium", "low", "very low"
-            ], help="Filter data by threat severity.\n\n"
+    subparsers = parser.add_subparsers(
+        title="operation", dest="operation", required=True
+    )
+    # subparser for filter operation.
+    filter_parser = subparsers.add_parser(
+        Operation.filter, help="filter down the threat model data.",
+        formatter_class=RawTextHelpFormatter
+    )
+    filter_parser.add_argument(
+        "--severity", type=str, choices=[
+            "very high", "high", "medium", "low", "very low"
+        ], help="filter data by threat severity.\n\n"
+    )
+    filter_parser.add_argument(
+        "--perms", nargs="*", help=(
+            "filter data by threat IAM permission(s). "
+            "Separate by spaces, if several.\n\n"
         )
-        parser.add_argument(
-            "--perms", nargs="*", help=(
-                "Filter data by threat IAM permission(s). "
-                "Separate by spaces, if several.\n\n"
-            )
+    )
+    filter_parser.add_argument(
+        "--feature-class", nargs="*", help=(
+            "filter data by threat feature class. "
+            "Separate by spaces, if several.\n\n"
         )
-        parser.add_argument(
-            "--feature-class", nargs="*", help=(
-                "Filter data by threat feature class. "
-                "Separate by spaces, if several.\n\n"
-            )
+    )
+    filter_parser.add_argument(
+        "--events", nargs="*", help=(
+            "filter data by actions log events. "
+            "Separate by spaces, if several.\n\n"
         )
-        parser.add_argument(
-            "--events", nargs="*", help=(
-                "Filter data by actions log events. "
-                "Separate by spaces, if several.\n\n"
-            )
+    )
+    filter_parser.add_argument(
+        "--ids", nargs="*", type=validate_id_format, help=(
+            "filter data by IDs (only works for threats for now). "
+            f"Separate by `{IDS_INPUT_SEPARATOR}`, if several.\n\n"
         )
+    )
 
-        def validate_id_format(input_ids: str) -> str:
-            id_prefix = None
-            for value in [
-                x.lower() for x in input_ids
-                    .split(IDS_INPUT_SEPARATOR) or []
-            ]:
-                match = re.match(IDS_FORMAT_REGEX, value)
-                if not match:
-                    parser.error(
-                        f"Invalid ID format: {value}. Expected format is "
-                        "'somestring.(FC|T|C|CO)somenumber'"
-                    )
-
-                current_prefix = match.group(1)
-                if id_prefix is None:
-                    id_prefix = current_prefix
-                elif id_prefix != current_prefix:
-                    parser.error(
-                        "Inconsistent ID types. Please provide IDs "
-                        "with the same prefix (FC|T|C|CO)"
-                    )
-            return input_ids
-
-        parser.add_argument(
-            "--ids", nargs="*", type=validate_id_format, help=(
-                "Filter data by IDs (only works for threats for now). "
-                f"Separate by {IDS_INPUT_SEPARATOR}, if several.\n\n"
-            )
+    # subparser for map operation.
+    map_parser = subparsers.add_parser(
+        Operation.map, help="map threat model data to OSCAL framework.",
+        formatter_class=RawTextHelpFormatter
+    )
+    map_parser.add_argument(
+        "--scf", type=str, required=True, help=(
+            "path to the Secure Controls Framework OSCAL JSON data "
+            "available at\nhttps://github.com/securecontrolsframework/"
+            "scf-oscal-catalog-model/tree/main/SCF-OSCAL%%20Releases\n\n"
         )
+    )
+    map_parser.add_argument(
+        "--framework", type=str, required=True, help=(
+            "framework to map to. (must be the "
+            "exact name present in the SCF.)\n\n"
+        )
+    )
+    map_parser.add_argument(
+        "--format", type=str, required=True,
+        choices=["json", "csv"], help="format to output."
+    )
 
-    if parser.parse_known_args()[0].operation == "map":
-        parser.add_argument(
-            "--scf", type=str, required=True, help=(
-                "Path to the Secure Controls Framework OSCAL JSON data. "
-                "Available at https://github.com/securecontrolsframework/"
-                "scf-oscal-catalog-model/tree/main/SCF-OSCAL%20Releases\n\n"
-            )
-        )
-        parser.add_argument(
-            "--framework", type=str, required=True, help=(
-                "Framework to map to. It must be the "
-                "exact name present in the SCF.\n\n"
-            )
-        )
-        parser.add_argument(
-            "--format", type=str, required=True, choices=["json", "csv"],
-            help="Format to output."
-        )
+    # subparser for scan operation.
+    scan_parser = subparsers.add_parser(
+        Operation.scan, help="scan threat model data against patterns.",
+        formatter_class=RawTextHelpFormatter
+    )
+    scan_parser.add_argument(
+        "--pattern", type=str, required=True,
+        help="regex pattern to find in control descriptions.\n\n"
+    )
 
-    if parser.parse_known_args()[0].operation == "scan":
-        parser.add_argument(
-            "--pattern", type=str, required=True,
-            help="Regex pattern to find in control descriptions.\n\n"
-        )
+    gen_parser = subparsers.add_parser(
+        Operation.generate, help="generate threat specific PNGs from XML data.",
+        formatter_class=RawTextHelpFormatter
+    )
+    gen_parser.add_argument(
+        "--threat-dir",
+        default=CURR_DIR,
+        help="directory to output threat files to (default ./)"
+    )
+    gen_parser.add_argument(
+        "--fc-dir",
+        default=CURR_DIR,
+        help="directory to output feature class files to (default ./)"
+    )
+    gen_parser.add_argument(
+        "--validate",
+        default=False,
+        action="store_true",
+        help="flag indicating whether to do validation or not."
+    )
+    gen_parser.add_argument(
+        "--out-dir",
+        default=os.path.join(CURR_DIR, "img"),
+        help="directory to output PNG files."
+    )
 
+    add_common_arguments(filter_parser, map_parser, scan_parser, gen_parser)
     return validate(parser.parse_args())
 
 def validate(args: Namespace) -> Namespace:
-    if args.operation == "filter":
+    if args.operation == Operation.filter:
         args.severity = args.severity.lower() if args.severity else ""
         args.events = [x.lower() for x in args.events or []]
         args.perms = [x.lower() for x in args.perms or []]
@@ -139,7 +195,7 @@ def validate(args: Namespace) -> Namespace:
             x.lower() for x in (args.ids and args.ids[0] or "")
                 .split(IDS_INPUT_SEPARATOR) if x
         ]
-    if args.operation == "map":
+    if args.operation == Operation.map:
         args.framework = args.framework.replace("\\n","\n")
     return args
 
@@ -368,10 +424,10 @@ def main():
         print("Invalid JSON data for the ThreatModel:", params.source)
         exit(1)
 
-    if params.operation == "filter":
+    if params.operation == Operation.filter:
         print(json.dumps(filter_down(params, data), indent=2))
 
-    if params.operation == "map":
+    elif params.operation == Operation.map:
         map_json = map(params, data)
         if params.format == "json":
             print(json.dumps(map_json, indent=2))
@@ -417,5 +473,32 @@ def main():
                 csvfile.write(csv_line[-1])
             print(f"Mapping output in: {output_file}")
 
-    if params.operation == "scan": 
+    elif params.operation == Operation.scan:
         print(json.dumps(scan_controls(params, data), indent=2))
+
+    elif params.operation == Operation.generate:
+        provider = data.get("metadata", dict()).get("provider")
+        service = data.get("metadata", dict()).get("service")
+        if not (provider and service):
+            print("Could not get `provider` or `service` from `metadata`.")
+            exit(1)
+
+        prefix = f"{provider}_{service}".upper()
+        body = data.get("dfd", dict()).get("body")
+        if not body:
+            print("Could not get `body` from `dfd`.")
+            exit(1)
+
+        main_xml = b64decode(body).decode("utf8")
+        generate_xml(
+            main_xml, prefix, params.threat_dir,
+            params.fc_dir, params.validate
+        )
+
+        main_dir = os.path.join(CURR_DIR, "main")
+        if not os.path.isdir(main_dir):
+            os.makedirs(main_dir)
+        generate_pngs(main_dir, params.out_dir, 1500)
+        generate_pngs(params.threat_dir, params.out_dir, 1200)
+        generate_pngs(params.fc_dir, params.out_dir, 1100)
+        shutil.rmtree(main_dir)
