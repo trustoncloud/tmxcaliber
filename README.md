@@ -124,9 +124,9 @@ $: tmxcaliber scan path/to/threatmodel.json --pattern regex_pattern|guardduty_fi
 ```
 
 ### Generate
-The `generate` operation allows you to create threat focused and feature class focused XMLs and PNGs of the DFD.
+The `generate` operation allows you to create threat focused and feature class focused XMLs and PNGs of the DFD. Input file here can be either a JSON file with XML inside `dfd.body` key as base64 encoded string or a XML file directly.
 ```sh
-$: tmxcaliber generate path/to/threatmodel.json \
+$: tmxcaliber generate path/to/threatmodel.json | path/to/dfd.xml \
   --threat-dir path/to/threats \
   --fc-dir path/to/features \
   --out-dir images/
@@ -134,6 +134,7 @@ $: tmxcaliber generate path/to/threatmodel.json \
 Threats focused XMLs will be saved in `--threat-dir`  
 Feature class focused XMLs will be saved in `--fc-dir`  
 All the DFD images will be saved in `--out-dir`
+
 ## Contributing
 
 If you'd like to contribute to the development of TMXcaliber, please submit a pull request or open an issue on the project's GitHub repository.

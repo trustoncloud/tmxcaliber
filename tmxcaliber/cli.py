@@ -4,6 +4,7 @@ import sys
 import json
 import shutil
 import pkg_resources
+from typing import Union
 from base64 import b64decode
 from argparse import Namespace
 from argparse import ArgumentParser
@@ -413,16 +414,27 @@ def scan_controls(args: Namespace, data: dict) -> dict:
 
     return {"controls": matched_controls}
 
-def main():
-    params = get_params()
+def get_input_data(params: Namespace) -> Union[dict, str]:
+
     try:
-        data = json.load(open(params.source))
+        with open(params.source) as f:
+            try:
+                content = f.read()
+                return json.loads(content)
+            except json.JSONDecodeError:
+                if params.operation == Operation.generate and \
+                        params.source.endswith(".xml"):
+                    return content
+                print("Invalid JSON data for the ThreatModel:", params.source)
+                exit(1)
     except FileNotFoundError:
         print("File not found:", params.source)
         exit(1)
-    except json.JSONDecodeError:
-        print("Invalid JSON data for the ThreatModel:", params.source)
-        exit(1)
+
+def main():
+    params = get_params()
+    # it's either dict from a JSON file, or a string from XML file.
+    data = get_input_data(params)
 
     if params.operation == Operation.filter:
         print(json.dumps(filter_down(params, data), indent=2))
@@ -477,19 +489,35 @@ def main():
         print(json.dumps(scan_controls(params, data), indent=2))
 
     elif params.operation == Operation.generate:
-        provider = data.get("metadata", dict()).get("provider")
-        service = data.get("metadata", dict()).get("service")
-        if not (provider and service):
-            print("Could not get `provider` or `service` from `metadata`.")
-            exit(1)
+        if isinstance(data, str):
+            main_xml = data
+            filename = os.path.basename(params.source)
+            parts = filename.split("_DFD.xml")
+            if len(parts) != 2:
+                print("Invalid XML filename format. "
+                      "Expected format: {provider}_{service}_DFD.xml")
+                exit(1)
+            provider, service = parts[0].split("_", 1)
+
+        elif isinstance(data, dict):
+            provider = data.get("metadata", {}).get("provider")
+            service = data.get("metadata", {}).get("service")
+            if not (provider and service):
+                print("No `provider` or `service` in the JSON data.")
+                exit(1)
+
+            body = data.get("dfd", {}).get("body")
+            if not body:
+                print("Could not get `dfd.body` from the JSON data.")
+                exit(1)
+
+            try:
+                main_xml = b64decode(body).decode("utf8")
+            except ValueError:
+                print("Invalid XML data provided in the JSON.")
+                exit(1)
 
         prefix = f"{provider}_{service}".upper()
-        body = data.get("dfd", dict()).get("body")
-        if not body:
-            print("Could not get `body` from `dfd`.")
-            exit(1)
-
-        main_xml = b64decode(body).decode("utf8")
         generate_xml(
             main_xml, prefix, params.threat_dir,
             params.fc_dir, params.validate
@@ -498,6 +526,7 @@ def main():
         main_dir = os.path.join(CURR_DIR, "main")
         if not os.path.isdir(main_dir):
             os.makedirs(main_dir)
+
         generate_pngs(main_dir, params.out_dir, 1500)
         generate_pngs(params.threat_dir, params.out_dir, 1200)
         generate_pngs(params.fc_dir, params.out_dir, 1100)
