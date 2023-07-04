@@ -523,11 +523,15 @@ def main():
             params.fc_dir, params.validate
         )
 
+        '''
         main_dir = os.path.join(CURR_DIR, "main")
         if not os.path.isdir(main_dir):
             os.makedirs(main_dir)
-
-        generate_pngs(main_dir, params.out_dir, 1500)
-        generate_pngs(params.threat_dir, params.out_dir, 1200)
-        generate_pngs(params.fc_dir, params.out_dir, 1100)
         shutil.rmtree(main_dir)
+        '''
+
+        generate_pngs(CURR_DIR, params.out_dir, 1500)
+        if CURR_DIR != params.threat_dir:
+            generate_pngs(params.threat_dir, params.out_dir, 1200)
+        if CURR_DIR != params.fc_dir:
+            generate_pngs(params.fc_dir, params.out_dir, 1100)
