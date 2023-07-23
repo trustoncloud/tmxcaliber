@@ -1,4 +1,5 @@
 import re
+import os
 import sys
 import copy
 import zlib
@@ -315,6 +316,10 @@ def generate_xml(data, service_prefix, threat_dir, fc_dir, validate=False):
     generate_FCx_Ty_files(bsobj, fcx_tx_values, threat_dir, service_prefix)
 
 def generate_pngs(input_dir, output_dir, width):
+    output_dir = f"{output_dir.rstrip('/')}/"
+    if not os.path.isdir(output_dir):
+        os.makedirs(output_dir)
+
     command = [
         *"xvfb-run -a".split(" "),
         *f"drawio -x --width {width} -f png".split(" "),

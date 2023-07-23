@@ -2,7 +2,6 @@ import re
 import os
 import sys
 import json
-import shutil
 import pkg_resources
 from typing import Union
 from base64 import b64decode
