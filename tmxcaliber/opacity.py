@@ -154,6 +154,21 @@ def make_tags_gray(tags):
             continue
         tag['style'] += ';textOpacity={0};opacity={0};'.format(OPACITY_PERCENT)
 
+def generate_main_dfd_file(original_soup, dest_dir, prefix_service):
+    """
+    generates the main DFD XML file
+
+    :param original_soup BS4 object: default BS4 object of original file
+    :param dest_dir Path: location to save the files to
+    """
+    output_filename_tpl = prefix_service + '_DFD.xml'
+    output_filename = (
+        dest_dir / Path(output_filename_tpl)
+        ).absolute()
+    with open(output_filename, 'w') as fp:
+        fp.write(original_soup.prettify())
+        print(f'Created {output_filename_tpl}')
+
 def generate_FCx_files(original_soup, fcx_tx_values, dest_dir, prefix_service):
     """
     generates new XML files based on an original one; makes gray
@@ -308,6 +323,9 @@ def generate_xml(data, service_prefix, threat_dir, fc_dir, validate=False):
 
     # get all FCx/Tx values defined in the file
     fcx_tx_values = get_all_FCx_Tx_values(bsobj)
+
+    # generate the main DFD file
+    generate_main_dfd_file(bsobj, fc_dir, service_prefix)
 
     # generate new ...FCx.xml files based on FCx values found
     generate_FCx_files(bsobj, fcx_tx_values, fc_dir, service_prefix)
