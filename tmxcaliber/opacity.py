@@ -13,7 +13,6 @@ from bs4 import BeautifulSoup as bsoup
 
 OPACITY_PERCENT = 10
 BS4_BACKEND = 'xml'
-CURR_DIR = Path(__file__).parent
 
 
 def decompress(original_soup, bs4_backend='xml'):
@@ -162,12 +161,10 @@ def generate_main_dfd_file(original_soup, dest_dir, prefix_service):
     :param dest_dir Path: location to save the files to
     """
     output_filename_tpl = prefix_service + '_DFD.xml'
-    output_filename = (
-        dest_dir / Path(output_filename_tpl)
-        ).absolute()
+    output_filename = (dest_dir / Path(output_filename_tpl)).absolute()
     with open(output_filename, 'w') as fp:
         fp.write(original_soup.prettify())
-        print(f'Created {output_filename_tpl}')
+        print(f'Created {output_filename}')
 
 def generate_FCx_files(original_soup, fcx_tx_values, dest_dir, prefix_service):
     """
@@ -210,7 +207,7 @@ def generate_FCx_files(original_soup, fcx_tx_values, dest_dir, prefix_service):
         ).absolute()
         with open(output_filename, 'w') as fp:
             fp.write(soup.prettify())
-            print(f'Created {output_filename_tpl.format(fc_value=fc_value)}')
+            print(f'Created {output_filename}')
 
 def generate_FCx_Ty_files(
     original_soup,
@@ -251,7 +248,7 @@ def generate_FCx_Ty_files(
         ).absolute()
         with open(output_filename, 'w') as fp:
             fp.write(soup.prettify())
-            print(f'Created {output_filename_tpl.format(t_value=t_value)}')
+            print(f'Created {output_filename}')
 
 def get_all_FCx_Tx_values(source_soup):
     """
@@ -333,16 +330,15 @@ def generate_xml(data, service_prefix, threat_dir, fc_dir, validate=False):
     # generate new ...FCx_Ty.xml files based on FCx/Tx values found
     generate_FCx_Ty_files(bsobj, fcx_tx_values, threat_dir, service_prefix)
 
-def generate_pngs(input_dir, output_dir, width):
-    output_dir = f"{output_dir.rstrip('/')}/"
+def generate_pngs(binary_path, input_dir, output_dir, width):
+    output_dir = f"{output_dir.rstrip(os.path.sep)}{os.path.sep}"
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir)
 
     command = [
-        *"xvfb-run -a".split(" "),
-        *f"drawio -x --width {width} -f png".split(" "),
+        *f"{binary_path} -x --width {width} -f png".split(" "),
         *f"-o {output_dir} {input_dir} --no-sandbox".split(" ")
     ]
-    print("Calling:", " ".join(command))
+    print(f"Calling: {' '.join(command)}")
     result = subprocess.run(command)
     result.check_returncode()

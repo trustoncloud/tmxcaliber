@@ -1,5 +1,4 @@
 from setuptools import setup, find_packages
-from tmxcaliber import __version__ as tmxcaliber_version
 
 def readme():
     with open('README.md') as f:
@@ -11,7 +10,7 @@ def get_license():
 
 setup(
     name='tmxcaliber',
-    version=tmxcaliber_version,
+    version="0.2.0",
     description=(
         'CLI utility to filter down a TrustOnCloud ThreatModel and '
         'get more refined information.'
@@ -21,7 +20,7 @@ setup(
     author='TrustOnCloud',
     author_email='dev@trustoncloud.com',
     python_requires='>=3.8',
-    install_requires=[],
+    install_requires=[x for x in open("requirements.txt").readlines()],
     packages=find_packages(exclude=[
         "*.tests", "*.tests.*", "tests.*", "tests"
     ]),

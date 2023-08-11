@@ -2,15 +2,18 @@ import re
 import os
 import sys
 import json
+import platform
 import pkg_resources
 from typing import Union
+from shutil import rmtree
 from base64 import b64decode
 from argparse import Namespace
 from argparse import ArgumentParser
 from argparse import ArgumentTypeError
 from argparse import RawTextHelpFormatter
 
-from .opacity import CURR_DIR
+from colorama import Fore
+
 from .opacity import generate_xml
 from .opacity import generate_pngs
 
@@ -36,6 +39,14 @@ GUARDDUTY_FINDINGS = "(" + "|".join([
 ]) + ")" + ":\w+\/[\w!.-]+"
 IDS_INPUT_SEPARATOR = ";"
 IDS_FORMAT_REGEX = r"^\w+\.(fc|t|c|co)\d+$"
+
+CURR_DIR = os.getcwd()
+XML_DIR = os.path.join(CURR_DIR, "xmls")
+IMG_DIR = os.path.join(CURR_DIR, "img")
+
+
+class BinaryNotFound(Exception):
+    pass
 
 
 class Operation:
@@ -161,14 +172,20 @@ def get_params():
         formatter_class=RawTextHelpFormatter
     )
     gen_parser.add_argument(
+        "--bin",
+        help="path to `drawio` binary. (if not detected automatically)"
+    )
+    gen_parser.add_argument(
         "--threat-dir",
-        default=CURR_DIR,
-        help="directory to output threat files to (default ./)"
+        default=XML_DIR,
+        help="output dir for threat files " \
+            f"(.{os.path.join(os.path.sep, os.path.basename(XML_DIR))})"
     )
     gen_parser.add_argument(
         "--fc-dir",
-        default=CURR_DIR,
-        help="directory to output feature class files to (default ./)"
+        default=XML_DIR,
+        help="output dir for feature class files " \
+            f"(.{os.path.join(os.path.sep, os.path.basename(XML_DIR))})"
     )
     gen_parser.add_argument(
         "--validate",
@@ -178,8 +195,9 @@ def get_params():
     )
     gen_parser.add_argument(
         "--out-dir",
-        default=os.path.join(CURR_DIR, "img"),
-        help="directory to output PNG files."
+        default=IMG_DIR,
+        help="output dir for PNG files " \
+            f"(.{os.path.join(os.path.sep, os.path.basename(IMG_DIR))})"
     )
 
     add_common_arguments(filter_parser, map_parser, scan_parser, gen_parser)
@@ -430,7 +448,30 @@ def get_input_data(params: Namespace) -> Union[dict, str]:
         print("File not found:", params.source)
         exit(1)
 
+def get_drawio_binary_path():
+    if platform.system().lower() == "windows":
+        for potential_path in [
+            "C:\Program Files\draw.io\draw.io.exe",
+            "C:\Program Files (x86)\draw.io\draw.io.exe"
+        ]:
+            if os.path.isfile(potential_path):
+                return potential_path
+    elif platform.system().lower() == "linux":
+        return "xvfb-run -a drawio"
+    elif platform.system().lower() == "darwin":
+        for potential_path in [
+            "/Applications/draw.io.app/Contents/MacOS/draw.io"
+        ]:
+            if os.path.isfile(potential_path):
+                return potential_path
+
+    raise BinaryNotFound(
+        "drawio binary not found automatically.",
+        "Use --bin flag to specify path to drawio binary."
+    )
+
 def main():
+
     params = get_params()
     # it's either dict from a JSON file, or a string from XML file.
     data = get_input_data(params)
@@ -488,6 +529,15 @@ def main():
         print(json.dumps(scan_controls(params, data), indent=2))
 
     elif params.operation == Operation.generate:
+        if not params.bin:
+            try:
+                binary = get_drawio_binary_path()
+            except BinaryNotFound as exc:
+                print(Fore.RED + "\n".join(exc.args) + Fore.RESET + "\n")
+                exit(1)
+        else:
+            binary = params.bin
+
         if isinstance(data, str):
             main_xml = data
             filename = os.path.basename(params.source)
@@ -516,21 +566,20 @@ def main():
                 print("Invalid XML data provided in the JSON.")
                 exit(1)
 
+        # remove directories if present already (cleans up old content.)
+        if os.path.isdir(XML_DIR):
+            rmtree(XML_DIR)
+        if os.path.isdir(IMG_DIR):
+            rmtree(IMG_DIR)
+
         prefix = f"{provider}_{service}".upper()
         generate_xml(
             main_xml, prefix, params.threat_dir,
             params.fc_dir, params.validate
         )
 
-        '''
-        main_dir = os.path.join(CURR_DIR, "main")
-        if not os.path.isdir(main_dir):
-            os.makedirs(main_dir)
-        shutil.rmtree(main_dir)
-        '''
-
-        generate_pngs(CURR_DIR, params.out_dir, 1500)
-        if CURR_DIR != params.threat_dir:
-            generate_pngs(params.threat_dir, params.out_dir, 1200)
-        if CURR_DIR != params.fc_dir:
-            generate_pngs(params.fc_dir, params.out_dir, 1100)
+        if params.fc_dir != params.threat_dir:
+            generate_pngs(binary, params.fc_dir, params.out_dir, 1500)
+            generate_pngs(binary, params.threat_dir, params.out_dir, 1500)
+        else:
+            generate_pngs(binary, params.fc_dir, params.out_dir, 1500)
