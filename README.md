@@ -92,7 +92,7 @@ $: tmxcaliber map -h
 Details for supported 
 ### Filter
 
-The `filter` operation allows you to filter relevant information from a ThreatModel JSON based on various criteria, such as future class, threat severity, or IAM permission.
+The `filter` operation allows you to filter relevant information from a ThreatModel JSON based on various criteria, such as feature class, threat severity, or IAM permission.
 ```sh
 $: tmxcaliber filter path/to/threatmodel.json --severity high
 ```
