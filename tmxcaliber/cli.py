@@ -233,9 +233,15 @@ def get_params():
         ListOperation.threats, help="List threat data in one or more ThreatModels.",
         formatter_class=RawTextHelpFormatter
     )
+    list_parser.add_argument(
+        "--output", type=str, help="Output file to write the results. If not provided, prints to stdout."
+    )
     list_parser = list_subparsers.add_parser(
         ListOperation.controls, help="List control data in one or more ThreatModels.",
         formatter_class=RawTextHelpFormatter
+    )
+    list_parser.add_argument(
+        "--output", type=str, help="Output file to write the results. If not provided, prints to stdout."
     )
     add_source_json_or_dir_argument(list_parser)
     add_common_arguments(filter_parser, map_parser, scan_parser, gen_parser)
@@ -651,7 +657,11 @@ def main():
                 for key, value in threats.items():
                     value['access'] = json.dumps(value['access'])
                     writer.writerow({'id': key, **value})
-            print(output.getvalue())
+            if params.output:
+                with open(params.output, 'w') as file:
+                    file.write(output.getvalue())
+            else:
+                print(output.getvalue())
 
         if params.list_type == ListOperation.controls:
             if isinstance(data, dict):
