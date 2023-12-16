@@ -60,6 +60,7 @@ class Operation:
 
 class ListOperation:
     threats = "threats"
+    controls = "controls"
 
 
 def _get_version():
@@ -229,7 +230,11 @@ def get_params():
         title="list_type", dest="list_type", required=True
     )
     list_parser = list_subparsers.add_parser(
-        ListOperation.threats, help="List threats data in one or more ThreatModels.",
+        ListOperation.threats, help="List threat data in one or more ThreatModels.",
+        formatter_class=RawTextHelpFormatter
+    )
+    list_parser = list_subparsers.add_parser(
+        ListOperation.controls, help="List control data in one or more ThreatModels.",
         formatter_class=RawTextHelpFormatter
     )
     add_source_json_or_dir_argument(list_parser)
@@ -644,9 +649,21 @@ def main():
             for json_data in data:
                 threats = json_data['threats']
                 for key, value in threats.items():
-                    # Convert 'access' to JSON string
                     value['access'] = json.dumps(value['access'])
-                    # Include the 'id' at the beginning of each line
+                    writer.writerow({'id': key, **value})
+            print(output.getvalue())
+
+        if params.list_type == ListOperation.controls:
+            if isinstance(data, dict):
+                data = [data]
+            output = io.StringIO()
+            fieldnames = ['id'] + list(data[0]['controls'][next(iter(data[0]['controls']))].keys())
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for json_data in data:
+                controls = json_data['controls']
+                for key, value in controls.items():
                     writer.writerow({'id': key, **value})
             print(output.getvalue())
 
