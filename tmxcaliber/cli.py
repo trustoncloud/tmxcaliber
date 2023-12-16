@@ -1,5 +1,7 @@
 import re
 import os
+import io
+import csv
 import sys
 import json
 import platform
@@ -224,7 +226,7 @@ def get_params():
         formatter_class=RawTextHelpFormatter
     )
     list_subparsers = list_parser.add_subparsers(
-        title="type", dest="type", required=True
+        title="list_type", dest="list_type", required=True
     )
     list_parser = list_subparsers.add_parser(
         ListOperation.threats, help="List threats data in one or more ThreatModels.",
@@ -519,7 +521,7 @@ def get_drawio_binary_path():
 def main():
 
     params = get_params()
-    # it's either dict from a JSON file, or a string from XML file.
+    # it's either a list of JSON dict, a dict from a JSON file, or a string from XML file.
     data = get_input_data(params)
 
     if params.operation == Operation.filter:
@@ -629,3 +631,23 @@ def main():
             generate_pngs(binary, params.threat_dir, params.out_dir, 1500)
         else:
             generate_pngs(binary, params.fc_dir, params.out_dir, 1500)
+    
+    elif params.operation == Operation.list:
+        if params.list_type == ListOperation.threats:
+            if isinstance(data, dict):
+                data = [data]
+            output = io.StringIO()
+            fieldnames = list(data[0]['threats'][next(iter(data[0]['threats']))].keys())
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for json_data in data:
+                threats = json_data['threats']
+                id = next(iter(threats))
+                print(id)
+                for key, value in threats.items():
+                    # Convert 'access' to JSON string
+                    value['access'] = json.dumps(value['access'])
+                    writer.writerow(value)
+            print(output.getvalue())
+
