@@ -229,19 +229,16 @@ def get_params():
     list_subparsers = list_parser.add_subparsers(
         title="list_type", dest="list_type", required=True
     )
-    list_parser = list_subparsers.add_parser(
+    list_parser.add_argument(
+        "--output", type=str, help="Output file to write the results. If not provided, prints to stdout."
+    )
+    threat_list_parser = list_subparsers.add_parser(
         ListOperation.threats, help="List threat data in one or more ThreatModels.",
         formatter_class=RawTextHelpFormatter
     )
-    list_parser.add_argument(
-        "--output", type=str, help="Output file to write the results. If not provided, prints to stdout."
-    )
-    list_parser = list_subparsers.add_parser(
+    control_list_parser = list_subparsers.add_parser(
         ListOperation.controls, help="List control data in one or more ThreatModels.",
         formatter_class=RawTextHelpFormatter
-    )
-    list_parser.add_argument(
-        "--output", type=str, help="Output file to write the results. If not provided, prints to stdout."
     )
     add_source_json_or_dir_argument(list_parser)
     add_common_arguments(filter_parser, map_parser, scan_parser, gen_parser)
@@ -658,7 +655,7 @@ def main():
                     value['access'] = json.dumps(value['access'])
                     writer.writerow({'id': key, **value})
             if params.output:
-                with open(params.output, 'w') as file:
+                with open(params.output, 'w+') as file:
                     file.write(output.getvalue())
             else:
                 print(output.getvalue())
@@ -675,5 +672,9 @@ def main():
                 controls = json_data['controls']
                 for key, value in controls.items():
                     writer.writerow({'id': key, **value})
-            print(output.getvalue())
+            if params.output:
+                with open(params.output, 'w+') as file:
+                    file.write(output.getvalue())
+            else:
+                print(output.getvalue())
 
