@@ -637,17 +637,16 @@ def main():
             if isinstance(data, dict):
                 data = [data]
             output = io.StringIO()
-            fieldnames = list(data[0]['threats'][next(iter(data[0]['threats']))].keys())
+            fieldnames = ['id'] + list(data[0]['threats'][next(iter(data[0]['threats']))].keys())
             writer = csv.DictWriter(output, fieldnames=fieldnames)
             writer.writeheader()
 
             for json_data in data:
                 threats = json_data['threats']
-                id = next(iter(threats))
-                print(id)
                 for key, value in threats.items():
                     # Convert 'access' to JSON string
                     value['access'] = json.dumps(value['access'])
-                    writer.writerow(value)
+                    # Include the 'id' at the beginning of each line
+                    writer.writerow({'id': key, **value})
             print(output.getvalue())
 
