@@ -39,17 +39,15 @@ GUARDDUTY_FINDINGS = "(" + "|".join([
     "Persistence",
     "Recon"
 ]) + ")" + ":\w+\/[\w!.-]+"
-IDS_INPUT_SEPARATOR = ";"
+IDS_INPUT_SEPARATOR = ","
 IDS_FORMAT_REGEX = r"^\w+\.(fc|t|c|co)\d+$"
 
 CURR_DIR = os.getcwd()
 XML_DIR = os.path.join(CURR_DIR, "xmls")
 IMG_DIR = os.path.join(CURR_DIR, "img")
 
-
 class BinaryNotFound(Exception):
     pass
-
 
 class Operation:
     filter = "filter"
@@ -137,14 +135,14 @@ def get_params():
         ], help="filter data by threat severity.\n\n"
     )
     filter_parser.add_argument(
-        "--perms", nargs="*", help=(
-            "filter data by threat IAM permission(s). "
+        "--permission", nargs="*", help=(
+            "filter data by IAM permission(s). "
             "Separate by spaces, if several.\n\n"
         )
     )
     filter_parser.add_argument(
         "--feature-class", nargs="*", help=(
-            "filter data by threat feature class. "
+            "filter data by feature class. "
             "Separate by spaces, if several.\n\n"
         )
     )
@@ -252,7 +250,7 @@ def validate(args: Namespace) -> Namespace:
     if args.operation == Operation.filter:
         args.severity = args.severity.lower() if args.severity else ""
         args.events = [x.lower() for x in args.events or []]
-        args.perms = [x.lower() for x in args.perms or []]
+        args.permission = [x.lower() for x in args.permission or []]
         args.feature_class = [x.lower() for x in args.feature_class or []]
         args.ids = [
             x.lower() for x in (args.ids and args.ids[0] or "")
@@ -309,7 +307,8 @@ def get_feature_classes(data: dict, threats: dict) -> dict:
             feature_classes[class_name] = data["feature_classes"][class_name]
     return feature_classes
 
-def get_controls(data: dict, feature_classes: dict) -> dict:
+def get_controls(data: dict, feature_classes: dict, threats: dict = {}) -> dict:
+    print(threats)
     controls = {
         key: value for key, value in data["controls"].items()
         if any([
@@ -317,6 +316,7 @@ def get_controls(data: dict, feature_classes: dict) -> dict:
             for feature_class in feature_classes
         ])
     }
+    exit(0)
     return controls
 
 def get_objectives(data: dict, controls: dict) -> dict:
@@ -377,7 +377,7 @@ def filter_down(args: Namespace, data: dict) -> dict:
             threats = get_threats(data, args.ids)
             feature_classes = get_feature_classes(data, threats)
             actions = get_actions(data, feature_classes)
-            controls = get_controls(data, feature_classes)
+            controls = get_controls(data, feature_classes, threats)
             objectives = get_objectives(data, controls)
     else:
         threats: dict = data.get("threats")
@@ -394,8 +394,8 @@ def filter_down(args: Namespace, data: dict) -> dict:
                         action.get("iam_permission").split(",")
                     ]
                     filter_by_perms(threats, perms)
-        if args.perms:
-            filter_by_perms(threats, args.perms)
+        if args.permission:
+            filter_by_perms(threats, args.permission)
         if args.feature_class:
             filter_by_fc(threats, args.feature_class)
 
