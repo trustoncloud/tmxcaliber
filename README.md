@@ -64,7 +64,7 @@ $: pip install .
 **`VERSION_TAG`** is the git tag associated with the release.
 
 ### Help Documentation
-To get complete help on `tmxcaliber` command, run the following.
+To get complete help on `tmxcaliber` command, including the new list operations, run the following.
 ```sh
 $: tmxcaliber -h
 
@@ -89,7 +89,7 @@ $: tmxcaliber filter -h
 $: tmxcaliber map -h
 ```
 ## Usage
-Details for supported operations are as follows:
+Details for supported operations, including the new list operations, are as follows:
 
 ### List Threats
 
