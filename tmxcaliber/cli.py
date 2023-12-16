@@ -1,5 +1,7 @@
 import re
 import os
+import io
+import csv
 import sys
 import json
 import platform
@@ -54,6 +56,11 @@ class Operation:
     map = "map"
     scan = "scan"
     generate = "generate"
+    list = "list"
+
+class ListOperation:
+    threats = "threats"
+    controls = "controls"
 
 
 def _get_version():
@@ -86,7 +93,27 @@ def add_common_arguments(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
             "source", type=str,
-            help="path to the threat model JSON file."
+            help="path to the ThreatModel JSON file."
+        )
+
+def is_file_or_dir(path: str) -> str:
+    if not os.path.exists(path):
+        raise ArgumentTypeError(f"The path {path} does not exist.")
+    if not (os.path.isfile(path) or os.path.isdir(path)):
+        raise ArgumentTypeError(f"The path {path} is neither a file nor a directory.")
+    return path
+
+def add_source_json_or_dir_argument(*parsers: ArgumentParser):
+    for parser in parsers:
+        parser.add_argument(
+            "source", type=is_file_or_dir,
+            help="path to the ThreatModel JSON file or directory containing JSON files."
+        )
+
+def add_csv_output_argument(*parsers: ArgumentParser):
+    for parser in parsers:
+        parser.add_argument(
+            "--output", type=str, help="Output CSV file to write the results. If not provided, prints to stdout."
         )
 
 def get_params():
@@ -101,7 +128,7 @@ def get_params():
     )
     # subparser for filter operation.
     filter_parser = subparsers.add_parser(
-        Operation.filter, help="filter down the threat model data.",
+        Operation.filter, help="filter down the ThreatModel data.",
         formatter_class=RawTextHelpFormatter
     )
     filter_parser.add_argument(
@@ -136,7 +163,7 @@ def get_params():
 
     # subparser for map operation.
     map_parser = subparsers.add_parser(
-        Operation.map, help="map threat model data to OSCAL framework.",
+        Operation.map, help="map ThreatModel data to OSCAL framework.",
         formatter_class=RawTextHelpFormatter
     )
     map_parser.add_argument(
@@ -159,7 +186,7 @@ def get_params():
 
     # subparser for scan operation.
     scan_parser = subparsers.add_parser(
-        Operation.scan, help="scan threat model data against patterns.",
+        Operation.scan, help="scan the ThreatModel data for a given pattern.",
         formatter_class=RawTextHelpFormatter
     )
     scan_parser.add_argument(
@@ -200,6 +227,24 @@ def get_params():
             f"(.{os.path.join(os.path.sep, os.path.basename(IMG_DIR))})"
     )
 
+    # subparser for list operation.
+    list_parser = subparsers.add_parser(
+        Operation.list, help="List data of one or more ThreatModels.",
+        formatter_class=RawTextHelpFormatter
+    )
+    list_subparsers = list_parser.add_subparsers(
+        title="list_type", dest="list_type", required=True
+    )
+    threat_list_parser = list_subparsers.add_parser(
+        ListOperation.threats, help="List threat data of one or more ThreatModels.",
+        formatter_class=RawTextHelpFormatter
+    )
+    control_list_parser = list_subparsers.add_parser(
+        ListOperation.controls, help="List control data of one or more ThreatModels.",
+        formatter_class=RawTextHelpFormatter
+    )
+    add_source_json_or_dir_argument(threat_list_parser, control_list_parser)
+    add_csv_output_argument(threat_list_parser, control_list_parser)
     add_common_arguments(filter_parser, map_parser, scan_parser, gen_parser)
     return validate(parser.parse_args())
 
@@ -431,22 +476,37 @@ def scan_controls(args: Namespace, data: dict) -> dict:
 
     return {"controls": matched_controls}
 
-def get_input_data(params: Namespace) -> Union[dict, str]:
+def get_input_data(params: Namespace) -> Union[dict, str, list]:
 
-    try:
-        with open(params.source) as f:
+    if os.path.isdir(params.source):
+        json_files = [os.path.join(params.source, f) for f in os.listdir(params.source) if f.endswith('.json')]
+        json_data_list = []
+        for json_file in json_files:
             try:
-                content = f.read()
-                return json.loads(content)
+                with open(json_file) as f:
+                    json_data_list.append(json.load(f))
             except json.JSONDecodeError:
-                if params.operation == Operation.generate and \
-                        params.source.endswith(".xml"):
-                    return content
-                print("Invalid JSON data for the ThreatModel:", params.source)
+                print(f"Invalid JSON data in file: {json_file}")
                 exit(1)
-    except FileNotFoundError:
-        print("File not found:", params.source)
-        exit(1)
+            except FileNotFoundError:
+                print(f"File not found: {json_file}")
+                exit(1)
+        return json_data_list
+    else:
+        try:
+            with open(params.source) as f:
+                try:
+                    content = f.read()
+                    return json.loads(content)
+                except json.JSONDecodeError:
+                    if params.operation == Operation.generate and \
+                            params.source.endswith(".xml"):
+                        return content
+                    print("Invalid JSON data for the ThreatModel:", params.source)
+                    exit(1)
+        except FileNotFoundError:
+            print("File not found:", params.source)
+            exit(1)
 
 def get_drawio_binary_path():
     if platform.system().lower() == "windows":
@@ -473,7 +533,7 @@ def get_drawio_binary_path():
 def main():
 
     params = get_params()
-    # it's either dict from a JSON file, or a string from XML file.
+    # it's either a list of JSON dict, a dict from a JSON file, or a string from XML file.
     data = get_input_data(params)
 
     if params.operation == Operation.filter:
@@ -583,3 +643,42 @@ def main():
             generate_pngs(binary, params.threat_dir, params.out_dir, 1500)
         else:
             generate_pngs(binary, params.fc_dir, params.out_dir, 1500)
+    
+    elif params.operation == Operation.list:
+        if params.list_type == ListOperation.threats:
+            if isinstance(data, dict):
+                data = [data]
+            output = io.StringIO()
+            fieldnames = ['id'] + list(data[0]['threats'][next(iter(data[0]['threats']))].keys())
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for json_data in data:
+                threats = json_data['threats']
+                for key, value in threats.items():
+                    value['access'] = json.dumps(value['access'])
+                    writer.writerow({'id': key, **value})
+            if params.output:
+                with open(params.output, 'w+', newline='') as file:
+                    file.write(output.getvalue())
+            else:
+                print(output.getvalue())
+
+        if params.list_type == ListOperation.controls:
+            if isinstance(data, dict):
+                data = [data]
+            output = io.StringIO()
+            fieldnames = ['id'] + list(data[0]['controls'][next(iter(data[0]['controls']))].keys())
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for json_data in data:
+                controls = json_data['controls']
+                for key, value in controls.items():
+                    writer.writerow({'id': key, **value})
+            if params.output:
+                with open(params.output, 'w+', newline='') as file:
+                    file.write(output.getvalue())
+            else:
+                print(output.getvalue())
+
