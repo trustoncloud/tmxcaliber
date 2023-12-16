@@ -659,7 +659,7 @@ def main():
                     value['access'] = json.dumps(value['access'])
                     writer.writerow({'id': key, **value})
             if params.output:
-                with open(params.output, 'w+') as file:
+                with open(params.output, 'w+', newline='') as file:
                     file.write(output.getvalue())
             else:
                 print(output.getvalue())
