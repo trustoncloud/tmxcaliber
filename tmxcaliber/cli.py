@@ -462,22 +462,37 @@ def scan_controls(args: Namespace, data: dict) -> dict:
 
     return {"controls": matched_controls}
 
-def get_input_data(params: Namespace) -> Union[dict, str]:
+def get_input_data(params: Namespace) -> Union[dict, str, list]:
 
-    try:
-        with open(params.source) as f:
+    if os.path.isdir(params.source):
+        json_files = [os.path.join(params.source, f) for f in os.listdir(params.source) if f.endswith('.json')]
+        json_data_list = []
+        for json_file in json_files:
             try:
-                content = f.read()
-                return json.loads(content)
+                with open(json_file) as f:
+                    json_data_list.append(json.load(f))
             except json.JSONDecodeError:
-                if params.operation == Operation.generate and \
-                        params.source.endswith(".xml"):
-                    return content
-                print("Invalid JSON data for the ThreatModel:", params.source)
+                print(f"Invalid JSON data in file: {json_file}")
                 exit(1)
-    except FileNotFoundError:
-        print("File not found:", params.source)
-        exit(1)
+            except FileNotFoundError:
+                print(f"File not found: {json_file}")
+                exit(1)
+        return json_data_list
+    else:
+        try:
+            with open(params.source) as f:
+                try:
+                    content = f.read()
+                    return json.loads(content)
+                except json.JSONDecodeError:
+                    if params.operation == Operation.generate and \
+                            params.source.endswith(".xml"):
+                        return content
+                    print("Invalid JSON data for the ThreatModel:", params.source)
+                    exit(1)
+        except FileNotFoundError:
+            print("File not found:", params.source)
+            exit(1)
 
 def get_drawio_binary_path():
     if platform.system().lower() == "windows":
