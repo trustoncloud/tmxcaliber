@@ -103,11 +103,18 @@ def is_file_or_dir(path: str) -> str:
         raise ArgumentTypeError(f"The path {path} is neither a file nor a directory.")
     return path
 
-def add_source_json_or_dir_argument(parser: ArgumentParser):
-    parser.add_argument(
-        "source", type=is_file_or_dir,
-        help="path to the ThreatModel JSON file or directory containing JSON files."
-    )
+def add_source_json_or_dir_argument(*parsers: ArgumentParser):
+    for parser in parsers:
+        parser.add_argument(
+            "source", type=is_file_or_dir,
+            help="path to the ThreatModel JSON file or directory containing JSON files."
+        )
+
+def add_csv_output_argument(*parsers: ArgumentParser):
+    for parser in parsers:
+        parser.add_argument(
+            "--output", type=str, help="Output file to write the results. If not provided, prints to stdout."
+        )
 
 def get_params():
     parser = ArgumentParser(formatter_class=RawTextHelpFormatter)
@@ -228,9 +235,6 @@ def get_params():
     list_subparsers = list_parser.add_subparsers(
         title="list_type", dest="list_type", required=True
     )
-    list_parser.add_argument(
-        "--output", type=str, help="Output file to write the results. If not provided, prints to stdout."
-    )
     threat_list_parser = list_subparsers.add_parser(
         ListOperation.threats, help="List threat data in one or more ThreatModels.",
         formatter_class=RawTextHelpFormatter
@@ -239,8 +243,8 @@ def get_params():
         ListOperation.controls, help="List control data in one or more ThreatModels.",
         formatter_class=RawTextHelpFormatter
     )
-    add_source_json_or_dir_argument(threat_list_parser)
-    add_source_json_or_dir_argument(control_list_parser)
+    add_source_json_or_dir_argument(threat_list_parser, control_list_parser)
+    add_csv_output_argument(threat_list_parser, control_list_parser)
     add_common_arguments(filter_parser, map_parser, scan_parser, gen_parser)
     return validate(parser.parse_args())
 
