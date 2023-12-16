@@ -308,15 +308,14 @@ def get_feature_classes(data: dict, threats: dict) -> dict:
     return feature_classes
 
 def get_controls(data: dict, feature_classes: dict, threats: dict = {}) -> dict:
-    print(threats)
-    controls = {
-        key: value for key, value in data["controls"].items()
-        if any([
-            feature_class in value["feature_class"]
-            for feature_class in feature_classes
-        ])
-    }
-    exit(0)
+    threat_ids = set(threats.keys())
+    controls = {}
+    for control_id, control in data["controls"].items():
+        # Check if the control's feature class is in the list of feature classes
+        if any(fc in control["feature_class"] for fc in feature_classes):
+            # Check if any mitigation in the control is related to the threats we have
+            if any(mitigation.get("threat") in threat_ids for mitigation in control.get("mitigate", [])):
+                controls[control_id] = control
     return controls
 
 def get_objectives(data: dict, controls: dict) -> dict:
