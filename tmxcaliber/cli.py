@@ -308,13 +308,19 @@ def get_feature_classes(data: dict, threats: dict) -> dict:
     return feature_classes
 
 def get_controls(data: dict, feature_classes: dict, threats: dict = {}) -> dict:
-    threat_ids = set(threats.keys())
     controls = {}
-    for control_id, control in data["controls"].items():
-        # Check if the control's feature class is in the list of feature classes
-        if any(fc in control["feature_class"] for fc in feature_classes):
-            # Check if any mitigation in the control is related to the threats we have
-            if any(mitigation.get("threat") in threat_ids for mitigation in control.get("mitigate", [])):
+    if threats:
+        threat_ids = set(threats.keys())
+        for control_id, control in data["controls"].items():
+            # Check if the control's feature class is in the list of feature classes
+            if any(fc in control["feature_class"] for fc in feature_classes):
+                # Check if any mitigation in the control is related to the threats we have
+                if any(mitigation.get("threat") in threat_ids for mitigation in control.get("mitigate", [])):
+                    controls[control_id] = control
+    else:
+        # If threats dict is empty, include all controls that match the feature class criteria
+        for control_id, control in data["controls"].items():
+            if any(fc in control["feature_class"] for fc in feature_classes):
                 controls[control_id] = control
     return controls
 
