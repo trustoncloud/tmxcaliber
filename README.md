@@ -89,7 +89,25 @@ $: tmxcaliber filter -h
 $: tmxcaliber map -h
 ```
 ## Usage
-Details for supported 
+Details for supported operations are as follows:
+
+### List Threats
+
+The `list threats` operation allows you to list all threats from a ThreatModel JSON file or a directory containing multiple JSON files. You can also specify an output file to write the results in CSV format.
+
+```sh
+$: tmxcaliber list threats path/to/threatmodel.json
+$: tmxcaliber list threats path/to/threatmodels/ --output threats.csv
+```
+
+### List Controls
+
+The `list controls` operation allows you to list all controls from a ThreatModel JSON file or a directory containing multiple JSON files. You can also specify an output file to write the results in CSV format.
+
+```sh
+$: tmxcaliber list controls path/to/threatmodel.json
+$: tmxcaliber list controls path/to/threatmodels/ --output controls.csv
+```
 ### Filter
 
 The `filter` operation allows you to filter relevant information from a ThreatModel JSON based on various criteria, such as feature class, threat severity, or IAM permission.
