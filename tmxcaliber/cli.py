@@ -54,6 +54,10 @@ class Operation:
     map = "map"
     scan = "scan"
     generate = "generate"
+    list = "list"
+
+class ListOperation:
+    threats = "threats"
 
 
 def _get_version():
@@ -86,7 +90,14 @@ def add_common_arguments(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
             "source", type=str,
-            help="path to the threat model JSON file."
+            help="path to the ThreatModel JSON file."
+        )
+
+def add_source_json_or_dir_argument(*parsers: ArgumentParser):
+    for parser in parsers:
+        parser.add_argument(
+            "source", type=str,
+            help="path to the ThreatModel JSON file."
         )
 
 def get_params():
@@ -101,7 +112,7 @@ def get_params():
     )
     # subparser for filter operation.
     filter_parser = subparsers.add_parser(
-        Operation.filter, help="filter down the threat model data.",
+        Operation.filter, help="filter down the ThreatModel data.",
         formatter_class=RawTextHelpFormatter
     )
     filter_parser.add_argument(
@@ -136,7 +147,7 @@ def get_params():
 
     # subparser for map operation.
     map_parser = subparsers.add_parser(
-        Operation.map, help="map threat model data to OSCAL framework.",
+        Operation.map, help="map ThreatModel data to OSCAL framework.",
         formatter_class=RawTextHelpFormatter
     )
     map_parser.add_argument(
@@ -159,7 +170,7 @@ def get_params():
 
     # subparser for scan operation.
     scan_parser = subparsers.add_parser(
-        Operation.scan, help="scan threat model data against patterns.",
+        Operation.scan, help="scan the ThreatModel data for a given pattern.",
         formatter_class=RawTextHelpFormatter
     )
     scan_parser.add_argument(
@@ -200,6 +211,19 @@ def get_params():
             f"(.{os.path.join(os.path.sep, os.path.basename(IMG_DIR))})"
     )
 
+    # subparser for list operation.
+    list_parser = subparsers.add_parser(
+        Operation.list, help="List data in one or more ThreatModels.",
+        formatter_class=RawTextHelpFormatter
+    )
+    list_subparsers = list_parser.add_subparsers(
+        title="type", dest="type", required=True
+    )
+    list_parser = list_subparsers.add_parser(
+        ListOperation.threats, help="List threats data in one or more ThreatModels.",
+        formatter_class=RawTextHelpFormatter
+    )
+    add_source_json_or_dir_argument(list_parser)
     add_common_arguments(filter_parser, map_parser, scan_parser, gen_parser)
     return validate(parser.parse_args())
 
