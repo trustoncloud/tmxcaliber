@@ -93,11 +93,18 @@ def add_common_arguments(*parsers: ArgumentParser):
             help="path to the ThreatModel JSON file."
         )
 
+def is_file_or_dir(path: str) -> str:
+    if not os.path.exists(path):
+        raise ArgumentTypeError(f"The path {path} does not exist.")
+    if not (os.path.isfile(path) or os.path.isdir(path)):
+        raise ArgumentTypeError(f"The path {path} is neither a file nor a directory.")
+    return path
+
 def add_source_json_or_dir_argument(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
-            "source", type=str,
-            help="path to the ThreatModel JSON file."
+            "source", type=is_file_or_dir,
+            help="path to the ThreatModel JSON file or directory containing JSON files."
         )
 
 def get_params():
