@@ -64,23 +64,24 @@ $: pip install .
 **`VERSION_TAG`** is the git tag associated with the release.
 
 ### Help Documentation
-To get complete help on `tmxcaliber` command, including the new list operations, run the following.
+To get complete help on `tmxcaliber` command, run the following.
 ```sh
 $: tmxcaliber -h
 
-usage: tmxcaliber [-h] [-v] {filter,map,scan,generate} ...
+usage: tmxcaliber [-h] [-v] {filter,map,scan,generate,list} ...
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   -v, --version         show the installed version.
 
 
 operation:
-  {filter,map,scan,generate}
-    filter              filter down the threat model data.
-    map                 map threat model data to OSCAL framework.
-    scan                scan threat model data against patterns.
+  {filter,map,scan,generate,list}
+    filter              filter down the ThreatModel data.
+    map                 map ThreatModel data to OSCAL framework.
+    scan                scan the ThreatModel data for a given pattern.
     generate            generate threat specific PNGs from XML data.
+    list                List data of one or more ThreatModels.
 ```
 You can also get more help on each operation:
 ```sh
@@ -91,23 +92,6 @@ $: tmxcaliber map -h
 ## Usage
 Details for supported operations, including the new list operations, are as follows:
 
-### List Threats
-
-The `list threats` operation allows you to list all threats from a ThreatModel JSON file or a directory containing multiple JSON files. You can also specify an output file to write the results in CSV format.
-
-```sh
-$: tmxcaliber list threats path/to/threatmodel.json
-$: tmxcaliber list threats path/to/threatmodels/ --output threats.csv
-```
-
-### List Controls
-
-The `list controls` operation allows you to list all controls from a ThreatModel JSON file or a directory containing multiple JSON files. You can also specify an output file to write the results in CSV format.
-
-```sh
-$: tmxcaliber list controls path/to/threatmodel.json
-$: tmxcaliber list controls path/to/threatmodels/ --output controls.csv
-```
 ### Filter
 
 The `filter` operation allows you to filter relevant information from a ThreatModel JSON based on various criteria, such as feature class, threat severity, or IAM permission.
@@ -152,6 +136,25 @@ $: tmxcaliber generate path/to/threatmodel.json | path/to/dfd.xml \
 Threats focused XMLs will be saved in `--threat-dir`  
 Feature class focused XMLs will be saved in `--fc-dir`  
 All the DFD images will be saved in `--out-dir`
+
+
+### List Threats
+
+The `list threats` operation allows you to list all threats from a ThreatModel JSON file or a directory containing multiple JSON files. You can also specify an output file to write the results in CSV format.
+
+```sh
+$: tmxcaliber list threats path/to/threatmodel.json
+$: tmxcaliber list threats path/to/threatmodels/ --output threats.csv
+```
+
+### List Controls
+
+The `list controls` operation allows you to list all controls from a ThreatModel JSON file or a directory containing multiple JSON files. You can also specify an output file to write the results in CSV format.
+
+```sh
+$: tmxcaliber list controls path/to/threatmodel.json
+$: tmxcaliber list controls path/to/threatmodels/ --output controls.csv
+```
 
 ## Contributing
 

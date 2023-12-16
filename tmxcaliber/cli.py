@@ -113,7 +113,7 @@ def add_source_json_or_dir_argument(*parsers: ArgumentParser):
 def add_csv_output_argument(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
-            "--output", type=str, help="Output file to write the results. If not provided, prints to stdout."
+            "--output", type=str, help="Output CSV file to write the results. If not provided, prints to stdout."
         )
 
 def get_params():
@@ -229,18 +229,18 @@ def get_params():
 
     # subparser for list operation.
     list_parser = subparsers.add_parser(
-        Operation.list, help="List data in one or more ThreatModels.",
+        Operation.list, help="List data of one or more ThreatModels.",
         formatter_class=RawTextHelpFormatter
     )
     list_subparsers = list_parser.add_subparsers(
         title="list_type", dest="list_type", required=True
     )
     threat_list_parser = list_subparsers.add_parser(
-        ListOperation.threats, help="List threat data in one or more ThreatModels.",
+        ListOperation.threats, help="List threat data of one or more ThreatModels.",
         formatter_class=RawTextHelpFormatter
     )
     control_list_parser = list_subparsers.add_parser(
-        ListOperation.controls, help="List control data in one or more ThreatModels.",
+        ListOperation.controls, help="List control data of one or more ThreatModels.",
         formatter_class=RawTextHelpFormatter
     )
     add_source_json_or_dir_argument(threat_list_parser, control_list_parser)
@@ -677,7 +677,7 @@ def main():
                 for key, value in controls.items():
                     writer.writerow({'id': key, **value})
             if params.output:
-                with open(params.output, 'w+') as file:
+                with open(params.output, 'w+', newline='') as file:
                     file.write(output.getvalue())
             else:
                 print(output.getvalue())
