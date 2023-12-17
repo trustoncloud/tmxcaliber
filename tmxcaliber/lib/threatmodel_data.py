@@ -9,16 +9,16 @@ class ThreatModelData:
         self.actions = threatmodel_json.get("actions")
 
     def get_feature_class_hierarchy(self, feature_class_id_to_filter) -> dict:
-        feature_classes_ids = []
-        for feature_class_id, feature_class in self.feature_classes.items():
-            if feature_class_id not in feature_classes_ids:
-                feature_classes_ids.append(feature_class_id)
-            for relation in feature_class["class_relationship"]:
-                if relation["type"] != "parent":
-                    continue
-                class_name = relation["class"]
-                if class_name not in feature_classes_ids:
-                    feature_classes_ids.append(class_name)
+        def build_hierarchy(class_id, hierarchy):
+            if class_id not in hierarchy:
+                hierarchy.add(class_id)
+                for relation in self.feature_classes[class_id]["class_relationship"]:
+                    if relation["type"] == "parent":
+                        build_hierarchy(relation["class"], hierarchy)
+
+        hierarchy = set()
+        build_hierarchy(feature_class_id_to_filter, hierarchy)
+        return list(hierarchy)
 
     def get_feature_classes_for_current_threats(self) -> list:
         feature_classes = {
