@@ -13,7 +13,7 @@ class ThreatModelData:
             "threats": self.threats,
             "feature_classes": self.feature_classes,
             "controls": self.controls,
-            "control_objectives": self.control_objectives,  # Fixed typo from self.objectives to self.control_objectives
+            "control_objectives": self.control_objectives,
             "actions": self.actions
         }
         # Add all other keys from threatmodel_json that are not explicitly mentioned
