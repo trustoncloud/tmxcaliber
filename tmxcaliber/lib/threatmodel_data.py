@@ -9,6 +9,9 @@ class ThreatModelData:
         self.actions = threatmodel_json.get("actions")
 
     def get_feature_class_hierarchy(self, feature_class_id_to_filter) -> list:
+        if feature_class_id_to_filter not in self.feature_classes:
+            return []
+
         def build_hierarchy(class_id, hierarchy):
             if class_id not in hierarchy:
                 hierarchy.add(class_id)
