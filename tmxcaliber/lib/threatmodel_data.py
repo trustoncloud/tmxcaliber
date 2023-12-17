@@ -9,10 +9,15 @@ class ThreatModelData:
         self.actions = threatmodel_json.get("actions")
     
     def get_json(self):
-        return {
+        json_data = {
             "threats": self.threats,
             "feature_classes": self.feature_classes,
             "controls": self.controls,
-            "control_objectives": self.objectives,
+            "control_objectives": self.control_objectives,  # Fixed typo from self.objectives to self.control_objectives
             "actions": self.actions
         }
+        # Add all other keys from threatmodel_json that are not explicitly mentioned
+        for key, value in self.threatmodel_json.items():
+            if key not in json_data:
+                json_data[key] = value
+        return json_data
