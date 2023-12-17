@@ -9,9 +9,11 @@ class FilterApplier:
 
     def apply_filter(self, threatmodel_data: ThreatModelData):
         if self.filter.severity:
+            severity_index = SEVERITY_ORDER.index(self.filter.severity.capitalize())
+            allowed_severities = set(SEVERITY_ORDER[:severity_index + 1])
             for threat_id, threat in threatmodel_data.threats.copy().items():
-                    if threat.get("cvss_severity").lower() != self.filter.severity.lower():
-                        threatmodel_data.threats.pop(threat_id)
+                if threat.get("cvss_severity", "").capitalize() not in allowed_severities:
+                    threatmodel_data.threats.pop(threat_id)
 
 '''
         if args.ids:
