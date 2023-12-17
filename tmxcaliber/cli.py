@@ -16,6 +16,9 @@ from argparse import RawTextHelpFormatter
 
 from colorama import Fore
 
+from .lib.filter import Filter, IDS_INPUT_SEPARATOR, FEATURE_CLASSES_INPUT_SEPARATOR, EVENTS_INPUT_SEPARATOR, PERMISSIONS_INPUT_SEPARATOR
+from .lib.threatmodel_data import ThreatModelData, get_classified_cvssed_control_ids_by_co
+from .lib.filter_applier import FilterApplier
 from .opacity import generate_xml
 from .opacity import generate_pngs
 
@@ -39,8 +42,6 @@ GUARDDUTY_FINDINGS = "(" + "|".join([
     "Persistence",
     "Recon"
 ]) + ")" + ":\w+\/[\w!.-]+"
-IDS_INPUT_SEPARATOR = ","
-IDS_FORMAT_REGEX = r"^\w+\.(fc|t|c|co)\d+$"
 
 CURR_DIR = os.getcwd()
 XML_DIR = os.path.join(CURR_DIR, "xmls")
@@ -60,38 +61,50 @@ class ListOperation:
     threats = "threats"
     controls = "controls"
 
-
 def _get_version():
     module_name = vars(sys.modules[__name__])["__package__"]
     return f"%(prog)s {pkg_resources.require(module_name)[0].version}"
 
-def validate_id_format(input_ids: str) -> str:
-    id_prefix = None
-    for value in [
-        x.lower() for x in input_ids.split(IDS_INPUT_SEPARATOR) or []
-    ]:
-        match = re.match(IDS_FORMAT_REGEX, value)
-        if not match:
-            ArgumentTypeError(
-                f"invalid ID format: {value}. Expected format is "
-                "'somestring.(FC|T|C|CO)somenumber'"
-            )
+def is_file(path: str) -> str:
+    if not os.path.exists(path):
+        raise ArgumentTypeError(f"The path {path} does not exist.")
+    if not os.path.isfile(path):
+        raise ArgumentTypeError(f"The path {path} is neither a file.")
+    if os.path.isfile(path) and not (path.lower().endswith('.json') or path.lower().endswith('.xml')):
+        raise ArgumentTypeError(f"The file {path} is not valid, only json or XML can be given.")
+    return path
 
-        current_prefix = match.group(1)
-        if id_prefix is None:
-            id_prefix = current_prefix
-        elif id_prefix != current_prefix:
-            ArgumentTypeError(
-                "inconsistent ID types. Please provide IDs "
-                "with the same prefix (FC|T|C|CO)"
-            )
-    return input_ids
-
-def add_common_arguments(*parsers: ArgumentParser):
+def add_source_argument(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
-            "source", type=str,
-            help="path to the ThreatModel JSON file."
+            "source", type=is_file, 
+            help="Path to the ThreatModel JSON file. We support XML file for internal purposes."
+        )
+
+def add_severity_filter_argument(*parsers: ArgumentParser):
+    for parser in parsers:
+        parser.add_argument(
+            "--severity", type=str, choices=[
+                "very high", "high", "medium", "low", "very low"
+            ], help="filter data by threat for severity equal or above the selected value.\n\n"
+        )
+
+def add_feature_classes_filter_argument(*parsers: ArgumentParser):
+    for parser in parsers:
+        parser.add_argument(
+            "--feature-classes", type=str, help=(
+                "filter data by feature class. "
+                f"Separate by `{FEATURE_CLASSES_INPUT_SEPARATOR}`, if several.\n\n"
+            )
+        )
+
+def add_ids_filter_argument(*parsers: ArgumentParser):
+    for parser in parsers:
+        parser.add_argument(
+            "--ids", type=str, help=(
+                "filter data by IDs (only works for threats for now). "
+                f"Separate by `{IDS_INPUT_SEPARATOR}`, if several.\n\n"
+            )
         )
 
 def is_file_or_dir(path: str) -> str:
@@ -99,13 +112,15 @@ def is_file_or_dir(path: str) -> str:
         raise ArgumentTypeError(f"The path {path} does not exist.")
     if not (os.path.isfile(path) or os.path.isdir(path)):
         raise ArgumentTypeError(f"The path {path} is neither a file nor a directory.")
+    if os.path.isfile(path) and not (path.lower().endswith('.json') or path.lower().endswith('.xml')):
+        raise ArgumentTypeError(f"The file {path} is not valid, only json or xml can be given.")
     return path
 
 def add_source_json_or_dir_argument(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
             "source", type=is_file_or_dir,
-            help="path to the ThreatModel JSON file or directory containing JSON files."
+            help="Path to the ThreatModel JSON file or directory containing ThreatModel JSON files."
         )
 
 def add_csv_output_argument(*parsers: ArgumentParser):
@@ -130,32 +145,15 @@ def get_params():
         formatter_class=RawTextHelpFormatter
     )
     filter_parser.add_argument(
-        "--severity", type=str, choices=[
-            "very high", "high", "medium", "low", "very low"
-        ], help="filter data by threat severity.\n\n"
-    )
-    filter_parser.add_argument(
-        "--permission", nargs="*", help=(
+        "--permissions", type=str, help=(
             "filter data by IAM permission(s). "
-            "Separate by spaces, if several.\n\n"
+            f"Separate by `{PERMISSIONS_INPUT_SEPARATOR}`, if several.\n\n"
         )
     )
     filter_parser.add_argument(
-        "--feature-class", nargs="*", help=(
-            "filter data by feature class. "
-            "Separate by spaces, if several.\n\n"
-        )
-    )
-    filter_parser.add_argument(
-        "--events", nargs="*", help=(
+        "--events", type=str, help=(
             "filter data by actions log events. "
-            "Separate by spaces, if several.\n\n"
-        )
-    )
-    filter_parser.add_argument(
-        "--ids", nargs="*", type=validate_id_format, help=(
-            "filter data by IDs (only works for threats for now). "
-            f"Separate by `{IDS_INPUT_SEPARATOR}`, if several.\n\n"
+            f"Separate by `{EVENTS_INPUT_SEPARATOR}`, if several.\n\n"
         )
     )
 
@@ -173,7 +171,7 @@ def get_params():
     )
     map_parser.add_argument(
         "--framework", type=str, required=True, help=(
-            "framework to map to. (must be the "
+            "framework to map to (must be the "
             "exact name present in the SCF.)\n\n"
         )
     )
@@ -243,21 +241,22 @@ def get_params():
     )
     add_source_json_or_dir_argument(threat_list_parser, control_list_parser)
     add_csv_output_argument(threat_list_parser, control_list_parser)
-    add_common_arguments(filter_parser, map_parser, scan_parser, gen_parser)
+    add_source_argument(filter_parser, map_parser, scan_parser, gen_parser)
+    add_severity_filter_argument(threat_list_parser, filter_parser)
+    add_feature_classes_filter_argument(threat_list_parser, filter_parser)
+    add_ids_filter_argument(filter_parser)
     return validate(parser.parse_args())
 
 def validate(args: Namespace) -> Namespace:
     if args.operation == Operation.filter:
-        args.severity = args.severity.lower() if args.severity else ""
-        args.events = [x.lower() for x in args.events or []]
-        args.permission = [x.lower() for x in args.permission or []]
-        args.feature_class = [x.lower() for x in args.feature_class or []]
-        args.ids = [
-            x.lower() for x in (args.ids and args.ids[0] or "")
-                .split(IDS_INPUT_SEPARATOR) if x
-        ]
+        args.filter_obj = Filter(severity=args.severity, events=args.events, permissions=args.permissions, feature_classes=args.feature_classes, ids=args.ids)
+    if args.operation == Operation.list and args.list_type == ListOperation.threats:
+        args.filter_obj = Filter(severity=args.severity, feature_classes=args.feature_classes)
     if args.operation == Operation.map:
         args.framework = args.framework.replace("\\n","\n")
+    if args.operation == Operation.generate:
+        if isinstance(args.source, str) and not args.source.endswith('_DFD.xml') and not args.source.endswith('.json'):
+            raise ArgumentTypeError('Only the XML from the main ThreatModel can be used to generate DFD images.')
     return args
 
 def map(args: Namespace, data: dict) -> dict:
@@ -315,7 +314,7 @@ def scan_controls(args: Namespace, data: dict) -> dict:
         pattern = re.compile(GUARDDUTY_FINDINGS)
     else:
         pattern = re.compile(args.pattern)
-    controls: dict = data.get("controls")
+    controls: dict = data.controls
     matched_controls = {}
     
     for control_id, control in controls.items():
@@ -325,36 +324,33 @@ def scan_controls(args: Namespace, data: dict) -> dict:
     return {"controls": matched_controls}
 
 def get_input_data(params: Namespace) -> Union[dict, str, list]:
-
+    is_threatmodel_json = False
     if os.path.isdir(params.source):
-        json_files = [os.path.join(params.source, f) for f in os.listdir(params.source) if f.endswith('.json')]
-        json_data_list = []
-        for json_file in json_files:
+        json_file_paths = [os.path.join(params.source, f) for f in os.listdir(params.source) if f.endswith('.json')]
+        is_threatmodel_json = True
+    elif os.path.isfile(params.source):
+        if params.source.endswith('.xml'):
+            with open(params.source, 'r') as file:
+                return file.read()
+        elif params.source.endswith('.json'):
+            json_file_paths = [params.source]
+            is_threatmodel_json = True
+    
+    if is_threatmodel_json:
+        threatmodel_data_list = []
+        if params.operation != 'list' and len(json_file_paths) > 1:
+            raise ArgumentTypeError(f'Only 1 file can be given for {params.operation}')
+        for json_file_path in json_file_paths:
             try:
-                with open(json_file) as f:
-                    json_data_list.append(json.load(f))
+                with open(json_file_path) as f:
+                    threatmodel_data_list.append(ThreatModelData(json.load(f)))
             except json.JSONDecodeError:
-                print(f"Invalid JSON data in file: {json_file}")
+                print(f"Invalid JSON data in file: {json_file_path}")
                 exit(1)
             except FileNotFoundError:
-                print(f"File not found: {json_file}")
+                print(f"File not found: {json_file_path}")
                 exit(1)
-        return json_data_list
-    else:
-        try:
-            with open(params.source) as f:
-                try:
-                    content = f.read()
-                    return json.loads(content)
-                except json.JSONDecodeError:
-                    if params.operation == Operation.generate and \
-                            params.source.endswith(".xml"):
-                        return content
-                    print("Invalid JSON data for the ThreatModel:", params.source)
-                    exit(1)
-        except FileNotFoundError:
-            print("File not found:", params.source)
-            exit(1)
+        return threatmodel_data_list
 
 def get_drawio_binary_path():
     if platform.system().lower() == "windows":
@@ -381,13 +377,91 @@ def get_drawio_binary_path():
 def main():
 
     params = get_params()
-    # it's either a list of JSON dict, a dict from a JSON file, or a string from XML file.
+    # it's either a list of JSON dict, or a string from XML file.
     data = get_input_data(params)
 
     if params.operation == Operation.filter:
-        print(json.dumps(filter_down(params, data), indent=2))
+        threatmodel_data = data[0]
+        FilterApplier(params.filter_obj).apply_filter(threatmodel_data)
+        print(json.dumps(threatmodel_data.get_json(), indent=2))
+
+    elif params.operation == Operation.scan:
+        print(json.dumps(scan_controls(params, data[0]), indent=2))
+
+    elif params.operation == Operation.generate:
+        if not params.bin:
+            try:
+                binary = get_drawio_binary_path()
+            except BinaryNotFound as exc:
+                print(Fore.RED + "\n".join(exc.args) + Fore.RESET + "\n")
+                exit(1)
+        else:
+            binary = params.bin
+
+        if isinstance(data, str):
+            main_xml = data
+            filename = os.path.basename(params.source)
+            parts = filename.split("_DFD.xml")
+            if len(parts) != 2:
+                print("Invalid XML filename format. "
+                      "Expected format: {provider}_{service}_DFD.xml")
+                exit(1)
+            provider, service = parts[0].split("_", 1)
+
+        elif isinstance(data, list):
+            provider = data[0].threatmodel_json.get("metadata", {}).get("provider")
+            service = data[0].threatmodel_json.get("metadata", {}).get("service")
+            if not (provider and service):
+                print("No `provider` or `service` in the JSON data.")
+                exit(1)
+
+            body = data[0].threatmodel_json.get("dfd", {}).get("body")
+            if not body:
+                print("Could not get `dfd.body` from the JSON data.")
+                exit(1)
+
+            try:
+                main_xml = b64decode(body).decode("utf8")
+            except ValueError:
+                print("Invalid XML data provided in the JSON.")
+                exit(1)
+
+        # remove directories if present already (cleans up old content.)
+        if os.path.isdir(XML_DIR):
+            rmtree(XML_DIR)
+        if os.path.isdir(IMG_DIR):
+            rmtree(IMG_DIR)
+
+        prefix = f"{provider}_{service}".upper()
+        generate_xml(
+            main_xml, prefix, params.threat_dir,
+            params.fc_dir, params.validate
+        )
+
+        if params.fc_dir != params.threat_dir:
+            generate_pngs(binary, params.fc_dir, params.out_dir, 1500)
+            generate_pngs(binary, params.threat_dir, params.out_dir, 1500)
+        else:
+            generate_pngs(binary, params.fc_dir, params.out_dir, 1500)
+    
+    elif params.operation == Operation.list:
+        for threatmodel_data in ThreatModelData.threatmodel_data_list:
+            FilterApplier(params.filter_obj).apply_filter(threatmodel_data)
+        if params.list_type == ListOperation.threats:
+            csv_output = ThreatModelData.get_csv_of_threats()
+        if params.list_type == ListOperation.controls:
+            csv_output = ThreatModelData.get_csv_of_controls()
+
+        if params.output:
+            with open(params.output, 'w+', newline='') as file:
+                file.write(csv_output)
+        else:
+            print(csv_output)
 
     elif params.operation == Operation.map:
+        print('OSCAL is currently not supported by SCF. We pause the support of this function for now.')
+        exit(0)
+        params.framework = params.framework.replace("\\n","\n")
         map_json = map(params, data)
         if params.format == "json":
             print(json.dumps(map_json, indent=2))
@@ -432,101 +506,4 @@ def main():
                     csvfile.write(service + "\n")
                 csvfile.write(csv_line[-1])
             print(f"Mapping output in: {output_file}")
-
-    elif params.operation == Operation.scan:
-        print(json.dumps(scan_controls(params, data), indent=2))
-
-    elif params.operation == Operation.generate:
-        if not params.bin:
-            try:
-                binary = get_drawio_binary_path()
-            except BinaryNotFound as exc:
-                print(Fore.RED + "\n".join(exc.args) + Fore.RESET + "\n")
-                exit(1)
-        else:
-            binary = params.bin
-
-        if isinstance(data, str):
-            main_xml = data
-            filename = os.path.basename(params.source)
-            parts = filename.split("_DFD.xml")
-            if len(parts) != 2:
-                print("Invalid XML filename format. "
-                      "Expected format: {provider}_{service}_DFD.xml")
-                exit(1)
-            provider, service = parts[0].split("_", 1)
-
-        elif isinstance(data, dict):
-            provider = data.get("metadata", {}).get("provider")
-            service = data.get("metadata", {}).get("service")
-            if not (provider and service):
-                print("No `provider` or `service` in the JSON data.")
-                exit(1)
-
-            body = data.get("dfd", {}).get("body")
-            if not body:
-                print("Could not get `dfd.body` from the JSON data.")
-                exit(1)
-
-            try:
-                main_xml = b64decode(body).decode("utf8")
-            except ValueError:
-                print("Invalid XML data provided in the JSON.")
-                exit(1)
-
-        # remove directories if present already (cleans up old content.)
-        if os.path.isdir(XML_DIR):
-            rmtree(XML_DIR)
-        if os.path.isdir(IMG_DIR):
-            rmtree(IMG_DIR)
-
-        prefix = f"{provider}_{service}".upper()
-        generate_xml(
-            main_xml, prefix, params.threat_dir,
-            params.fc_dir, params.validate
-        )
-
-        if params.fc_dir != params.threat_dir:
-            generate_pngs(binary, params.fc_dir, params.out_dir, 1500)
-            generate_pngs(binary, params.threat_dir, params.out_dir, 1500)
-        else:
-            generate_pngs(binary, params.fc_dir, params.out_dir, 1500)
-    
-    elif params.operation == Operation.list:
-        if params.list_type == ListOperation.threats:
-            if isinstance(data, dict):
-                data = [data]
-            output = io.StringIO()
-            fieldnames = ['id'] + list(data[0]['threats'][next(iter(data[0]['threats']))].keys())
-            writer = csv.DictWriter(output, fieldnames=fieldnames)
-            writer.writeheader()
-
-            for json_data in data:
-                threats = json_data['threats']
-                for key, value in threats.items():
-                    value['access'] = json.dumps(value['access'])
-                    writer.writerow({'id': key, **value})
-            if params.output:
-                with open(params.output, 'w+', newline='') as file:
-                    file.write(output.getvalue())
-            else:
-                print(output.getvalue())
-
-        if params.list_type == ListOperation.controls:
-            if isinstance(data, dict):
-                data = [data]
-            output = io.StringIO()
-            fieldnames = ['id'] + list(data[0]['controls'][next(iter(data[0]['controls']))].keys())
-            writer = csv.DictWriter(output, fieldnames=fieldnames)
-            writer.writeheader()
-
-            for json_data in data:
-                controls = json_data['controls']
-                for key, value in controls.items():
-                    writer.writerow({'id': key, **value})
-            if params.output:
-                with open(params.output, 'w+', newline='') as file:
-                    file.write(output.getvalue())
-            else:
-                print(output.getvalue())
 

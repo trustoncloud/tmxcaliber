@@ -19,6 +19,19 @@ class ThreatModelDataList:
                 writer.writerow({'id': key, **value})
         return output
 
+def get_permissions(access: dict) -> list:
+    permissions = []
+    for _, perms in access.items():
+        if isinstance(perms, str):
+            permissions.append(perms)
+        elif isinstance(perms, list):
+            for perm in perms:
+                if isinstance(perm, str):
+                    permissions.append(perm)
+                elif isinstance(perm, dict):
+                    permissions.extend(get_permissions(perm))
+    return [x.lower() for x in list(set(permissions))]
+
 class ThreatModelData:
 
     threatmodel_data_list = []
@@ -74,7 +87,7 @@ class ThreatModelData:
                 if any(mitigation.get("threat") in threat_ids for mitigation in control.get("mitigate", [])):
                     controls[control_id] = control
         return controls
-    
+
     def get_json(self) -> dict:
         json_data = {}
         # Iterate over the keys of the original threatmodel_json
@@ -94,7 +107,7 @@ class ThreatModelData:
         return json_data
 
     @classmethod
-    def get_csv(cls):
+    def get_csv_of_threats(cls):
         output = io.StringIO()
         if not cls.threatmodel_data_list:
             return output.getvalue()
@@ -107,3 +120,46 @@ class ThreatModelData:
                 value['access'] = json.dumps(value['access'])
                 writer.writerow({'id': key, **value})
         return output.getvalue()
+
+    @classmethod
+    def get_csv_of_controls(cls):
+        output = io.StringIO()
+        if not cls.threatmodel_data_list:
+            return output.getvalue()
+        fieldnames = ['id'] + list(cls.threatmodel_data_list[0].get_json()['controls'][next(iter(cls.threatmodel_data_list[0].get_json()['controls']))].keys())
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        for threatmodel_data in cls.threatmodel_data_list:
+            controls = threatmodel_data.controls
+            for key, value in controls.items():
+                writer.writerow({'id': key, **value})
+        return output.getvalue()
+
+def get_classified_cvssed_control_ids_by_co(
+    control_id_by_cvss_severity: "dict[str, list]",
+    control_obj_id: str,
+    control_data: dict
+) -> "dict[str, list]":
+    severity_range = ("Very High", "High", "Medium", "Low", "Very Low")
+    control_id_list = {}
+
+    for idx, severity in enumerate(severity_range):
+        if control_id_by_cvss_severity:
+            control_id_list[severity] = control_id_by_cvss_severity[severity]
+        else:
+            control_id_list[severity] = []
+        for control in control_data:
+            if control_data[control]["objective"] != control_obj_id:
+                continue
+            if control_data[control]["weighted_priority"] != severity:
+                continue
+            add_control = True
+            if control in control_id_list[severity]:
+                add_control = False
+            if idx > 0:
+                for severity_prev in severity_range[0:idx]:
+                    if control in control_id_list[severity_prev]:
+                        add_control = False 
+            if add_control:
+                control_id_list[severity].append(control)    
+    return control_id_list
