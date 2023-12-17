@@ -7,15 +7,12 @@ EVENTS_INPUT_SEPARATOR = ','
 IDS_FORMAT_REGEX = r"^\w+\.(fc|t|c|co)\d+$"
 
 class Filter:
-    def __init__(self, severity: str = "", events: list = [], permissions: list = [], feature_classes: list = [], ids: list = []):
+    def __init__(self, severity: str = "", events: str = "", permissions: str = "", feature_classes: str = "", ids: str = ""):
         self.severity = severity.lower() if severity else ""
-        self.events = [x.lower() for x in events or []]
-        self.permissions = [x.lower() for x in permissions or []]
-        self.feature_classes = [x.lower() for x in feature_classes or []]
-        self.ids = [
-            x.lower() for x in (ids and ids[0] or "")
-                .split(IDS_INPUT_SEPARATOR) if x
-        ]
+        self.events = [x.lower().strip() for x in events.split(EVENTS_INPUT_SEPARATOR) if x]
+        self.permissions = [x.lower().strip() for x in permissions.split(PERMISSIONS_INPUT_SEPARATOR) if x]
+        self.feature_classes = [x.lower().strip() for x in feature_classes.split(FEATURE_CLASSES_INPUT_SEPARATOR) if x]
+        self.ids = [x.lower().strip() for x in ids.split(IDS_INPUT_SEPARATOR) if x]
         self.__validate()
     
     def __validate(self):
