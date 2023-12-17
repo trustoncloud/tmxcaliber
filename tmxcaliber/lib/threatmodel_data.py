@@ -94,14 +94,16 @@ class ThreatModelData:
         return json_data
 
     @classmethod
-    def get_csv(self):
+    def get_csv(cls):
         output = io.StringIO()
-        fieldnames = ['id'] + list(self.threatmodel_data_list[0].get_json()['threats'][next(iter(self.threatmodel_data_list[0].get_json()['threats']))].keys())
+        if not cls.threatmodel_data_list:
+            return output.getvalue()
+        fieldnames = ['id'] + list(cls.threatmodel_data_list[0].get_json()['threats'][next(iter(cls.threatmodel_data_list[0].get_json()['threats']))].keys())
         writer = csv.DictWriter(output, fieldnames=fieldnames)
         writer.writeheader()
-        for threatmodel_data in self.threatmodel_data_list:
+        for threatmodel_data in cls.threatmodel_data_list:
             threats = threatmodel_data.threats
             for key, value in threats.items():
                 value['access'] = json.dumps(value['access'])
                 writer.writerow({'id': key, **value})
-        return output
+        return output.getvalue()
