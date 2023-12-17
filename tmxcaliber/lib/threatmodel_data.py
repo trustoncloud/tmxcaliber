@@ -1,5 +1,28 @@
+import io
+import csv
+import json
+
+class ThreatModelDataList:
+
+    def __init__(self, threatmodel_data_list):
+        self.threatmodel_data_list = threatmodel_data_list
+    
+    def get_csv(self):
+        output = io.StringIO()
+        fieldnames = ['id'] + list(self.threatmodel_data_list[0].get_json()['threats'][next(iter(self.threatmodel_data_list[0].get_json()['threats']))].keys())
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        for threatmodel_data in self.threatmodel_data_list:
+            threats = threatmodel_data.threats
+            for key, value in threats.items():
+                value['access'] = json.dumps(value['access'])
+                writer.writerow({'id': key, **value})
+        return output
 
 class ThreatModelData:
+
+    threatmodel_data_list = []
+
     def __init__(self, threatmodel_json):
         self.threatmodel_json = threatmodel_json
         self.threats = threatmodel_json.get("threats")
@@ -7,6 +30,7 @@ class ThreatModelData:
         self.controls = threatmodel_json.get("controls")
         self.control_objectives = threatmodel_json.get("control_objectives")
         self.actions = threatmodel_json.get("actions")
+        ThreatModelData.threatmodel_data_list.append(self)
 
     def get_feature_class_hierarchy(self, feature_class_id_to_filter) -> list:
         if feature_class_id_to_filter not in self.feature_classes:
@@ -68,3 +92,16 @@ class ThreatModelData:
             else:
                 json_data[key] = value
         return json_data
+
+    @classmethod
+    def get_csv(self):
+        output = io.StringIO()
+        fieldnames = ['id'] + list(self.threatmodel_data_list[0].get_json()['threats'][next(iter(self.threatmodel_data_list[0].get_json()['threats']))].keys())
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        for threatmodel_data in self.threatmodel_data_list:
+            threats = threatmodel_data.threats
+            for key, value in threats.items():
+                value['access'] = json.dumps(value['access'])
+                writer.writerow({'id': key, **value})
+        return output
