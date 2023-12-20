@@ -1,6 +1,6 @@
 FROM debian:bullseye-slim
 
-ARG DRAWIO_VERSION=21.2.8
+ARG DRAWIO_VERSION=22.1.11
 ARG USERNAME=debian
 
 RUN apt-get update -y && \
