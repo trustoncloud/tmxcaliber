@@ -11,7 +11,11 @@ class FilterApplier:
         if self.filter.severity:
             self.__filter_by_severity(threatmodel_data=threatmodel_data)
         if self.filter.feature_classes:
-            self.__filter_by_feature_class(threatmodel_data=threatmodel_data)
+            try:
+                self.__filter_by_feature_class(threatmodel_data=threatmodel_data)
+            except ValueError as ex:
+                print(ex)
+                exit(0)
         if self.filter.permissions:
             self.__filter_by_permissions(threatmodel_data=threatmodel_data)
     
@@ -73,7 +77,6 @@ class FilterApplier:
         for threat_id, threat in threatmodel_data.threats.copy().items():
             has_access = False
             permissions = get_permissions(threat.get("access"))
-            print(permissions)
             if any([x in self.filter.permissions for x in permissions]):
                 has_access = True
             if not has_access:

@@ -46,8 +46,18 @@ class ThreatModelData:
         ThreatModelData.threatmodel_data_list.append(self)
 
     def get_feature_class_hierarchy(self, feature_class_id_to_filter) -> list:
-        if feature_class_id_to_filter not in self.feature_classes:
-            return []
+
+        actual_feature_class_id_to_filter = None
+        for fc in self.feature_classes.keys():
+            if fc.lower() == feature_class_id_to_filter.lower():
+                actual_feature_class_id_to_filter = fc
+                break
+        
+        if not actual_feature_class_id_to_filter:
+            raise ValueError(f'[ERROR] The provided FC id ({feature_class_id_to_filter}) is not present. Make sure to write the full ID, (e.g., Route53.FC1)')
+
+        if actual_feature_class_id_to_filter not in self.feature_classes:
+            raise ValueError(f'[ERROR] The provided FC id ({feature_class_id_to_filter}) is not present. Make sure to write the full ID, (e.g., Route53.FC1)')
 
         def build_hierarchy(class_id, hierarchy):
             if class_id not in hierarchy:
@@ -57,7 +67,7 @@ class ThreatModelData:
                         build_hierarchy(relation["class"], hierarchy)
 
         hierarchy = set()
-        build_hierarchy(feature_class_id_to_filter, hierarchy)
+        build_hierarchy(actual_feature_class_id_to_filter, hierarchy)
         return list(hierarchy)
 
     def get_feature_classes_for_current_threats(self) -> list:
