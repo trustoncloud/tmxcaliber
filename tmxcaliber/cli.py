@@ -250,8 +250,11 @@ def get_params():
 def validate(args: Namespace) -> Namespace:
     if args.operation == Operation.filter:
         args.filter_obj = Filter(severity=args.severity, events=args.events, permissions=args.permissions, feature_classes=args.feature_classes, ids=args.ids)
-    if args.operation == Operation.list and args.list_type == ListOperation.threats:
-        args.filter_obj = Filter(severity=args.severity, feature_classes=args.feature_classes)
+    if args.operation == Operation.list:
+        if args.list_type == ListOperation.threats:
+            args.filter_obj = Filter(severity=args.severity, feature_classes=args.feature_classes)
+        if args.list_type == ListOperation.controls:
+            args.filter_obj = Filter()
     if args.operation == Operation.map:
         args.framework = args.framework.replace("\\n","\n")
     if args.operation == Operation.generate:

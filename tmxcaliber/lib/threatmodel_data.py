@@ -136,13 +136,38 @@ class ThreatModelData:
         output = io.StringIO()
         if not cls.threatmodel_data_list:
             return output.getvalue()
-        fieldnames = ['id'] + list(cls.threatmodel_data_list[0].get_json()['controls'][next(iter(cls.threatmodel_data_list[0].get_json()['controls']))].keys())
-        writer = csv.DictWriter(output, fieldnames=fieldnames)
+
+        control_objectives = cls.threatmodel_data_list[0].get_json()['control_objectives']
+        controls = cls.threatmodel_data_list[0].get_json()['controls']
+
+        # Generate initial field names from the controls, excluding 'id' for now
+        all_fieldnames = [field for field in controls[next(iter(controls))].keys() if field not in ('id', 'objective', 'objective_description', 'retired')]
+        
+        # Start with 'objective' and 'objective_description', add 'id' third
+        ordered_fieldnames = ['objective', 'objective_description', 'id']
+        
+        # Add the rest of the fields except for 'retired', which will be added last
+        ordered_fieldnames += all_fieldnames
+        
+        # Append 'retired' to the end
+        ordered_fieldnames.append('retired')
+
+        writer = csv.DictWriter(output, fieldnames=ordered_fieldnames)
         writer.writeheader()
+
         for threatmodel_data in cls.threatmodel_data_list:
-            controls = threatmodel_data.controls
+            controls = threatmodel_data.get_json()['controls']
             for key, value in controls.items():
-                writer.writerow({'id': key, **value})
+                # Fetch the description for the control's objective
+                co_description = control_objectives[value['objective']]['description']
+                # Include 'objective_description' with its value
+                value['objective_description'] = co_description
+                # Assign 'id' its value
+                value['id'] = key
+                # Ensure each row is ordered as per 'ordered_fieldnames'
+                row = {fieldname: value.get(fieldname, '') for fieldname in ordered_fieldnames}
+                writer.writerow(row)
+
         return output.getvalue()
 
 def get_classified_cvssed_control_ids_by_co(
