@@ -18,9 +18,11 @@ $: docker run --rm -it tmxcaliber -h
 ### Linux / MacOS
 Initiate and activate virtual environment by running the following commands.
 ```sh
-$: python -m venv .venv
-$: source .venv/bin/activate
+# python -m venv [path/to/virtual-env]
+$: python -m venv .my-env
+$: source .my-env/bin/activate
 ```
+> **Note:** Virtual environment is used to isolate yourself from global installation of Python, enabling you to install packages of your desired versions. More details can be found [here](https://docs.python.org/3/library/venv.html).
 
 Once the environment is activated, install the package via `pip` by running:
 ```sh
@@ -37,8 +39,9 @@ $: pip install .
 ### Windows
 First, initiate and activate the environment as follows.
 ```sh
-$: python -m venv .venv
-$: .venv\Scripts\activate.bat
+# python -m venv [path/to/virtual-env]
+$: python -m venv .my-env
+$: .my-env\Scripts\activate.bat
 ```
 Then, clone the git repository and install using `pip`.
 ```sh
