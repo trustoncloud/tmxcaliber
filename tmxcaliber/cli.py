@@ -465,6 +465,7 @@ def main():
         # Get the data from the "SCF 2023.4" worksheet
         scf_data = pd.read_excel(xls, 'SCF 2023.4')
 
+        '''
         params.framework = params.framework.replace("\\n","\n")
         map_json = map(params, data, scf_data)
         if params.format == "json":
@@ -510,4 +511,4 @@ def main():
                     csvfile.write(service + "\n")
                 csvfile.write(csv_line[-1])
             print(f"Mapping output in: {output_file}")
-
+        '''
