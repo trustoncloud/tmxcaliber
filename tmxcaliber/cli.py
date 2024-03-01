@@ -4,6 +4,7 @@ import io
 import csv
 import sys
 import json
+import pandas as pd
 import platform
 import pkg_resources
 from typing import Union
@@ -459,11 +460,13 @@ def main():
         print('The current version of SCF supported is: 2023.4')
         file_2023 = 'https://github.com/securecontrolsframework/securecontrolsframework/raw/d1428c74aa76a66d9e131e6a3e3d1e61af25bd3a/Secure%20Controls%20Framework%20(SCF)%20-%202023.4.xlsx'
         local_scf = get_cached_local_path_for(file_2023)
-        print(local_scf)
+        # Read the Excel file
+        xls = pd.ExcelFile(local_scf)
+        # Get the data from the "SCF 2023.4" worksheet
+        scf_data = pd.read_excel(xls, 'SCF 2023.4')
 
-        exit(0)
         params.framework = params.framework.replace("\\n","\n")
-        map_json = map(params, data)
+        map_json = map(params, data, scf_data)
         if params.format == "json":
             print(json.dumps(map_json, indent=2))
         if params.format == "csv":
