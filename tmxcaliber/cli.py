@@ -496,8 +496,15 @@ def main():
         scf_data = pd.read_excel(xls, 'SCF 2023.4')
         # Check if params.framework is in the columns of the scf_data DataFrame
         if not params.framework.endswith('.csv'):
-            # Keep only the columns "SCF #" and the one matching params.framework
-            scf_data = scf_data[["SCF #", params.framework]]
+            if params.framework not in scf_data.columns:
+                raise FrameworkNotFoundError(params.framework)
+            if params.scf == '2023.4':
+                file_location = 'https://github.com/securecontrolsframework/securecontrolsframework/raw/d1428c74aa76a66d9e131e6a3e3d1e61af25bd3a/Secure%20Controls%20Framework%20(SCF)%20-%202023.4.xlsx'
+            local_scf = get_cached_local_path_for(file_location)
+            # Read the Excel file
+            xls = pd.ExcelFile(local_scf)
+            # Get the data from the "SCF 2023.4" worksheet
+            scf_data = pd.read_excel(xls, 'SCF 2023.4')
 
         elif params.framework.endswith('.csv'):
             framework_pd = validate_and_get_framework(params.framework)
