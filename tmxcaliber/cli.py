@@ -470,7 +470,7 @@ def main():
             if params.framework not in scf_data.columns:
                 raise ValueError
         except ValueError:
-            print(f"Error: The framework '{params.framework}' was not found in the 'SCF 2023.4' worksheet of the provided Excel file. Please ensure that the framework name is spelled correctly and that it exists in the 'SCF 2023.4' worksheet.")
+            print(f"Framework '{params.framework}' not found in SCF 2023.4 worksheet.")
             return
 
         '''
