@@ -5,6 +5,7 @@ import csv
 import sys
 import json
 import pandas as pd
+from pandas import DataFrame
 import platform
 import pkg_resources
 from typing import Union
@@ -248,6 +249,29 @@ def get_params():
     add_ids_filter_argument(filter_parser)
     return validate(parser.parse_args())
 
+def validate_and_get_framework(csv_path: str) -> DataFrame:
+    # Read the CSV file into a DataFrame
+    df = pd.read_csv(csv_path, header=None)
+
+    # Validate that the DataFrame has exactly 2 columns
+    if len(df.columns) != 2:
+        raise ValueError(f"The CSV file at {csv_path} should have exactly 2 columns.")
+
+    # Split any cells containing semicolons into multiple rows
+    df = (df.set_index(df.columns.drop(1,1).tolist())
+          .stack()
+          .str.split(';', expand=True)
+          .stack()
+          .unstack(-2)
+          .reset_index(-1, drop=True)
+          .reset_index()
+    )
+
+    # Remove any duplicate rows
+    df = df.drop_duplicates()
+
+    return df
+
 def validate(args: Namespace) -> Namespace:
     if args.operation == Operation.filter:
         args.filter_obj = Filter(severity=args.severity, events=args.events, permissions=args.permissions, feature_classes=args.feature_classes, ids=args.ids)
@@ -257,7 +281,10 @@ def validate(args: Namespace) -> Namespace:
         if args.list_type == ListOperation.controls:
             args.filter_obj = Filter()
     if args.operation == Operation.map:
-        args.framework = args.framework.replace("\\n","\n")
+        if args.framework.endswith('.csv'):
+            args.framework = validate_and_get_framework(args.framework)
+        else:
+            args.framework = args.framework.replace("\\n","\n")
     if args.operation == Operation.generate:
         if isinstance(args.source, str) and not args.source.endswith('_DFD.xml') and not args.source.endswith('.json'):
             raise ArgumentTypeError('Only the XML from the main ThreatModel can be used to generate DFD images.')
