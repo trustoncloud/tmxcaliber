@@ -275,6 +275,9 @@ def validate_and_get_framework(csv_path: str) -> DataFrame:
 def validate(args: Namespace) -> Namespace:
     if args.operation == Operation.filter:
         args.filter_obj = Filter(severity=args.severity, events=args.events, permissions=args.permissions, feature_classes=args.feature_classes, ids=args.ids)
+    if args.framework.lower() == "iso":
+        print("[Error] The framework 'ISO' is not supported.")
+        exit(0)
     if args.operation == Operation.list:
         if args.list_type == ListOperation.threats:
             args.filter_obj = Filter(severity=args.severity, feature_classes=args.feature_classes)
