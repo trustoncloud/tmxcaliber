@@ -281,10 +281,7 @@ def validate(args: Namespace) -> Namespace:
         if args.list_type == ListOperation.controls:
             args.filter_obj = Filter()
     if args.operation == Operation.map:
-        if args.framework.endswith('.csv'):
-            args.framework = validate_and_get_framework(args.framework)
-        else:
-            args.framework = args.framework.replace("\\n","\n")
+        args.framework = args.framework.replace("\\n","\n")
     if args.operation == Operation.generate:
         if isinstance(args.source, str) and not args.source.endswith('_DFD.xml') and not args.source.endswith('.json'):
             raise ArgumentTypeError('Only the XML from the main ThreatModel can be used to generate DFD images.')
@@ -497,13 +494,21 @@ def main():
         xls = pd.ExcelFile(local_scf)
         # Get the data from the "SCF 2023.4" worksheet
         scf_data = pd.read_excel(xls, 'SCF 2023.4')
-
         # Check if params.framework is in the columns of the scf_data DataFrame
-        if params.framework not in scf_data.columns and not params.framework.endswith('.csv'):
-            raise FrameworkNotFoundError(params.framework)
+        if not params.framework.endswith('.csv'):
+            if params.framework not in scf_data.columns:
+                raise FrameworkNotFoundError(params.framework)
+            if params.scf == '2023.4':
+                file_location = 'https://github.com/securecontrolsframework/securecontrolsframework/raw/d1428c74aa76a66d9e131e6a3e3d1e61af25bd3a/Secure%20Controls%20Framework%20(SCF)%20-%202023.4.xlsx'
+            local_scf = get_cached_local_path_for(file_location)
+            # Read the Excel file
+            xls = pd.ExcelFile(local_scf)
+            # Get the data from the "SCF 2023.4" worksheet
+            scf_data = pd.read_excel(xls, 'SCF 2023.4')
+
         elif params.framework.endswith('.csv'):
             framework_pd = validate_and_get_framework(params.framework)
-        print(framework_pd)
+            print(framework_pd)
 
 
         '''
