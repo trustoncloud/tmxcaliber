@@ -503,6 +503,7 @@ def main():
             raise FrameworkNotFoundError(params.framework)
         elif params.framework.endswith('.csv'):
             framework_pd = validate_and_get_framework(params.framework)
+        print(framework_pd)
 
 
         '''
