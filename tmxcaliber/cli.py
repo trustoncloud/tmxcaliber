@@ -465,6 +465,10 @@ def main():
         # Get the data from the "SCF 2023.4" worksheet
         scf_data = pd.read_excel(xls, 'SCF 2023.4')
 
+        # Check if params.framework is in the columns of the scf_data DataFrame
+        if params.framework not in scf_data.columns:
+            raise ValueError(f"Framework '{params.framework}' not found in SCF 2023.4 worksheet.")
+
         '''
         params.framework = params.framework.replace("\\n","\n")
         map_json = map(params, data, scf_data)
