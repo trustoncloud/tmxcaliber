@@ -20,6 +20,7 @@ from colorama import Fore
 from .lib.filter import Filter, IDS_INPUT_SEPARATOR, FEATURE_CLASSES_INPUT_SEPARATOR, EVENTS_INPUT_SEPARATOR, PERMISSIONS_INPUT_SEPARATOR
 from .lib.threatmodel_data import ThreatModelData, get_classified_cvssed_control_ids_by_co
 from .lib.filter_applier import FilterApplier
+from .lib.error import FrameworkNotFoundError
 from .lib.cache import get_cached_local_path_for
 from .opacity import generate_xml
 from .opacity import generate_pngs
@@ -466,12 +467,8 @@ def main():
         scf_data = pd.read_excel(xls, 'SCF 2023.4')
 
         # Check if params.framework is in the columns of the scf_data DataFrame
-        try:
-            if params.framework not in scf_data.columns:
-                raise ValueError
-        except ValueError:
-            print(f"Framework '{params.framework}' not found in SCF 2023.4 worksheet.")
-            return
+        if params.framework not in scf_data.columns:
+            raise FrameworkNotFoundError(params.framework)
 
         '''
         params.framework = params.framework.replace("\\n","\n")
