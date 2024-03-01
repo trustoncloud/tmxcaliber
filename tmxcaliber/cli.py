@@ -19,6 +19,7 @@ from colorama import Fore
 from .lib.filter import Filter, IDS_INPUT_SEPARATOR, FEATURE_CLASSES_INPUT_SEPARATOR, EVENTS_INPUT_SEPARATOR, PERMISSIONS_INPUT_SEPARATOR
 from .lib.threatmodel_data import ThreatModelData, get_classified_cvssed_control_ids_by_co
 from .lib.filter_applier import FilterApplier
+from .lib.cache import get_cached_local_path_for
 from .opacity import generate_xml
 from .opacity import generate_pngs
 
@@ -163,21 +164,14 @@ def get_params():
         formatter_class=RawTextHelpFormatter
     )
     map_parser.add_argument(
-        "--scf", type=str, required=True, help=(
-            "path to the Secure Controls Framework OSCAL JSON data "
-            "available at\nhttps://github.com/securecontrolsframework/"
-            "scf-oscal-catalog-model/tree/main/SCF-OSCAL%%20Releases\n\n"
-        )
-    )
-    map_parser.add_argument(
         "--framework", type=str, required=True, help=(
             "framework to map to (must be the "
             "exact name present in the SCF.)\n\n"
         )
     )
     map_parser.add_argument(
-        "--format", type=str, required=True,
-        choices=["json", "csv"], help="format to output."
+        "--format", type=str,
+        choices=["json", "csv"], default='csv', help="format to output (default to CSV)."
     )
 
     # subparser for scan operation.
@@ -462,7 +456,11 @@ def main():
             print(csv_output)
 
     elif params.operation == Operation.map:
-        print('OSCAL is currently not supported by SCF. We pause the support of this function for now.')
+        print('The current version of SCF supported is: 2023.4')
+        file_2023 = 'https://github.com/securecontrolsframework/securecontrolsframework/raw/d1428c74aa76a66d9e131e6a3e3d1e61af25bd3a/Secure%20Controls%20Framework%20(SCF)%20-%202023.4.xlsx'
+        local_scf = get_cached_local_path_for(file_2023)
+        print(local_scf)
+
         exit(0)
         params.framework = params.framework.replace("\\n","\n")
         map_json = map(params, data)
