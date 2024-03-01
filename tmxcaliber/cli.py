@@ -466,8 +466,12 @@ def main():
         scf_data = pd.read_excel(xls, 'SCF 2023.4')
 
         # Check if params.framework is in the columns of the scf_data DataFrame
-        if params.framework not in scf_data.columns:
-            raise ValueError(f"Error: The framework '{params.framework}' was not found in the 'SCF 2023.4' worksheet of the provided Excel file. Please ensure that the framework name is spelled correctly and that it exists in the 'SCF 2023.4' worksheet.")
+        try:
+            if params.framework not in scf_data.columns:
+                raise ValueError
+        except ValueError:
+            print(f"Error: The framework '{params.framework}' was not found in the 'SCF 2023.4' worksheet of the provided Excel file. Please ensure that the framework name is spelled correctly and that it exists in the 'SCF 2023.4' worksheet.")
+            return
 
         '''
         params.framework = params.framework.replace("\\n","\n")
