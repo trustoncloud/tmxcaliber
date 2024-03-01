@@ -104,21 +104,20 @@ $: tmxcaliber filter path/to/threatmodel.json --severity high
 
 ### Map
 
-The `map` operation allows you to map a ThreatModel control objectives to various frameworks/standards/regulations from the Secure Control Framework (SCF). In order to map, you need to download the OSCAL version of the SCF ([here](https://github.com/securecontrolsframework/scf-oscal-catalog-model/tree/main/SCF-OSCAL%20Releases), starting with 
-JSON_Data_SCF) and choose one of the supported framework. The tool will execute and map every known control objective to SCF-supported frameworks.
+The `map` operation allows you to map a ThreatModel control objectives to various frameworks/standards/regulations from the Secure Control Framework (SCF). The tool will execute and map every known control objective to SCF-supported frameworks.
 ```sh
 $: tmxcaliber map path/to/threatmodel.json \
-  --scf path/to/oscal.json \
+  --scf 2023.4 \
   --framework "ISO\n27001\nv2013" \
   --format csv
 ```
 
-### Map a framework not supported by the SCF
-For non-supported frameworks, you must map your framework to the SCF within the OSCAL JSON. Once the mapping is done, you will be able to generate your mapping.
+#### Map a framework not supported by the SCF
+For non-supported frameworks, you must map your framework to the SCF. The format is a CSV mapping (see the template in the `template` folder). Once the mapping is done, you will be able to generate your mapping.
 ```sh
 $: tmxcaliber map path/to/threatmodel.json \
-  --scf path/to/oscal.json \
-  --framework "My Framework" \
+  --scf 2023.4 \
+  --framework path/to/myframework.csv \
   --format csv
 ```
 
@@ -142,7 +141,6 @@ All the DFD images will be saved in `--out-dir`
 
 
 ### List Threats
-
 The `list threats` operation allows you to list all threats from a ThreatModel JSON file or a directory containing multiple JSON files. You can also specify an output file to write the results in CSV format.
 
 ```sh
@@ -151,7 +149,6 @@ $: tmxcaliber list threats path/to/threatmodels/ --output threats.csv
 ```
 
 ### List Controls
-
 The `list controls` operation allows you to list all controls from a ThreatModel JSON file or a directory containing multiple JSON files. You can also specify an output file to write the results in CSV format.
 
 ```sh
@@ -160,5 +157,4 @@ $: tmxcaliber list controls path/to/threatmodels/ --output controls.csv
 ```
 
 ## Contributing
-
 If you'd like to contribute to the development of TMXcaliber, please submit a pull request or open an issue on the project's GitHub repository.

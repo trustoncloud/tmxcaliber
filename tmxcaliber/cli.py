@@ -1,9 +1,8 @@
 import re
 import os
-import io
-import csv
 import sys
 import json
+import time
 import pandas as pd
 from pandas import DataFrame
 import platform
@@ -252,11 +251,9 @@ def get_params():
 def validate_and_get_framework(csv_path: str) -> DataFrame:
     # Read the CSV file into a DataFrame
     df = pd.read_csv(csv_path, header=None)
-
     # Validate that the DataFrame has exactly 2 columns
     if len(df.columns) != 2:
         raise ValueError(f"The CSV file at {csv_path} should have exactly 2 columns.")
-
     # Split any cells containing semicolons into multiple rows
     df = (df.set_index(df.columns.drop(1,1).tolist())
           .stack()
@@ -266,10 +263,8 @@ def validate_and_get_framework(csv_path: str) -> DataFrame:
           .reset_index(-1, drop=True)
           .reset_index()
     )
-
     # Remove any duplicate rows
     df = df.drop_duplicates()
-
     return df
 
 def validate(args: Namespace) -> Namespace:
@@ -287,44 +282,24 @@ def validate(args: Namespace) -> Namespace:
             raise ArgumentTypeError('Only the XML from the main ThreatModel can be used to generate DFD images.')
     return args
 
-def map(args: Namespace, data: dict) -> dict:
-    controls: dict = data.get("controls")
-    objectives: dict = data.get("control_objectives")
-    scf_data: list = json.load(open(args.scf))
-    framework: str = args.framework
-    framework2scf: dict = {}
-    for scf_line in scf_data:
-        scf_id = scf_line["SCF #"]
-        if not framework in scf_line or not scf_line[framework]:
-            continue
-        for framework_id in scf_line[framework]:
-            try:
-                framework2scf[framework_id].append(scf_id)
-            except KeyError:
-                framework2scf[framework_id] = []
-                framework2scf[framework_id].append(scf_id)
-    scf2co: dict = {}
-    for objective in objectives:
-        scf_mapping = objectives[objective]["scf"].split(",")
-        for scf_id in scf_mapping:
-            try:
-                scf2co[scf_id].append(objective)
-            except KeyError:
-                scf2co[scf_id] = []
-                scf2co[scf_id].append(objective)
-    framework2co: dict = {}
-    for control_framework in framework2scf:
-        for scf_id in framework2scf[control_framework]:
-            if scf_id not in scf2co:
-                continue
-            try:
-                framework2co[control_framework] \
-                    ["control_objectives"].extend(scf2co[scf_id])
-            except KeyError:
-                framework2co[control_framework] = {}
-                framework2co[control_framework] \
-                    ["control_objectives"] = scf2co[scf_id]
-    framework2co = dict(sorted(framework2co.items()))
+def map(framework2co: pd.DataFrame, threatmodel_data: dict) -> dict:
+    controls, objectives = threatmodel_data.controls, threatmodel_data.control_objectives
+    # Step 1: Create a list of tuples from the data dictionary
+    entries = []
+    for top_key, values in objectives.items():
+        scf_codes = values['scf'].split(',')
+        for scf_code in scf_codes:
+            entries.append((scf_code, top_key))
+    # Step 2: Create the DataFrame
+    scf2co = pd.DataFrame(entries, columns=['SCF', 'CO'])
+    merged_df = pd.merge(scf2co, framework2co, on='SCF', how='left')
+    # scf2co: Map SCF to CO
+    scf2co = merged_df.groupby('SCF')['CO'].apply(list).to_dict()
+    # framework2co: Map framework to CO
+    framework2co_temp = merged_df.groupby('Framework')['CO'].apply(list).to_dict()
+    framework2co = {key: {'control_objectives': value} for key, value in framework2co_temp.items()}
+    # framework2scf: Map framework to SCF
+    framework2scf = merged_df.groupby('Framework')['SCF'].apply(list).to_dict()
 
     for control_framework in framework2co:
         control_id_by_cvss_severity = []
@@ -505,15 +480,14 @@ def main():
             xls = pd.ExcelFile(local_scf)
             # Get the data from the "SCF 2023.4" worksheet
             scf_data = pd.read_excel(xls, 'SCF 2023.4')
+            # Keep only the columns "SCF #" and the one matching params.framework
+            scf_data = scf_data[["SCF #", params.framework]]
+            scf_data = scf_data.assign(**{scf_data.columns[1]: scf_data.iloc[:, 1].str.split('\n')}).explode(scf_data.columns[1]).reset_index(drop=True)
 
         elif params.framework.endswith('.csv'):
-            framework_pd = validate_and_get_framework(params.framework)
-            print(framework_pd)
-
-
-        '''
-        params.framework = params.framework.replace("\\n","\n")
-        map_json = map(params, data, scf_data)
+            scf_data = validate_and_get_framework(params.framework)
+        scf_data.columns = ['SCF', 'Framework']
+        map_json = map(scf_data, data[0])
         if params.format == "json":
             print(json.dumps(map_json, indent=2))
         if params.format == "csv":
@@ -529,16 +503,16 @@ def main():
             ]))
 
             for framework_id in map_json:
-                co: str = ",".join(map_json[framework_id]["control_objectives"])
-                c_vh: str = ",".join(
+                co: str = ";".join(map_json[framework_id]["control_objectives"])
+                c_vh: str = ";".join(
                     map_json[framework_id]["controls"]["Very High"]
                 )
-                c_h: str = ",".join(map_json[framework_id]["controls"]["High"])
-                c_m: str = ",".join(
+                c_h: str = ";".join(map_json[framework_id]["controls"]["High"])
+                c_m: str = ";".join(
                     map_json[framework_id]["controls"]["Medium"]
                 )
-                c_l: str = ",".join(map_json[framework_id]["controls"]["Low"])
-                c_vl: str = ",".join(
+                c_l: str = ";".join(map_json[framework_id]["controls"]["Low"])
+                c_vl: str = ";".join(
                     map_json[framework_id]["controls"]["Very Low"]
                 )
                 csv_line.append(",".join([
@@ -550,11 +524,11 @@ def main():
                     f"{c_l}",
                     f"{c_vl}"
                 ]))
-
-            output_file = f'output_{params.source.split(".")[0]}.csv'
+            framework_name = params.framework.replace('.csv', '').replace('\n', '_').replace('\\', '').replace('/', '').replace('.', '')
+            epoch = int(time.time())
+            output_file = f"map_{data[0].metadata['provider'].upper()}_{data[0].metadata['service']}_to_{framework_name}_{epoch}.csv"
             with open(output_file, "w") as csvfile:
                 for service in csv_line[:-1]:
                     csvfile.write(service + "\n")
                 csvfile.write(csv_line[-1])
             print(f"Mapping output in: {output_file}")
-        '''
