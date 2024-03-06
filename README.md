@@ -1,8 +1,11 @@
-# tmxcaliber
+# TMxCaliber
+
+TMxCaliber is a CLI utility to refine TrustOnCloud ThreatModel, extracting the most pertinent information.
+
+## Installation
 
 This package is intended for `python3` and has been tested in `python3.8+`.
 
-## Installation
 Follow the instructions below to install the package on your operating system.
 
 ### Docker
@@ -195,4 +198,4 @@ S3.CO1,Enforce encryption-in-transit,S3.C3,Preventative,Protect,S3.C5,S3.C119,"B
 ```
 
 ## Contributing
-If you'd like to contribute to the development of TMXcaliber, please submit a pull request or open an issue on the project's GitHub repository.
+If you'd like to contribute to the development of TMxCaliber, please submit a pull request or open an issue on the project's GitHub repository.
