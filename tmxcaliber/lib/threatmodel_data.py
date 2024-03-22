@@ -62,14 +62,22 @@ class ThreatModelData:
 
         def build_hierarchy(class_id, hierarchy):
             if class_id not in hierarchy:
-                hierarchy.add(class_id)
+                hierarchy.insert(0, class_id)
                 for relation in self.feature_classes[class_id]["class_relationship"]:
                     if relation["type"] == "parent":
                         build_hierarchy(relation["class"], hierarchy)
 
-        hierarchy = set()
+        hierarchy = []
         build_hierarchy(actual_feature_class_id_to_filter, hierarchy)
         return list(hierarchy)
+
+    def get_child_feature_classes(self, parent_feature_class_id):
+        child_fcs = set()
+        for fc in self.feature_classes.keys():
+            fc_hierarchy = self.get_feature_class_hierarchy(fc)
+            if parent_feature_class_id in fc_hierarchy:
+                child_fcs.add(fc)
+        return list(child_fcs)
 
     def get_feature_classes_for_current_threats(self) -> list:
         feature_classes = {

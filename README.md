@@ -103,6 +103,31 @@ Details for supported operations, including the new list operations, are as foll
 The `filter` operation allows you to filter relevant information from a ThreatModel JSON based on various criteria, such as feature class, threat severity, or IAM permission.
 ```sh
 $: tmxcaliber filter path/to/threatmodel.json --severity high
+
+$: tmxcaliber filter -h
+usage: tmxcaliber filter [-h] [--permissions PERMISSIONS] [--events EVENTS] [--exclude]
+                         [--severity {very high,high,medium,low,very low}] [--feature-classes FEATURE_CLASSES]
+                         [--ids IDS]
+                         source
+
+positional arguments:
+  source                Path to the ThreatModel JSON file. We support XML file for internal purposes.
+
+options:
+  -h, --help            show this help message and exit
+  --permissions PERMISSIONS
+                        filter data by IAM permission(s). Separate by `,`, if several.
+
+  --events EVENTS       filter data by actions log events. Separate by `,`, if several.
+
+  --exclude             Enable exclusion mode. Items specified will be excluded from the output.
+  --severity {very high,high,medium,low,very low}
+                        filter data by threat for severity equal or above the selected value.
+
+  --feature-classes FEATURE_CLASSES
+                        filter data by feature class(es) and any of their parent/child feature class(es). Separate by `,`, if several.
+
+  --ids IDS             filter data by IDs (only works for threats for now). Separate by `,`, if several.
 ```
 
 ### Map

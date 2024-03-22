@@ -96,7 +96,7 @@ def add_feature_classes_filter_argument(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
             "--feature-classes", type=str, help=(
-                "filter data by feature class. "
+                "filter data by feature class(es) and any of their parent/child feature class(es). "
                 f"Separate by `{FEATURE_CLASSES_INPUT_SEPARATOR}`, if several.\n\n"
             )
         )
@@ -132,6 +132,12 @@ def add_csv_output_argument(*parsers: ArgumentParser):
             "--output", type=str, help="Output CSV file to write the results. If not provided, prints to stdout."
         )
 
+def add_exclude_flag(*parsers: ArgumentParser):
+    for parser in parsers:
+        parser.add_argument(
+            '--exclude', action='store_true', help='Enable exclusion mode. Items specified will be excluded from the output.'
+        )
+
 def get_params():
     parser = ArgumentParser(formatter_class=RawTextHelpFormatter)
     parser.add_argument(
@@ -159,6 +165,8 @@ def get_params():
             f"Separate by `{EVENTS_INPUT_SEPARATOR}`, if several.\n\n"
         )
     )
+
+    add_exclude_flag(filter_parser)
 
     # subparser for map operation.
     map_parser = subparsers.add_parser(
@@ -197,7 +205,7 @@ def get_params():
     )
     gen_parser.add_argument(
         "--bin",
-        help="path to `drawio` binary. (if not detected automatically)"
+        help="path to `drawio` binary (if not detected automatically)"
     )
     gen_parser.add_argument(
         "--threat-dir",
@@ -242,6 +250,7 @@ def get_params():
     )
     add_source_json_or_dir_argument(threat_list_parser, control_list_parser)
     add_csv_output_argument(threat_list_parser, control_list_parser)
+    add_exclude_flag(threat_list_parser)
     add_source_argument(filter_parser, map_parser, scan_parser, gen_parser)
     add_severity_filter_argument(threat_list_parser, filter_parser)
     add_feature_classes_filter_argument(threat_list_parser, filter_parser)
@@ -385,7 +394,7 @@ def main():
 
     if params.operation == Operation.filter:
         threatmodel_data = data[0]
-        FilterApplier(params.filter_obj).apply_filter(threatmodel_data)
+        FilterApplier(params.filter_obj, params.exclude).apply_filter(threatmodel_data)
         print(json.dumps(threatmodel_data.get_json(), indent=2))
 
     elif params.operation == Operation.scan:
@@ -449,7 +458,7 @@ def main():
     
     elif params.operation == Operation.list:
         for threatmodel_data in ThreatModelData.threatmodel_data_list:
-            FilterApplier(params.filter_obj).apply_filter(threatmodel_data)
+            FilterApplier(params.filter_obj, params.exclude).apply_filter(threatmodel_data)
         if params.list_type == ListOperation.threats:
             csv_output = ThreatModelData.get_csv_of_threats()
         if params.list_type == ListOperation.controls:
