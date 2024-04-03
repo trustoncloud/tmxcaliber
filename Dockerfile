@@ -2,6 +2,7 @@ FROM debian:bullseye-slim
 
 ARG DRAWIO_VERSION=22.1.11
 ARG USERNAME=debian
+ARG TARGETARCH
 
 RUN apt-get update -y && \
     apt-get install -y desktop-file-utils xvfb libappindicator3-1 libnotify4 wget libgbm1 libasound2 cpp cpp-10 \
@@ -17,10 +18,10 @@ RUN apt-get update -y && \
     libxml-parser-perl libxml-twig-perl libxml-xpathengine-perl libxss1 libxv1 libxxf86dga1 netbase perl \
     perl-modules-5.32 perl-openssl-defaults termit x11-utils x11-xserver-utils xdg-utils python3 python3-venv
 
-RUN wget https://github.com/jgraph/drawio-desktop/releases/download/v${DRAWIO_VERSION}/drawio-amd64-${DRAWIO_VERSION}.deb && \
-    dpkg -i drawio-amd64-${DRAWIO_VERSION}.deb && \
+RUN wget https://github.com/jgraph/drawio-desktop/releases/download/v${DRAWIO_VERSION}/drawio-${TARGETARCH}-${DRAWIO_VERSION}.deb && \
+    dpkg -i drawio-${TARGETARCH}-${DRAWIO_VERSION}.deb && \
     apt-get -y -f install && \
-    rm drawio-amd64-${DRAWIO_VERSION}.deb && \
+    rm drawio-${TARGETARCH}-${DRAWIO_VERSION}.deb && \
     useradd -m -s /bin/bash ${USERNAME}
 
 COPY --chown=debian:debian ./ /home/${USERNAME}/app/
