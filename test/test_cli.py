@@ -66,7 +66,10 @@ def test_get_input_data():
     args = Namespace(source='validpath.json', operation='list')
     result = get_input_data(args)
     print(result)
-    assert isinstance(result, list)  # Assuming JSON loads to a list
+    if result is not None:
+        assert isinstance(result, list)  # Check if result is a list only if it is not None
+    else:
+        assert result is not None, "Expected a list, got None instead"
 
 def test_get_drawio_binary_path():
     path = get_drawio_binary_path()
