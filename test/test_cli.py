@@ -26,7 +26,7 @@ def test_validate():
     assert validated_args.filter_obj.severity == 'high'
     assert 'login' in validated_args.filter_obj.events
     assert 'read' in validated_args.filter_obj.permissions
-    assert ['SOMESERVICE.FC123','SOMESERVICE.FC456'] in validated_args.filter_obj.feature_classes
+    assert validated_args.filter_obj.feature_classes == ['SOMESERVICE.FC123','SOMESERVICE.FC456']
     assert 'someservice.CO123' in validated_args.filter_obj.ids
 
 def test_map():
