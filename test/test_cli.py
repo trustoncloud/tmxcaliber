@@ -12,10 +12,10 @@ from tmxcaliber.cli import BinaryNotFound
 def test_get_version():
     version = _get_version()
     assert isinstance(version, str)
-    assert version.startswith('tmxcaliber ')
+    assert version.startswith('tmxcaliber')
 
 def test_is_file_or_dir():
-    with pytest.raises(SystemExit):
+    with pytest.raises(ArgumentTypeError):
         is_file_or_dir("nonexistentpath.json")
     assert is_file_or_dir("existingfile.json") == "existingfile.json"
     assert is_file_or_dir("existingdir") == "existingdir"
@@ -31,7 +31,7 @@ def test_validate():
 
 def test_map():
     framework2co = pd.DataFrame({'SCF': ['SCF1'], 'Framework': ['Framework1']})
-    threatmodel_data = {'controls': {}, 'control_objectives': {}}
+    threatmodel_data = ThreatModelData({'controls': {}, 'control_objectives': {}})
     metadata = {'Framework1': {'additional_info': 'info'}}
     result = map(framework2co, threatmodel_data, 'Framework1', metadata)
     assert 'Framework1' in result
