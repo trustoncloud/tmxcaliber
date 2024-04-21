@@ -131,7 +131,9 @@ def test_get_input_data_multiple_files():
         get_input_data(args)
 
 def test_get_drawio_binary_path_not_found():
-    with pytest.raises(BinaryNotFound):
+    with patch('os.path.isfile', return_value=False), \
+         pytest.raises(BinaryNotFound):
+        get_drawio_binary_path()
         get_drawio_binary_path()
 
 def test_output_result_csv():
