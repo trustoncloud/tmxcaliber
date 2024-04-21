@@ -15,7 +15,7 @@ def test_get_version():
     assert version.startswith('tmxcaliber')
 
 def test_is_file_or_dir():
-    with pytest.raises(ArgumentTypeError):
+    with pytest.raises(ArgumentTypeError, match="The path nonexistentpath.json does not exist"):
         is_file_or_dir("nonexistentpath.json")
     assert is_file_or_dir("existingfile.json") == "existingfile.json"
     assert is_file_or_dir("existingdir") == "existingdir"
