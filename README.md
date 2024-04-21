@@ -78,17 +78,19 @@ usage: tmxcaliber [-h] [-v] {filter,map,scan,generate,list,add-mapping} ...
 
 options:
   --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
+  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help            show this help message and exit
   -v, --version         show the installed version.
 
 
 operation:
   {filter,map,scan,generate,list}
-    filter              filter down the ThreatModel data.
-    map                 map ThreatModel data to OSCAL framework.
-    scan                scan the ThreatModel data for a given pattern.
-    generate            generate threat specific PNGs from XML data.
-    list                List data of one or more ThreatModels.
+    filter              filter down the ThreatModel data. We support XML file for internal purposes.
+    map                 map ThreatModel data to a supported framework in the Secure Control Framework (https://securecontrolsframework.com).
+    scan                scan the ThreatModel data for a given pattern. We support XML file for internal purposes.
+    generate            generate threat specific PNGs from XML data. We support XML file for internal purposes.
+    list                List data of one or more ThreatModels. We support XML file for internal purposes.
+    add-mapping         add a supported framework in the Secure Control Framework (https://securecontrolsframework.com) into the ThreatModel JSON data.
 ```
 You can also get more help on each operation:
 ```sh
@@ -116,6 +118,7 @@ positional arguments:
 
 options:
   --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
+  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help            show this help message and exit
   --permissions PERMISSIONS
                         filter data by IAM permission(s). Separate by `,`, if several.
@@ -138,7 +141,9 @@ The `map` operation allows you to map a ThreatModel control objectives to variou
 ```sh
 $: tmxcaliber map path/to/threatmodel.json \
   --scf 2023.4 \
-  --framework "ISO\n27001\nv2013" \
+  --framework-name "ISO 27001 v2013" \
+  --framework-map path/to/myframework.csv \
+  --framework-metadata path/to/metadata.csv \
   --format csv
 ```
 
@@ -185,6 +190,7 @@ positional arguments:
 
 options:
   --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
+  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help            show this help message and exit
   --output OUTPUT       Output CSV file to write the results. If not provided, prints to stdout.
   --severity {very high,high,medium,low,very low}
@@ -214,6 +220,7 @@ positional arguments:
 
 options:
   --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
+  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help       show this help message and exit
   --output OUTPUT  Output CSV file to write the results. If not provided, prints to stdout.
 
@@ -229,4 +236,3 @@ S3.CO1,Enforce encryption-in-transit,S3.C3,Preventative,Protect,S3.C5,S3.C119,"B
 ## Contributing
 If you'd like to contribute to the development of TMxCaliber, please submit a pull request or open an issue on the project's GitHub repository.
     add-mapping         add a supported framework in the Secure Control Framework (https://securecontrolsframework.com) into the ThreatModel JSON data.
-
