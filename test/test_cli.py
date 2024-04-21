@@ -9,6 +9,20 @@ import csv
 from tmxcaliber.lib.threatmodel_data import ThreatModelData
 from tmxcaliber.cli import BinaryNotFound, ArgumentTypeError
 
+import pytest
+from unittest.mock import patch, mock_open
+
+@pytest.fixture
+def mock_json_file():
+    return json.dumps(mock_json())
+
+@pytest.fixture
+def mock_json():
+    return {'controls': {'someservice.C1': {
+      "feature_class": ["someservice.FC1"],
+      "objective": 'someservice.CO1',
+      "weighted_priority": "High"}}, 'control_objectives': {'someservice.CO1':{'scf':['SCF1']}}}
+
 def test_get_version():
     version = _get_version()
     assert isinstance(version, str)
@@ -31,10 +45,7 @@ def test_validate():
 
 def test_map():
     framework2co = pd.DataFrame({'SCF': ['SCF1'], 'Framework': ['Framework1']})
-    threatmodel_data = ThreatModelData({'controls': {'someservice.C1': {
-      "feature_class": ["someservice.FC1"],
-      "objective": 'someservice.CO1',
-      "weighted_priority": "High"}}, 'control_objectives': {'someservice.CO1':{'scf':['SCF1']}}})
+    threatmodel_data = ThreatModelData(mock_json())
     metadata = {'Framework1': {'additional_info': 'info'}}
     result = map(framework2co, threatmodel_data, 'Framework', metadata)
     expected_result = {
@@ -61,13 +72,6 @@ def test_scan_controls():
     data = {'controls': {'1': {'description': 'Unauthorized access detected UnauthorizedAccess'}}}
     result = scan_controls(args, data)
     assert '1' in result['controls']
-
-import pytest
-from unittest.mock import patch, mock_open
-
-@pytest.fixture
-def mock_json_file():
-    return '[{"key": "value"}]'
 
 def test_get_input_data_valid_json(mock_json_file):
     args = Namespace(source='validpath.json', operation='list')
