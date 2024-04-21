@@ -2,9 +2,10 @@ import re
 import os
 import sys
 import json
-import time
 import pandas as pd
+import csv
 from pandas import DataFrame
+from itertools import product
 import platform
 import pkg_resources
 from typing import Union
@@ -20,10 +21,11 @@ from colorama import Fore
 from .lib.filter import Filter, IDS_INPUT_SEPARATOR, FEATURE_CLASSES_INPUT_SEPARATOR, EVENTS_INPUT_SEPARATOR, PERMISSIONS_INPUT_SEPARATOR
 from .lib.threatmodel_data import ThreatModelData, get_classified_cvssed_control_ids_by_co
 from .lib.filter_applier import FilterApplier
-from .lib.error import FrameworkNotFoundError
-from .lib.cache import get_cached_local_path_for
+from .lib.scf import get_scf_data
+from .lib.tools import sort_by_id
 from .opacity import generate_xml
 from .opacity import generate_pngs
+from . import parsers
 
 
 GUARDDUTY_FINDINGS = "(" + "|".join([
@@ -59,6 +61,7 @@ class Operation:
     scan = "scan"
     generate = "generate"
     list = "list"
+    add_mapping = "add-mapping"
 
 class ListOperation:
     threats = "threats"
@@ -67,22 +70,6 @@ class ListOperation:
 def _get_version():
     module_name = vars(sys.modules[__name__])["__package__"]
     return f"%(prog)s {pkg_resources.require(module_name)[0].version}"
-
-def is_file(path: str) -> str:
-    if not os.path.exists(path):
-        raise ArgumentTypeError(f"The path {path} does not exist.")
-    if not os.path.isfile(path):
-        raise ArgumentTypeError(f"The path {path} is neither a file.")
-    if os.path.isfile(path) and not (path.lower().endswith('.json') or path.lower().endswith('.xml')):
-        raise ArgumentTypeError(f"The file {path} is not valid, only json or XML can be given.")
-    return path
-
-def add_source_argument(*parsers: ArgumentParser):
-    for parser in parsers:
-        parser.add_argument(
-            "source", type=is_file, 
-            help="Path to the ThreatModel JSON file. We support XML file for internal purposes."
-        )
 
 def add_severity_filter_argument(*parsers: ArgumentParser):
     for parser in parsers:
@@ -126,12 +113,6 @@ def add_source_json_or_dir_argument(*parsers: ArgumentParser):
             help="Path to the ThreatModel JSON file or directory containing ThreatModel JSON files."
         )
 
-def add_csv_output_argument(*parsers: ArgumentParser):
-    for parser in parsers:
-        parser.add_argument(
-            "--output", type=str, help="Output CSV file to write the results. If not provided, prints to stdout."
-        )
-
 def add_exclude_flag(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
@@ -168,22 +149,25 @@ def get_params():
 
     add_exclude_flag(filter_parser)
 
-    # subparser for map operation.
-    map_parser = subparsers.add_parser(
-        Operation.map, help="map ThreatModel data to OSCAL framework.",
+    # subparser for add mapping operation.
+    add_mapping_parser = subparsers.add_parser(
+        Operation.add_mapping, help="add a supported framework in the Secure Control Framework (https://securecontrolsframework.com) into the ThreatModel JSON data.",
         formatter_class=RawTextHelpFormatter
     )
-    map_parser.add_argument(
-        "--scf", type=str, required=True, choices=["2023.4"], help=(
-            "Version of the Secure Control Framework\n\n"
-        )
+    parsers.add_scf_argument(add_mapping_parser)
+    parsers.add_framework_argument(add_mapping_parser)
+    parsers.add_metadata_argument(add_mapping_parser)
+    parsers.add_source_argument(add_mapping_parser)
+
+    # subparser for map operation.
+    map_parser = subparsers.add_parser(
+        Operation.map, help="map ThreatModel data to a supported framework in the Secure Control Framework (https://securecontrolsframework.com).",
+        formatter_class=RawTextHelpFormatter
     )
-    map_parser.add_argument(
-        "--framework", type=str, required=True, help=(
-            "framework to map to (must be the "
-            "exact name present in the SCF.)\n\n"
-        )
-    )
+    parsers.add_scf_argument(map_parser)
+    parsers.add_framework_argument(map_parser)
+    parsers.add_metadata_argument(map_parser)
+
     map_parser.add_argument(
         "--format", type=str,
         choices=["json", "csv"], default='csv', help="format to output (default to CSV)."
@@ -249,32 +233,73 @@ def get_params():
         formatter_class=RawTextHelpFormatter
     )
     add_source_json_or_dir_argument(threat_list_parser, control_list_parser)
-    add_csv_output_argument(threat_list_parser, control_list_parser)
+    parsers.add_output_argument(threat_list_parser, control_list_parser, map_parser, add_mapping_parser)
     add_exclude_flag(threat_list_parser)
-    add_source_argument(filter_parser, map_parser, scan_parser, gen_parser)
+    parsers.add_source_argument(filter_parser, map_parser, scan_parser, gen_parser)
     add_severity_filter_argument(threat_list_parser, filter_parser)
     add_feature_classes_filter_argument(threat_list_parser, filter_parser)
     add_ids_filter_argument(filter_parser)
     return validate(parser.parse_args())
+
+def get_metadata(csv_path: str) -> dict:
+    """
+    Reads a CSV file and returns a dictionary where the first column values are the main keys.
+    Each key contains a dictionary where the other column headers are the keys.
+    
+    Parameters:
+    csv_path (str): The path to the CSV file.
+    
+    Returns:
+    dict: A dictionary representation of the CSV data.
+    """
+    # Dictionary to store the resulting nested structure
+    result = {}
+    
+    with open(csv_path, mode='r', newline='', encoding='utf-8') as file:
+        reader = csv.DictReader(file)  # Using DictReader to automatically use the header row as keys
+        
+        # Process each row in the CSV
+        for row in reader:
+            main_key = row.pop(reader.fieldnames[0])  # Remove and get the value of the first column for use as the main key
+            
+            # Check if the main key already exists in the dictionary
+            if main_key in result:
+                # If the key already exists, update the existing dictionary with new values (if necessary)
+                for key, value in row.items():
+                    if key not in result[main_key]:
+                        result[main_key][key] = value
+                    else:
+                        # Handle potential duplicates or conflicts here, if needed
+                        pass
+            else:
+                # Add the new key and dictionary to the result
+                result[main_key] = row
+    
+    return result
+
 
 def validate_and_get_framework(csv_path: str) -> DataFrame:
     # Read the CSV file into a DataFrame
     df = pd.read_csv(csv_path, header=None)
     # Validate that the DataFrame has exactly 2 columns
     if len(df.columns) != 2:
-        raise ValueError(f"The CSV file at {csv_path} should have exactly 2 columns.")
-    # Split any cells containing semicolons into multiple rows
-    df = (df.set_index(df.columns.drop(1,1).tolist())
-          .stack()
-          .str.split(';', expand=True)
-          .stack()
-          .unstack(-2)
-          .reset_index(-1, drop=True)
-          .reset_index()
-    )
+        raise ValueError(f"The CSV file at {csv_path} should have exactly 2 columns. The SCF on the first, and your framework in the second.")
+    
+        # Function to expand the rows based on semicolon-separated entries
+    def expand_rows(row):
+        col0_parts = row[0].split(';')
+        col1_parts = row[1].split(';')
+        # Generate all combinations of splits from both columns
+        return pd.DataFrame(product(col0_parts, col1_parts), columns=[0, 1])
+
+    # Apply the function and concatenate the results
+    df_expanded = pd.concat([expand_rows(row) for index, row in df.iterrows()], ignore_index=True)
+
     # Remove any duplicate rows
-    df = df.drop_duplicates()
-    return df
+    df_expanded = df_expanded.drop_duplicates()
+    df_expanded.columns = ['SCF', 'Framework']
+
+    return df_expanded
 
 def validate(args: Namespace) -> Namespace:
     if args.operation == Operation.filter:
@@ -284,41 +309,60 @@ def validate(args: Namespace) -> Namespace:
             args.filter_obj = Filter(severity=args.severity, feature_classes=args.feature_classes)
         if args.list_type == ListOperation.controls:
             args.filter_obj = Filter()
-    if args.operation == Operation.map:
-        args.framework = args.framework.replace("\\n","\n")
     if args.operation == Operation.generate:
         if isinstance(args.source, str) and not args.source.endswith('_DFD.xml') and not args.source.endswith('.json'):
             raise ArgumentTypeError('Only the XML from the main ThreatModel can be used to generate DFD images.')
     return args
 
-def map(framework2co: pd.DataFrame, threatmodel_data: dict) -> dict:
+def map(framework2co: pd.DataFrame, threatmodel_data: dict, framework_name: str, metadata: dict = {}) -> dict:
     controls, objectives = threatmodel_data.controls, threatmodel_data.control_objectives
     # Step 1: Create a list of tuples from the data dictionary
     entries = []
     for top_key, values in objectives.items():
-        scf_codes = values['scf'].split(',')
+        scf_codes = values['scf']
         for scf_code in scf_codes:
             entries.append((scf_code, top_key))
     # Step 2: Create the DataFrame
     scf2co = pd.DataFrame(entries, columns=['SCF', 'CO'])
     merged_df = pd.merge(scf2co, framework2co, on='SCF', how='left')
-    # scf2co: Map SCF to CO
-    scf2co = merged_df.groupby('SCF')['CO'].apply(list).to_dict()
-    # framework2co: Map framework to CO
-    framework2co_temp = merged_df.groupby('Framework')['CO'].apply(list).to_dict()
-    framework2co = {key: {'control_objectives': value} for key, value in framework2co_temp.items()}
-    # framework2scf: Map framework to SCF
-    framework2scf = merged_df.groupby('Framework')['SCF'].apply(list).to_dict()
 
-    for control_framework in framework2co:
+    # Group SCFs and COs by framework and collect into lists
+    framework_group = merged_df.groupby(framework_name).agg({
+        'CO': lambda x: list(x.dropna()),  # Collect COs, dropping NaN values
+        'SCF': lambda x: list(x.dropna())  # Collect SCFs, dropping NaN values
+    }).dropna().to_dict('index')
+
+    # Prepare the new structure with SCFs included
+    framework2co = {}
+    for framework, data in framework_group.items():
+        framework2co[framework] = {
+            'control_objectives': sort_by_id(list(set(data['CO']))),
+            'scf': sorted(list(set(data['SCF'])))
+        }
+
+        # Your existing logic to classify controls by severity
         control_id_by_cvss_severity = []
-        for co_id in framework2co[control_framework]["control_objectives"]:
-            control_id_by_cvss_severity = \
-                get_classified_cvssed_control_ids_by_co(
+        for co_id in framework2co[framework]["control_objectives"]:
+            control_id_by_cvss_severity = get_classified_cvssed_control_ids_by_co(
                 control_id_by_cvss_severity, co_id, controls
             )
-        framework2co[control_framework] \
-            ["controls"] = control_id_by_cvss_severity
+        framework2co[framework]["controls"] = control_id_by_cvss_severity
+    
+    if metadata:
+        for key, values in framework2co.items():
+            if key in metadata:
+                # If the key exists in metadata, merge the metadata values
+                if isinstance(values, dict):
+                    # Merge metadata into the existing dictionary for the key in framework2co
+                    values.update(metadata[key])
+                else:
+                    # Handle cases where the expected structure is not met
+                    print(f"Error: Expected a dictionary at framework2co['{key}'], but found {type(values)}.")
+            else:
+                # If the key does not exist in framework2co, initialize with the metadata if needed
+                # This step depends on whether you want to include metadata keys that aren't in framework2co
+                framework2co[key] = metadata[key]
+
     return framework2co
 
 def scan_controls(args: Namespace, data: dict) -> dict:
@@ -385,6 +429,34 @@ def get_drawio_binary_path():
         "drawio binary not found automatically.",
         "Use --bin flag to specify path to drawio binary."
     )
+
+def output_result(output_param, result, result_type):
+    is_json = False
+    is_csv = False
+    if result_type == 'json':
+        json_result = json.dumps(result, indent=2)
+        is_json = True
+    elif result_type == 'csv_list':
+        csv_result = result
+        is_csv = True
+    else:
+        raise TypeError('Invalid output result type')
+
+    if output_param:
+        if is_json:
+            with open(output_param, 'w+', newline='') as file:
+                file.write(json_result)
+        elif is_csv:
+            with open(output_param, mode='w', newline='', encoding='utf-8') as file:
+                csv_writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+                for line in csv_result:
+                    csv_writer.writerow(line)
+    elif is_json:
+        print(json_result)
+    elif is_csv:
+        writer = csv.writer(sys.stdout, quoting=csv.QUOTE_MINIMAL)
+        for row in csv_result:
+            writer.writerow(row)
 
 def main():
 
@@ -464,80 +536,104 @@ def main():
         if params.list_type == ListOperation.controls:
             csv_output = ThreatModelData.get_csv_of_controls()
 
-        if params.output:
-            with open(params.output, 'w+', newline='') as file:
-                file.write(csv_output)
-        else:
-            print(csv_output)
+        output_result(params.output, csv_output)
 
     elif params.operation == Operation.map:
-        if params.scf == '2023.4':
-            file_location = 'https://github.com/securecontrolsframework/securecontrolsframework/raw/d1428c74aa76a66d9e131e6a3e3d1e61af25bd3a/Secure%20Controls%20Framework%20(SCF)%20-%202023.4.xlsx'
-        local_scf = get_cached_local_path_for(file_location)
-        # Read the Excel file
-        xls = pd.ExcelFile(local_scf)
-        # Get the data from the "SCF 2023.4" worksheet
-        scf_data = pd.read_excel(xls, 'SCF 2023.4')
-        # Check if params.framework is in the columns of the scf_data DataFrame
-        if not params.framework.endswith('.csv'):
-            if params.framework not in scf_data.columns:
-                raise FrameworkNotFoundError(params.framework)
-            if params.scf == '2023.4':
-                file_location = 'https://github.com/securecontrolsframework/securecontrolsframework/raw/d1428c74aa76a66d9e131e6a3e3d1e61af25bd3a/Secure%20Controls%20Framework%20(SCF)%20-%202023.4.xlsx'
-            local_scf = get_cached_local_path_for(file_location)
-            # Read the Excel file
-            xls = pd.ExcelFile(local_scf)
-            # Get the data from the "SCF 2023.4" worksheet
-            scf_data = pd.read_excel(xls, 'SCF 2023.4')
-            # Keep only the columns "SCF #" and the one matching params.framework
-            scf_data = scf_data[["SCF #", params.framework]]
-            scf_data = scf_data.assign(**{scf_data.columns[1]: scf_data.iloc[:, 1].str.split('\n')}).explode(scf_data.columns[1]).reset_index(drop=True)
+        # If SCF-supported framework, we need the data; otherwise we can map directly.
+        if not params.framework_map:
+            scf_data = get_scf_data(params.scf, framework_name=params.framework_name)
+        else:
+            scf_data = validate_and_get_framework(params.framework_map)
+        
+        metadata = {}
+        if params.metadata:
+            metadata = get_metadata(params.framework_metadata)
 
-        elif params.framework.endswith('.csv'):
-            scf_data = validate_and_get_framework(params.framework)
-        scf_data.columns = ['SCF', 'Framework']
-        map_json = map(scf_data, data[0])
+        map_json = map(scf_data, data[0], params.framework_name, metadata=metadata)
         if params.format == "json":
-            print(json.dumps(map_json, indent=2))
+            output_result(params.output, map_json, 'json')
         if params.format == "csv":
-            csv_line = []
-            csv_line.append(",".join([
-                "Framework",
-                '"Control Objectives"',
-                '"Control - Very High"',
-                '"Control - High"',
-                '"Control - Medium"',
-                '"Control - Low"',
-                '"Control - Very Low"'
-            ]))
+            # Define the fixed titles for your CSV
+            titles = [
+                params.framework_name,
+                "SCF",
+                "Control Objectives",
+                "Control - Very High",
+                "Control - High",
+                "Control - Medium",
+                "Control - Low",
+                "Control - Very Low"
+            ]
+            
+            # Collect all unique metadata keys that are not 'control_objectives' or 'controls'
+            metadata_keys = set()
+            for details in map_json.values():
+                metadata_keys.update(k for k in details.keys() if k not in ['control_objectives', 'controls', 'scf'])
+            metadata_keys = sorted(metadata_keys)  # Sort to ensure consistent column order
+            
+            # Initialize the list that will hold all CSV lines (as lists)
+            csv_lines = []
 
-            for framework_id in map_json:
-                co: str = ";".join(map_json[framework_id]["control_objectives"])
-                c_vh: str = ";".join(
-                    map_json[framework_id]["controls"]["Very High"]
-                )
-                c_h: str = ";".join(map_json[framework_id]["controls"]["High"])
-                c_m: str = ";".join(
-                    map_json[framework_id]["controls"]["Medium"]
-                )
-                c_l: str = ";".join(map_json[framework_id]["controls"]["Low"])
-                c_vl: str = ";".join(
-                    map_json[framework_id]["controls"]["Very Low"]
-                )
-                csv_line.append(",".join([
+            # Append the header row first
+            csv_lines.append(titles + list(metadata_keys))
+            
+            # Iterate through each entry in the map_json to populate the CSV rows
+            for framework_id, details in map_json.items():
+                # Extract control objectives and control levels with safe defaults if missing
+                scf = ";".join(details.get("scf", []))
+                co = ";".join(details.get("control_objectives", []))
+                controls = details.get("controls", {})
+                c_vh = ";".join(controls.get("Very High", []))
+                c_h = ";".join(controls.get("High", []))
+                c_m = ";".join(controls.get("Medium", []))
+                c_l = ";".join(controls.get("Low", []))
+                c_vl = ";".join(controls.get("Very Low", []))
+
+                # Start building the row with fixed structure data
+                csv_line = [
                     framework_id,
-                    f"{co}",
-                    f"{c_vh}",
-                    f"{c_h}",
-                    f"{c_m}",
-                    f"{c_l}",
-                    f"{c_vl}"
-                ]))
-            framework_name = params.framework.replace('.csv', '').replace('\n', '_').replace('\\', '').replace('/', '').replace('.', '')
-            epoch = int(time.time())
-            output_file = f"map_{data[0].metadata['provider'].upper()}_{data[0].metadata['service']}_to_{framework_name}_{epoch}.csv"
-            with open(output_file, "w") as csvfile:
-                for service in csv_line[:-1]:
-                    csvfile.write(service + "\n")
-                csvfile.write(csv_line[-1])
-            print(f"Mapping output in: {output_file}")
+                    scf,
+                    co,
+                    c_vh,
+                    c_h,
+                    c_m,
+                    c_l,
+                    c_vl
+                ]
+
+                # Append metadata values, using a safe default if a key is missing
+                csv_line.extend(details.get(key, '') for key in metadata_keys)
+                
+                # Append the complete row to the list of CSV lines
+                csv_lines.append(csv_line)
+
+            output_result(params.output, csv_lines, 'csv_list')
+
+    elif params.operation == Operation.add_mapping:
+        # If SCF-supported framework, we need the data; otherwise we can map directly.
+        if not params.framework_map:
+            scf_data = get_scf_data(params.scf, framework_name=params.framework_name)
+        else:
+            scf_data = validate_and_get_framework(params.framework_map)
+        
+        metadata = {}
+        if params.metadata:
+            metadata = get_metadata(params.metadata)
+
+        threatmodel_data = data[0]
+        map_json = map(scf_data, threatmodel_data, params.framework_name, metadata=metadata)
+
+        threatmodel_data.threatmodel_json["mapping"] = {}
+        for key in sorted(map_json.keys()):
+            # Extract everything except the 'controls' subkey
+            new_entry = {k: v for k, v in map_json[key].items() if k != 'controls'}
+            threatmodel_data.threatmodel_json["mapping"][key] = new_entry
+        
+        for co in threatmodel_data.control_objectives:
+            framework_controls = []
+            for fw_control in map_json:
+                if co in map_json[fw_control].get('control_objectives'):
+                    framework_controls.append(fw_control)
+            threatmodel_data.threatmodel_json["control_objectives"][co][params.framework_name] = sorted(list(set(framework_controls)))
+
+        output_result(params.output, threatmodel_data.threatmodel_json, 'json')
