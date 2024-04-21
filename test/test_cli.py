@@ -103,11 +103,11 @@ def test_get_drawio_binary_path():
     assert os.path.exists(path)
 
 def test_output_result():
-    output_param = 'output.json'
+    output_param = io.StringIO()
     result = {'key': 'value'}
     output_result(output_param, result, 'json')
-    with open(output_param, 'r') as file:
-        data = json.load(file)
+    output_param.seek(0)
+    data = json.load(output_param)
     assert data['key'] == 'value'
 
 def test_is_file_or_dir():
