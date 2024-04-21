@@ -37,7 +37,6 @@ def test_map():
       "weighted_priority": "High"}}, 'control_objectives': {'someservice.CO1':{'scf':['SCF1']}}})
     metadata = {'Framework1': {'additional_info': 'info'}}
     result = map(framework2co, threatmodel_data, 'Framework', metadata)
-    print(result)
     expected_result = {
         'Framework1': {
             'control_objectives': ['someservice.CO1'],
@@ -58,11 +57,15 @@ def test_scan_controls():
     args = Namespace(pattern='UnauthorizedAccess')
     data = {'controls': {'1': {'description': 'Unauthorized access detected'}}}
     result = scan_controls(args, data)
+    assert result['controls'] == {}
+    data = {'controls': {'1': {'description': 'Unauthorized access detected UnauthorizedAccess'}}}
+    result = scan_controls(args, data)
     assert '1' in result['controls']
 
 def test_get_input_data():
     args = Namespace(source='validpath.json', operation='list')
     result = get_input_data(args)
+    print(result)
     assert isinstance(result, list)  # Assuming JSON loads to a list
 
 def test_get_drawio_binary_path():
