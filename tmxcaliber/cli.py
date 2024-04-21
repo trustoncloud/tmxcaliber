@@ -303,7 +303,13 @@ def validate_and_get_framework(csv_path: str) -> DataFrame:
 
 def validate(args: Namespace) -> Namespace:
     if args.operation == Operation.filter:
-        args.filter_obj = Filter(severity=args.severity, events=args.events, permissions=args.permissions, feature_classes=args.feature_classes, ids=args.ids)
+        args.filter_obj = Filter(
+            severity=args.severity,
+            events=getattr(args, 'events', ''),
+            permissions=getattr(args, 'permissions', ''),
+            feature_classes=getattr(args, 'feature_classes', ''),
+            ids=getattr(args, 'ids', '')
+        )
     if args.operation == Operation.list:
         if args.list_type == ListOperation.threats:
             args.filter_obj = Filter(severity=args.severity, feature_classes=args.feature_classes)
@@ -315,7 +321,8 @@ def validate(args: Namespace) -> Namespace:
     return args
 
 def map(framework2co: pd.DataFrame, threatmodel_data: dict, framework_name: str, metadata: dict = {}) -> dict:
-    controls, objectives = threatmodel_data.controls, threatmodel_data.control_objectives
+    controls = threatmodel_data.get('controls', {})
+    objectives = threatmodel_data.get('control_objectives', {})
     # Step 1: Create a list of tuples from the data dictionary
     entries = []
     for top_key, values in objectives.items():
@@ -419,6 +426,10 @@ def get_drawio_binary_path():
         ]:
             if os.path.isfile(potential_path):
                 return potential_path
+    raise BinaryNotFound(
+        "drawio binary not found automatically.",
+        "Use --bin flag to specify path to drawio binary."
+    )
     elif platform.system().lower() == "linux":
         return "xvfb-run -a drawio"
     elif platform.system().lower() == "darwin":
