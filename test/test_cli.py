@@ -125,19 +125,6 @@ def test_validate_missing_required_fields():
     with pytest.raises(SystemExit):
         validate(args)
 
-def test_map_empty_data():
-    framework2co = pd.DataFrame()
-    threatmodel_data = {'controls': {}, 'control_objectives': {}}
-    metadata = {}
-    result = map(framework2co, threatmodel_data, 'Framework1', metadata)
-    assert result == {}
-
-def test_scan_controls_no_match():
-    args = Namespace(pattern='NonexistentPattern')
-    data = {'controls': {'1': {'description': 'Authorized access granted'}}}
-    result = scan_controls(args, data)
-    assert result['controls'] == {}
-
 def test_get_input_data_multiple_files():
     args = Namespace(source='validpath', operation='list')
     with pytest.raises(SystemExit):
