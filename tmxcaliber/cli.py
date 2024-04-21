@@ -69,7 +69,7 @@ class ListOperation:
 
 def _get_version():
     module_name = vars(sys.modules[__name__])["__package__"]
-    return f"%(prog)s {pkg_resources.require(module_name)[0].version}"
+    return f"{module_name} {pkg_resources.require(module_name)[0].version}"
 
 def add_severity_filter_argument(*parsers: ArgumentParser):
     for parser in parsers:
