@@ -8,12 +8,6 @@ This package is intended for `python3` and has been tested in `python3.8+`.
 
 Follow the instructions below to install the package on your operating system.
 
-### Prerequisites
-
-- Python 3.8+
-- git (for source installation)
-- Docker (optional, for container-based execution)
-
 ### Docker
 Build the image and run the tool from the container as follows.
 ```sh
