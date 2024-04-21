@@ -132,12 +132,12 @@ def test_get_drawio_binary_path_not_found():
         get_drawio_binary_path()
 
 def test_output_result_csv():
-    output_param = 'output.csv'
+    output_param = io.StringIO()
     result = [['header1', 'header2'], ['data1', 'data2']]
     output_result(output_param, result, 'csv_list')
-    with open(output_param, 'r') as file:
-        data = csv.reader(file)
-        assert list(data) == [['header1', 'header2'], ['data1', 'data2']]
+    output_param.seek(0)
+    data = csv.reader(output_param)
+    assert list(data) == [['header1', 'header2'], ['data1', 'data2']]
 
 def test_output_result_unsupported_type():
     with pytest.raises(TypeError):
