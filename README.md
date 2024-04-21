@@ -8,6 +8,12 @@ This package is intended for `python3` and has been tested in `python3.8+`.
 
 Follow the instructions below to install the package on your operating system.
 
+### Prerequisites
+
+- Python 3.8+
+- git (for source installation)
+- Docker (optional, for container-based execution)
+
 ### Docker
 Build the image and run the tool from the container as follows.
 ```sh
@@ -77,27 +83,25 @@ $: tmxcaliber -h
 usage: tmxcaliber [-h] [-v] {filter,map,scan,generate,list,add-mapping} ...
 
 options:
-  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
-  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
-  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help            show this help message and exit
   -v, --version         show the installed version.
 
 
 operation:
   {filter,map,scan,generate,list}
-    filter              filter down the ThreatModel data. We support XML file for internal purposes.
-    map                 map ThreatModel data to a supported framework in the Secure Control Framework (https://securecontrolsframework.com).
-    scan                scan the ThreatModel data for a given pattern. We support XML file for internal purposes.
-    generate            generate threat specific PNGs from XML data. We support XML file for internal purposes.
-    list                List data of one or more ThreatModels. We support XML file for internal purposes.
-    add-mapping         add a supported framework in the Secure Control Framework (https://securecontrolsframework.com) into the ThreatModel JSON data.
+    filter              filter down the ThreatModel data. 
+    map                 map ThreatModel data to a supported framework in the Secure Control Framework.
+    add-mapping         add a supported framework in the Secure Control Framework into the ThreatModel JSON data.
+    scan                scan the ThreatModel data for a given pattern. 
+    generate            generate threat specific PNGs from XML data. 
+    list                List data of one or more ThreatModels. 
 ```
 You can also get more help on each operation:
 ```sh
 # help for `filter` and `map` operations.
 $: tmxcaliber filter -h
 $: tmxcaliber map -h
+$: tmxcaliber add-mapping -h
 ```
 ## Usage
 Details for supported operations, including the new list operations, are as follows:
@@ -118,10 +122,8 @@ positional arguments:
   source                Path to the ThreatModel JSON file. We support XML file for internal purposes.
 
 options:
-  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
-  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
-  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help            show this help message and exit
+  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   --permissions PERMISSIONS
                         filter data by IAM permission(s). Separate by `,`, if several.
 
@@ -144,17 +146,17 @@ The `map` operation allows you to map a ThreatModel control objectives to variou
 $: tmxcaliber map path/to/threatmodel.json \
   --scf 2023.4 \
   --framework-name "ISO 27001 v2013" \
-  --framework-map path/to/myframework.csv \
-  --framework-metadata path/to/metadata.csv \
   --format csv
 ```
 
-#### Map a framework not supported by the SCF
-For non-supported frameworks, you must map your framework to the SCF. The format is a CSV mapping (see the template in the `template` folder). Once the mapping is done, you will be able to generate your mapping.
+#### Map to your own framework
+For non-supported frameworks, you can map your framework to the SCF once, then you can use it for all ThreatModels. The format is a CSV mapping (see the template in the `template` folder). Once the mapping is done, you will be able to generate your mapping. Optionally, you can also insert metadata, typically the description of the controls in your framework.
 ```sh
 $: tmxcaliber map path/to/threatmodel.json \
   --scf 2023.4 \
-  --framework path/to/myframework.csv \
+  --framework-name "My Framework Name" \
+  --framework-map path/to/myframework.csv \
+  --framework-metadata path/to/mymetadata.csv \
   --format csv
 ```
 
@@ -191,9 +193,6 @@ positional arguments:
   source                Path to the ThreatModel JSON file or directory containing ThreatModel JSON files.
 
 options:
-  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
-  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
-  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help            show this help message and exit
   --output OUTPUT       Output CSV file to write the results. If not provided, prints to stdout.
   --severity {very high,high,medium,low,very low}
@@ -222,9 +221,6 @@ positional arguments:
   source           Path to the ThreatModel JSON file or directory containing ThreatModel JSON files.
 
 options:
-  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
-  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
-  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help       show this help message and exit
   --output OUTPUT  Output CSV file to write the results. If not provided, prints to stdout.
 
@@ -239,4 +235,3 @@ S3.CO1,Enforce encryption-in-transit,S3.C3,Preventative,Protect,S3.C5,S3.C119,"B
 
 ## Contributing
 If you'd like to contribute to the development of TMxCaliber, please submit a pull request or open an issue on the project's GitHub repository.
-    add-mapping         add a supported framework in the Secure Control Framework (https://securecontrolsframework.com) into the ThreatModel JSON data.
