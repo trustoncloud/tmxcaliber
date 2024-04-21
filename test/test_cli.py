@@ -21,13 +21,13 @@ def test_is_file_or_dir():
     assert is_file_or_dir("existingdir") == "existingdir"
 
 def test_validate():
-    args = Namespace(operation='filter', severity='high', events='login', permissions='read', feature_classes='User', ids='User.FC123')
+    args = Namespace(operation='filter', severity='high', events='login', permissions='read', feature_classes='someservice.FC123,someservice.FC456', ids='someservice.CO123')
     validated_args = validate(args)
     assert validated_args.filter_obj.severity == 'high'
     assert 'login' in validated_args.filter_obj.events
     assert 'read' in validated_args.filter_obj.permissions
-    assert 'User' in validated_args.filter_obj.feature_classes
-    assert 'User.FC123' in validated_args.filter_obj.ids
+    assert ['SOMESERVICE.FC123','SOMESERVICE.FC456'] in validated_args.filter_obj.feature_classes
+    assert 'someservice.CO123' in validated_args.filter_obj.ids
 
 def test_map():
     framework2co = pd.DataFrame({'SCF': ['SCF1'], 'Framework': ['Framework1']})
