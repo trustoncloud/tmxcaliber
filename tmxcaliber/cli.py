@@ -391,6 +391,9 @@ def get_input_data(params: Namespace) -> Union[dict, str, list]:
         elif params.source.endswith('.json'):
             json_file_paths = [params.source]
             is_threatmodel_json = True
+    else:
+        print(f"File or directory not found: {params.source}")
+        exit(1)
 
     if is_threatmodel_json:
         threatmodel_data_list = []

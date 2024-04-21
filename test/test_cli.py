@@ -94,7 +94,7 @@ def test_get_input_data_nonexistent_file():
     args = Namespace(source='nonexistent.json', operation='list')
     with patch('os.path.isfile', return_value=False), \
          patch('os.path.isdir', return_value=False):
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(SystemExit):
             get_input_data(args)
 
 def test_get_drawio_binary_path():
