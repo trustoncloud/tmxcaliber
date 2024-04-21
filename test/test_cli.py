@@ -6,7 +6,8 @@ import pandas as pd
 from argparse import Namespace
 
 import csv
-from tmxcaliber.lib.threatmodel_data import ThreatModelData, BinaryNotFound
+from tmxcaliber.lib.threatmodel_data import ThreatModelData
+from tmxcaliber.cli import BinaryNotFound
 
 def test_get_version():
     version = _get_version()
