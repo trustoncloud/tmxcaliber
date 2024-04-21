@@ -456,8 +456,7 @@ def output_result(output_param, result, result_type):
             with open(output_param, 'w+', newline='') as file:
                 file.write(json_result)
         elif is_csv:
-            with open(output_param, mode='w', newline='', encoding='utf-8') as file:
-                csv_writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+            csv_writer = csv.writer(output_param, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
                 for line in csv_result:
                     csv_writer.writerow(line)
     elif is_json:
