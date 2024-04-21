@@ -59,3 +59,45 @@ def test_output_result():
 def test_is_file_or_dir():
     with pytest.raises(SystemExit):
         is_file_or_dir("nonexistentpath.json")
+def test_is_file_or_dir_invalid_file_type():
+    with pytest.raises(SystemExit):
+        is_file_or_dir("invalidfiletype.txt")
+
+def test_validate_missing_required_fields():
+    args = Namespace(operation='filter', severity='high')
+    with pytest.raises(SystemExit):
+        validate(args)
+
+def test_map_empty_data():
+    framework2co = pd.DataFrame()
+    threatmodel_data = {'controls': {}, 'control_objectives': {}}
+    metadata = {}
+    result = map(framework2co, threatmodel_data, 'Framework1', metadata)
+    assert result == {}
+
+def test_scan_controls_no_match():
+    args = Namespace(pattern='NonexistentPattern')
+    data = {'controls': {'1': {'description': 'Authorized access granted'}}}
+    result = scan_controls(args, data)
+    assert result['controls'] == {}
+
+def test_get_input_data_multiple_files():
+    args = Namespace(source='validpath', operation='list')
+    with pytest.raises(SystemExit):
+        get_input_data(args)
+
+def test_get_drawio_binary_path_not_found():
+    with pytest.raises(BinaryNotFound):
+        get_drawio_binary_path()
+
+def test_output_result_csv():
+    output_param = 'output.csv'
+    result = [['header1', 'header2'], ['data1', 'data2']]
+    output_result(output_param, result, 'csv_list')
+    with open(output_param, 'r') as file:
+        data = csv.reader(file)
+        assert list(data) == [['header1', 'header2'], ['data1', 'data2']]
+
+def test_output_result_unsupported_type():
+    with pytest.raises(TypeError):
+        output_result(None, None, 'unsupported_type')
