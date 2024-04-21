@@ -62,14 +62,36 @@ def test_scan_controls():
     result = scan_controls(args, data)
     assert '1' in result['controls']
 
-def test_get_input_data():
+import pytest
+from unittest.mock import patch, mock_open
+
+@pytest.fixture
+def mock_json_file():
+    return '[{"key": "value"}]'
+
+def test_get_input_data_valid_json(mock_json_file):
     args = Namespace(source='validpath.json', operation='list')
-    result = get_input_data(args)
-    print(result)
-    if result is not None:
-        assert isinstance(result, list)  # Check if result is a list only if it is not None
-    else:
-        assert result is not None, "Expected a list, got None instead"
+    with patch('builtins.open', mock_open(read_data=mock_json_file)), \
+         patch('os.path.isfile', return_value=True), \
+         patch('os.path.isdir', return_value=False):
+        result = get_input_data(args)
+        assert isinstance(result, list)
+        assert result == [{"key": "value"}]
+
+def test_get_input_data_invalid_json():
+    args = Namespace(source='invalidpath.json', operation='list')
+    with patch('builtins.open', mock_open(read_data='this is not json')), \
+         patch('os.path.isfile', return_value=True), \
+         patch('os.path.isdir', return_value=False):
+        with pytest.raises(json.JSONDecodeError):
+            get_input_data(args)
+
+def test_get_input_data_nonexistent_file():
+    args = Namespace(source='nonexistent.json', operation='list')
+    with patch('os.path.isfile', return_value=False), \
+         patch('os.path.isdir', return_value=False):
+        with pytest.raises(FileNotFoundError):
+            get_input_data(args)
 
 def test_get_drawio_binary_path():
     path = get_drawio_binary_path()
