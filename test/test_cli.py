@@ -38,8 +38,21 @@ def test_map():
     metadata = {'Framework1': {'additional_info': 'info'}}
     result = map(framework2co, threatmodel_data, 'Framework', metadata)
     print(result)
-    assert 'Framework1' in result
-    assert result['Framework1']['additional_info'] == 'info'
+    expected_result = {
+        'Framework1': {
+            'control_objectives': ['someservice.CO1'],
+            'scf': ['SCF1'],
+            'controls': {
+                'Very High': [],
+                'High': ['someservice.C1'],
+                'Medium': [],
+                'Low': [],
+                'Very Low': []
+            },
+            'additional_info': 'info'
+        }
+    }
+    assert result == expected_result
 
 def test_scan_controls():
     args = Namespace(pattern='UnauthorizedAccess')
