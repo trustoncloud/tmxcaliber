@@ -73,7 +73,7 @@ def test_scan_controls():
     result = scan_controls(args, data)
     assert '1' in result['controls']
 
-def test_get_input_data_valid_json(mock_json_file):
+def test_get_input_data_valid_json(mock_json_file, mock_json):
     args = Namespace(source='validpath.json', operation='list')
     with patch('builtins.open', mock_open(read_data=mock_json_file)), \
          patch('os.path.isfile', return_value=True), \
