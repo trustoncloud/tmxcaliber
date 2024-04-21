@@ -61,7 +61,7 @@ def test_output_result():
     assert data['key'] == 'value'
 
 def test_is_file_or_dir():
-    with pytest.raises(SystemExit):
+    with pytest.raises(ArgumentTypeError, match="The path nonexistentpath.json does not exist"):
         is_file_or_dir("nonexistentpath.json")
 def test_is_file_or_dir_invalid_file_type():
     with pytest.raises(SystemExit):
