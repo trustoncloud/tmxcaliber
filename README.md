@@ -162,6 +162,24 @@ $: tmxcaliber map path/to/threatmodel.json \
   --format csv
 ```
 
+### Add mapping
+
+You may add the mapping information directly into the ThreatModel JSON. You can use similar arguments than `map`.
+
+```sh
+$: tmxcaliber add-mapping path/to/threatmodel.json \
+  --scf 2023.4 \
+  --framework-name "ISO 27001 v2013" \
+```
+
+```sh
+$: tmxcaliber add-mapping path/to/threatmodel.json \
+  --scf 2023.4 \
+  --framework-name "My Framework Name" \
+  --framework-map path/to/myframework.csv \
+  --framework-metadata path/to/mymetadata.csv \
+```
+
 ### Scan
 The `scan` opreation allows you to scan the description of all the controls for a given pattern. Support for currently known Amazon GuardDuty findings pattern has also been added.
 ```sh
