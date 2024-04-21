@@ -2,6 +2,7 @@ import pytest
 from tmxcaliber.cli import _get_version, is_file_or_dir, validate, map, scan_controls, get_input_data, get_drawio_binary_path, output_result
 import json
 import os
+import io
 import pandas as pd
 from argparse import Namespace
 
