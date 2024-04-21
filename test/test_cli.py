@@ -13,8 +13,8 @@ import pytest
 from unittest.mock import patch, mock_open
 
 @pytest.fixture
-def mock_json_file():
-    return json.dumps(mock_json())
+def mock_json_file(mock_json):
+    return json.dumps(mock_json)
 
 @pytest.fixture
 def mock_json():
@@ -43,9 +43,9 @@ def test_validate():
     assert validated_args.filter_obj.feature_classes == ['SOMESERVICE.FC123','SOMESERVICE.FC456']
     assert validated_args.filter_obj.ids == ['SOMESERVICE.CO123', 'SOMESERVICE.FC123']
 
-def test_map():
+def test_map(mock_json):
     framework2co = pd.DataFrame({'SCF': ['SCF1'], 'Framework': ['Framework1']})
-    threatmodel_data = ThreatModelData(mock_json())
+    threatmodel_data = ThreatModelData(mock_json)
     metadata = {'Framework1': {'additional_info': 'info'}}
     result = map(framework2co, threatmodel_data, 'Framework', metadata)
     expected_result = {
@@ -80,7 +80,7 @@ def test_get_input_data_valid_json(mock_json_file, mock_json):
          patch('os.path.isdir', return_value=False):
         result = get_input_data(args)
         assert isinstance(result, list)
-        assert result == [{"key": "value"}]
+        assert result[0].threatmodel_json == mock_json
 
 def test_get_input_data_invalid_json():
     args = Namespace(source='invalidpath.json', operation='list')
