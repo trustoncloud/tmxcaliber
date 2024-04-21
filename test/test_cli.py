@@ -114,7 +114,7 @@ def test_is_file_or_dir():
         is_file_or_dir("nonexistentpath.json")
 
 def test_is_file_or_dir_invalid_file_type():
-    with pytest.raises(SystemExit):
+    with pytest.raises(ArgumentTypeError, match="The file invalidfiletype.txt is not valid, only json or xml can be given."):
         is_file_or_dir("invalidfiletype.txt")
 
 def test_validate_missing_required_fields():
