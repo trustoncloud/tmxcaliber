@@ -25,11 +25,15 @@ $: docker run --rm -it tmxcaliber -h
 ```
 
 ### Linux / MacOS
-Initiate and activate virtual environment by running the following commands.
+Initiate and activate the virtual environment by running the following commands.
 ```sh
-# python -m venv [path/to/virtual-env]
-$: python -m venv .my-env
-$: source .my-env/bin/activate
+# Replace `[path/to/virtual-env]` with your desired directory for the virtual environment.
+$ python -m venv [path/to/virtual-env]
+# Activate the virtual environment. Use the appropriate command for your operating system.
+# On Linux or MacOS:
+$ source [path/to/virtual-env]/bin/activate
+# On Windows:
+$ .\[path/to/virtual-env]\Scripts\activate.bat
 ```
 > **Note:** Virtual environment is used to isolate yourself from global installation of Python, enabling you to install packages of your desired versions. More details can be found [here](https://docs.python.org/3/library/venv.html).
 
@@ -48,9 +52,13 @@ $: pip install .
 ### Windows
 First, initiate and activate the environment as follows.
 ```sh
-# python -m venv [path/to/virtual-env]
-$: python -m venv .my-env
-$: .my-env\Scripts\activate.bat
+# Replace `[path/to/virtual-env]` with your desired directory for the virtual environment.
+$ python -m venv [path/to/virtual-env]
+# Activate the virtual environment. Use the appropriate command for your operating system.
+# On Linux or MacOS:
+$ source [path/to/virtual-env]/bin/activate
+# On Windows:
+$ .\[path/to/virtual-env]\Scripts\activate.bat
 ```
 Then, clone the git repository and install using `pip`.
 ```sh
