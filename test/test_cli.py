@@ -87,7 +87,7 @@ def test_get_input_data_invalid_json():
     with patch('builtins.open', mock_open(read_data='this is not json')), \
          patch('os.path.isfile', return_value=True), \
          patch('os.path.isdir', return_value=False):
-        with pytest.raises(json.JSONDecodeError):
+        with pytest.raises(SystemExit):
             get_input_data(args)
 
 def test_get_input_data_nonexistent_file():
