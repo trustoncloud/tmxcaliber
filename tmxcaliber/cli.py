@@ -321,8 +321,7 @@ def validate(args: Namespace) -> Namespace:
     return args
 
 def map(framework2co: pd.DataFrame, threatmodel_data: dict, framework_name: str, metadata: dict = {}) -> dict:
-    controls = threatmodel_data.get('controls', {})
-    objectives = threatmodel_data.get('control_objectives', {})
+    controls, objectives = threatmodel_data.controls, threatmodel_data.control_objectives
     # Step 1: Create a list of tuples from the data dictionary
     entries = []
     for top_key, values in objectives.items():
@@ -426,10 +425,6 @@ def get_drawio_binary_path():
         ]:
             if os.path.isfile(potential_path):
                 return potential_path
-    raise BinaryNotFound(
-        "drawio binary not found automatically.",
-        "Use --bin flag to specify path to drawio binary."
-    )
     elif platform.system().lower() == "linux":
         return "xvfb-run -a drawio"
     elif platform.system().lower() == "darwin":
