@@ -74,9 +74,10 @@ To get complete help on `tmxcaliber` command, run the following.
 ```sh
 $: tmxcaliber -h
 
-usage: tmxcaliber [-h] [-v] {filter,map,scan,generate,list} ...
+usage: tmxcaliber [-h] [-v] {filter,map,scan,generate,list,add-mapping} ...
 
 options:
+  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help            show this help message and exit
   -v, --version         show the installed version.
 
@@ -105,7 +106,7 @@ The `filter` operation allows you to filter relevant information from a ThreatMo
 $: tmxcaliber filter path/to/threatmodel.json --severity high
 
 $: tmxcaliber filter -h
-usage: tmxcaliber filter [-h] [--permissions PERMISSIONS] [--events EVENTS] [--exclude]
+usage: tmxcaliber filter [-h] [--permissions PERMISSIONS] [--events EVENTS] [--exclude] [--severity {very high,high,medium,low,very low}] [--feature-classes FEATURE_CLASSES] [--ids IDS]
                          [--severity {very high,high,medium,low,very low}] [--feature-classes FEATURE_CLASSES]
                          [--ids IDS]
                          source
@@ -114,6 +115,7 @@ positional arguments:
   source                Path to the ThreatModel JSON file. We support XML file for internal purposes.
 
 options:
+  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help            show this help message and exit
   --permissions PERMISSIONS
                         filter data by IAM permission(s). Separate by `,`, if several.
@@ -182,6 +184,7 @@ positional arguments:
   source                Path to the ThreatModel JSON file or directory containing ThreatModel JSON files.
 
 options:
+  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help            show this help message and exit
   --output OUTPUT       Output CSV file to write the results. If not provided, prints to stdout.
   --severity {very high,high,medium,low,very low}
@@ -210,6 +213,7 @@ positional arguments:
   source           Path to the ThreatModel JSON file or directory containing ThreatModel JSON files.
 
 options:
+  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help       show this help message and exit
   --output OUTPUT  Output CSV file to write the results. If not provided, prints to stdout.
 
@@ -224,3 +228,5 @@ S3.CO1,Enforce encryption-in-transit,S3.C3,Preventative,Protect,S3.C5,S3.C119,"B
 
 ## Contributing
 If you'd like to contribute to the development of TMxCaliber, please submit a pull request or open an issue on the project's GitHub repository.
+    add-mapping         add a supported framework in the Secure Control Framework (https://securecontrolsframework.com) into the ThreatModel JSON data.
+
