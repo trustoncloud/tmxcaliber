@@ -112,6 +112,7 @@ def test_output_result():
 def test_is_file_or_dir():
     with pytest.raises(ArgumentTypeError, match="The path nonexistentpath.json does not exist"):
         is_file_or_dir("nonexistentpath.json")
+
 def test_is_file_or_dir_invalid_file_type():
     with pytest.raises(SystemExit):
         is_file_or_dir("invalidfiletype.txt")
