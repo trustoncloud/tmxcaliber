@@ -11,7 +11,7 @@ from tmxcaliber.lib.threatmodel_data import ThreatModelData
 from tmxcaliber.cli import BinaryNotFound, ArgumentTypeError
 
 import pytest
-from unittest.mock import patch, mock_open
+from unittest.mock import mock_open, patch, MagicMock, call
 
 @pytest.fixture
 def mock_json_file(mock_json):
@@ -102,13 +102,34 @@ def test_get_drawio_binary_path():
     path = get_drawio_binary_path()
     assert os.path.exists(path)
 
-def test_output_result():
-    output_param = io.StringIO()
+def test_output_json_result():
+    output_param = 'output.json'
     result = {'key': 'value'}
-    output_result(output_param, result, 'json')
-    output_param.seek(0)
-    data = json.load(output_param)
-    assert data['key'] == 'value'
+    result_type = 'json'
+    m = mock_open()
+    with patch('builtins.open', m):
+        output_result(output_param, result, result_type)
+    m.assert_called_once_with(output_param, 'w+', newline='')
+    handle = m()
+    handle.write.assert_called_once_with(json.dumps(result, indent=2))
+    assert handle.write.call_args[0][0] == json.dumps(result, indent=2)
+
+def test_output_csv_result():
+    output_param = 'output.csv'
+    result = [['header1', 'header2'], ['data1', 'data2']]
+    result_type = 'csv_list'
+    m = mock_open()
+    with patch('builtins.open', m):
+        with patch('csv.writer', MagicMock()) as mock_csv_writer:
+            output_result(output_param, result, result_type)
+    # Verify the file was opened with the correct parameters
+    m.assert_called_once_with(output_param, mode='w', newline='', encoding='utf-8')
+    # Now also check the csv.writer was called correctly, including the additional parameters
+    handle = m()
+    mock_csv_writer.assert_called_once_with(handle, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+    # Check calls to writerow method on the mock csv_writer
+    calls = [call(line) for line in result]
+    mock_csv_writer().writerow.assert_has_calls(calls, any_order=True)
 
 def test_is_file_or_dir():
     with pytest.raises(ArgumentTypeError, match="The path nonexistentpath.json does not exist"):
@@ -131,14 +152,6 @@ def test_get_drawio_binary_path_not_found():
          pytest.raises(BinaryNotFound):
         get_drawio_binary_path()
         get_drawio_binary_path()
-
-def test_output_result_csv():
-    output_param = io.StringIO()
-    result = [['header1', 'header2'], ['data1', 'data2']]
-    output_result(output_param, result, 'csv_list')
-    output_param.seek(0)
-    data = csv.reader(output_param)
-    assert list(data) == [['header1', 'header2'], ['data1', 'data2']]
 
 def test_output_result_unsupported_type():
     with pytest.raises(TypeError):

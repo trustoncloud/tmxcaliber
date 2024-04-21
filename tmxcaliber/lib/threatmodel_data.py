@@ -1,6 +1,7 @@
 import io
 import csv
 import json
+from .tools import sort_by_id
 
 class ThreatModelDataList:
 
@@ -32,18 +33,25 @@ def get_permissions(access: dict) -> list:
                     permissions.extend(get_permissions(perm))
     return [x.lower() for x in list(set(permissions))]
 
+def upgrade_to_latest_template_version(tm_json):
+    for co in tm_json.get("control_objectives"):
+        co_data = tm_json['control_objectives'][co]
+        if co_data.get('scf') and isinstance(co_data['scf'], str):
+            tm_json['control_objectives'][co]['scf'] = co_data['scf'].split(",")
+    return tm_json
+
 class ThreatModelData:
 
     threatmodel_data_list = []
 
     def __init__(self, threatmodel_json):
-        self.threatmodel_json = threatmodel_json
-        self.metadata = threatmodel_json.get("metadata")
-        self.threats = threatmodel_json.get("threats")
-        self.feature_classes = threatmodel_json.get("feature_classes")
-        self.controls = threatmodel_json.get("controls")
-        self.control_objectives = threatmodel_json.get("control_objectives")
-        self.actions = threatmodel_json.get("actions")
+        self.threatmodel_json = upgrade_to_latest_template_version(threatmodel_json)
+        self.metadata = self.threatmodel_json.get("metadata")
+        self.threats = self.threatmodel_json.get("threats")
+        self.feature_classes = self.threatmodel_json.get("feature_classes")
+        self.controls = self.threatmodel_json.get("controls")
+        self.control_objectives = self.threatmodel_json.get("control_objectives")
+        self.actions = self.threatmodel_json.get("actions")
         ThreatModelData.threatmodel_data_list.append(self)
 
     def get_feature_class_hierarchy(self, feature_class_id_to_filter) -> list:
@@ -205,5 +213,6 @@ def get_classified_cvssed_control_ids_by_co(
                     if control in control_id_list[severity_prev]:
                         add_control = False 
             if add_control:
-                control_id_list[severity].append(control)    
+                control_id_list[severity].append(control)
+        control_id_list[severity] = sort_by_id(control_id_list[severity])  
     return control_id_list

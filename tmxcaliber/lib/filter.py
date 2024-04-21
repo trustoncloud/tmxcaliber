@@ -29,14 +29,14 @@ class Filter:
         if id_prefix is None:
             id_prefix = current_prefix
         elif id_prefix != current_prefix:
-            ValueError(
+            raise ValueError(
                 "inconsistent ID types. Please provide IDs "
                 "with the same prefix (FC|T|C|CO)"
             )
-    for value in self.feature_classes:
-        match = re.match(IDS_FORMAT_REGEX, value)
-        if not match:
-            ValueError(
-                f"invalid ID format: {value}. Expected format is "
-                "'somestring.(FC|T|C|CO)somenumber'"
-            )
+        for value in self.feature_classes:
+            match = re.match(IDS_FORMAT_REGEX, value)
+            if not match:
+                raise ValueError(
+                    f"invalid ID format: {value}. Expected format is "
+                    "'somestring.(FC|T|C|CO)somenumber'"
+                )

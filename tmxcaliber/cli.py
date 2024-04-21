@@ -278,7 +278,7 @@ def get_metadata(csv_path: str) -> dict:
     return result
 
 
-def validate_and_get_framework(csv_path: str) -> DataFrame:
+def validate_and_get_framework(csv_path: str, framework_name: str) -> DataFrame:
     # Read the CSV file into a DataFrame
     df = pd.read_csv(csv_path, header=None)
     # Validate that the DataFrame has exactly 2 columns
@@ -297,7 +297,7 @@ def validate_and_get_framework(csv_path: str) -> DataFrame:
 
     # Remove any duplicate rows
     df_expanded = df_expanded.drop_duplicates()
-    df_expanded.columns = ['SCF', 'Framework']
+    df_expanded.columns = ['SCF', framework_name]
 
     return df_expanded
 
@@ -456,9 +456,10 @@ def output_result(output_param, result, result_type):
             with open(output_param, 'w+', newline='') as file:
                 file.write(json_result)
         elif is_csv:
-            csv_writer = csv.writer(output_param, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-            for line in csv_result:
-                csv_writer.writerow(line)
+            with open(output_param, mode='w', newline='', encoding='utf-8') as file:
+                csv_writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+                for line in csv_result:
+                    csv_writer.writerow(line)
     elif is_json:
         print(json_result)
     elif is_csv:
@@ -551,12 +552,11 @@ def main():
         if not params.framework_map:
             scf_data = get_scf_data(params.scf, framework_name=params.framework_name)
         else:
-            scf_data = validate_and_get_framework(params.framework_map)
+            scf_data = validate_and_get_framework(params.framework_map, framework_name=params.framework_name)
 
         metadata = {}
-        if params.metadata:
+        if params.framework_metadata:
             metadata = get_metadata(params.framework_metadata)
-
         map_json = map(scf_data, data[0], params.framework_name, metadata=metadata)
         if params.format == "json":
             output_result(params.output, map_json, 'json')
@@ -622,11 +622,11 @@ def main():
         if not params.framework_map:
             scf_data = get_scf_data(params.scf, framework_name=params.framework_name)
         else:
-            scf_data = validate_and_get_framework(params.framework_map)
+            scf_data = validate_and_get_framework(params.framework_map, framework_name=params.framework_name)
 
         metadata = {}
-        if params.metadata:
-            metadata = get_metadata(params.metadata)
+        if params.framework_metadata:
+            metadata = get_metadata(params.framework_metadata)
 
         threatmodel_data = data[0]
         map_json = map(scf_data, threatmodel_data, params.framework_name, metadata=metadata)

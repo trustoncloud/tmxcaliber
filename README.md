@@ -237,19 +237,3 @@ S3.CO1,Enforce encryption-in-transit,S3.C3,Preventative,Protect,S3.C5,S3.C119,"B
 
 ## Contributing
 If you'd like to contribute to the development of TMxCaliber, please submit a pull request or open an issue on the project's GitHub repository.
-
-## Troubleshooting
-
-### Common Setup Issues
-**Problem:** Python package installation fails.
-**Solution:** Ensure you have the correct permissions to install packages in your environment or try using a virtual environment.
-
-**Problem:** Docker container does not start.
-**Solution:** Check if the Docker daemon is running and ensure all Docker commands are executed with proper permissions (using `sudo` if necessary).
-
-### Common Usage Issues
-**Problem:** Commands return errors about missing files.
-**Solution:** Ensure all paths provided to commands are correct and accessible from your current directory or specify absolute paths.
-
-**Problem:** Output files are not generated as expected.
-**Solution:** Check the command syntax and output directory permissions. Ensure there is sufficient disk space.
