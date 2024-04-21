@@ -370,7 +370,7 @@ def scan_controls(args: Namespace, data: dict) -> dict:
         pattern = re.compile(GUARDDUTY_FINDINGS)
     else:
         pattern = re.compile(args.pattern)
-    controls: dict = data.controls
+    controls: dict = data['controls']
     matched_controls = {}
 
     for control_id, control in controls.items():
