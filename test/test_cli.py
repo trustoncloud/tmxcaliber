@@ -13,6 +13,7 @@ def test_get_version():
     version = _get_version()
     assert isinstance(version, str)
     assert version.startswith('tmxcaliber')
+    print("Version:", version)
 
 def test_is_file_or_dir():
     with pytest.raises(ArgumentTypeError):
