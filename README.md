@@ -169,7 +169,7 @@ You may add the mapping information directly into the ThreatModel JSON. You can 
 ```sh
 $: tmxcaliber add-mapping path/to/threatmodel.json \
   --scf 2023.4 \
-  --framework-name "ISO 27001 v2013" \
+  --framework-name "ISO 27001 v2013"
 ```
 
 ```sh
@@ -177,7 +177,7 @@ $: tmxcaliber add-mapping path/to/threatmodel.json \
   --scf 2023.4 \
   --framework-name "My Framework Name" \
   --framework-map path/to/myframework.csv \
-  --framework-metadata path/to/mymetadata.csv \
+  --framework-metadata path/to/mymetadata.csv
 ```
 
 ### Scan
