@@ -79,6 +79,7 @@ usage: tmxcaliber [-h] [-v] {filter,map,scan,generate,list,add-mapping} ...
 options:
   --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
+  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help            show this help message and exit
   -v, --version         show the installed version.
 
@@ -117,6 +118,7 @@ positional arguments:
   source                Path to the ThreatModel JSON file. We support XML file for internal purposes.
 
 options:
+  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help            show this help message and exit
@@ -191,6 +193,7 @@ positional arguments:
 options:
   --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
+  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help            show this help message and exit
   --output OUTPUT       Output CSV file to write the results. If not provided, prints to stdout.
   --severity {very high,high,medium,low,very low}
@@ -219,6 +222,7 @@ positional arguments:
   source           Path to the ThreatModel JSON file or directory containing ThreatModel JSON files.
 
 options:
+  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   -h, --help       show this help message and exit
