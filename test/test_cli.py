@@ -21,19 +21,23 @@ def test_is_file_or_dir():
     assert is_file_or_dir("existingdir") == "existingdir"
 
 def test_validate():
-    args = Namespace(operation='filter', severity='high', events='login', permissions='read', feature_classes='someservice.FC123,someservice.FC456', ids='someservice.CO123')
+    args = Namespace(operation='filter', severity='high', events='login', permissions='read', feature_classes='someservice.FC123,someservice.FC456', ids='someservice.CO123,someservice.FC123')
     validated_args = validate(args)
     assert validated_args.filter_obj.severity == 'high'
     assert 'login' in validated_args.filter_obj.events
     assert 'read' in validated_args.filter_obj.permissions
     assert validated_args.filter_obj.feature_classes == ['SOMESERVICE.FC123','SOMESERVICE.FC456']
-    assert 'someservice.CO123' in validated_args.filter_obj.ids
+    assert validated_args.filter_obj.ids == ['SOMESERVICE.CO123', 'SOMESERVICE.FC123']
 
 def test_map():
     framework2co = pd.DataFrame({'SCF': ['SCF1'], 'Framework': ['Framework1']})
-    threatmodel_data = ThreatModelData({'controls': {}, 'control_objectives': {}})
+    threatmodel_data = ThreatModelData({'controls': {'someservice.C1': {
+      "feature_class": ["someservice.FC1"],
+      "objective": 'someservice.CO1',
+      "weighted_priority": "High"}}, 'control_objectives': {'someservice.CO1':{'scf':['SCF1']}}})
     metadata = {'Framework1': {'additional_info': 'info'}}
-    result = map(framework2co, threatmodel_data, 'Framework1', metadata)
+    result = map(framework2co, threatmodel_data, 'Framework', metadata)
+    print(result)
     assert 'Framework1' in result
     assert result['Framework1']['additional_info'] == 'info'
 
