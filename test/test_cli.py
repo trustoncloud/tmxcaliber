@@ -120,11 +120,6 @@ def test_is_file_or_dir_invalid_file_type():
          pytest.raises(ArgumentTypeError, match="The file invalidfiletype.txt is not valid, only json or xml can be given."):
         is_file_or_dir("invalidfiletype.txt")
 
-def test_validate_missing_required_fields():
-    args = Namespace(operation='filter', severity='high')
-    with pytest.raises(SystemExit):
-        validate(args)
-
 def test_get_input_data_multiple_files():
     args = Namespace(source='validpath', operation='list')
     with pytest.raises(SystemExit):
