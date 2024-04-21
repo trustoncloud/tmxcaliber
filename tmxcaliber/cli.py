@@ -28,7 +28,7 @@ from .opacity import generate_pngs
 from . import parsers
 
 
-GUARDDUTY_FINDINGS = "(" + "|".join([
+GUARDDUTY_FINDINGS = r"(" + "|".join([
     "Trojan",
     "UnauthorizedAccess",
     "Discovery",
@@ -46,7 +46,7 @@ GUARDDUTY_FINDINGS = "(" + "|".join([
     "InitialAccess",
     "Persistence",
     "Recon"
-]) + ")" + ":\w+\/[\w!.-]+"
+]) + r")" + r":\w+\/[\w!.-]+"
 
 CURR_DIR = os.getcwd()
 XML_DIR = os.path.join(CURR_DIR, "xmls")
@@ -245,23 +245,23 @@ def get_metadata(csv_path: str) -> dict:
     """
     Reads a CSV file and returns a dictionary where the first column values are the main keys.
     Each key contains a dictionary where the other column headers are the keys.
-    
+
     Parameters:
     csv_path (str): The path to the CSV file.
-    
+
     Returns:
     dict: A dictionary representation of the CSV data.
     """
     # Dictionary to store the resulting nested structure
     result = {}
-    
+
     with open(csv_path, mode='r', newline='', encoding='utf-8') as file:
         reader = csv.DictReader(file)  # Using DictReader to automatically use the header row as keys
-        
+
         # Process each row in the CSV
         for row in reader:
             main_key = row.pop(reader.fieldnames[0])  # Remove and get the value of the first column for use as the main key
-            
+
             # Check if the main key already exists in the dictionary
             if main_key in result:
                 # If the key already exists, update the existing dictionary with new values (if necessary)
@@ -274,7 +274,7 @@ def get_metadata(csv_path: str) -> dict:
             else:
                 # Add the new key and dictionary to the result
                 result[main_key] = row
-    
+
     return result
 
 
@@ -284,7 +284,7 @@ def validate_and_get_framework(csv_path: str) -> DataFrame:
     # Validate that the DataFrame has exactly 2 columns
     if len(df.columns) != 2:
         raise ValueError(f"The CSV file at {csv_path} should have exactly 2 columns. The SCF on the first, and your framework in the second.")
-    
+
         # Function to expand the rows based on semicolon-separated entries
     def expand_rows(row):
         col0_parts = row[0].split(';')
@@ -347,7 +347,7 @@ def map(framework2co: pd.DataFrame, threatmodel_data: dict, framework_name: str,
                 control_id_by_cvss_severity, co_id, controls
             )
         framework2co[framework]["controls"] = control_id_by_cvss_severity
-    
+
     if metadata:
         for key, values in framework2co.items():
             if key in metadata:
@@ -372,7 +372,7 @@ def scan_controls(args: Namespace, data: dict) -> dict:
         pattern = re.compile(args.pattern)
     controls: dict = data.controls
     matched_controls = {}
-    
+
     for control_id, control in controls.items():
         if pattern.search(control.get("description", "")):
             matched_controls[control_id] = control
@@ -391,7 +391,7 @@ def get_input_data(params: Namespace) -> Union[dict, str, list]:
         elif params.source.endswith('.json'):
             json_file_paths = [params.source]
             is_threatmodel_json = True
-    
+
     if is_threatmodel_json:
         threatmodel_data_list = []
         if params.operation != 'list' and len(json_file_paths) > 1:
@@ -411,8 +411,8 @@ def get_input_data(params: Namespace) -> Union[dict, str, list]:
 def get_drawio_binary_path():
     if platform.system().lower() == "windows":
         for potential_path in [
-            "C:\Program Files\draw.io\draw.io.exe",
-            "C:\Program Files (x86)\draw.io\draw.io.exe"
+            r"C:\Program Files\draw.io\draw.io.exe",
+            r"C:\Program Files (x86)\draw.io\draw.io.exe"
         ]:
             if os.path.isfile(potential_path):
                 return potential_path
@@ -527,7 +527,7 @@ def main():
             generate_pngs(binary, params.threat_dir, params.out_dir, 1500)
         else:
             generate_pngs(binary, params.fc_dir, params.out_dir, 1500)
-    
+
     elif params.operation == Operation.list:
         for threatmodel_data in ThreatModelData.threatmodel_data_list:
             FilterApplier(params.filter_obj, params.exclude).apply_filter(threatmodel_data)
@@ -544,7 +544,7 @@ def main():
             scf_data = get_scf_data(params.scf, framework_name=params.framework_name)
         else:
             scf_data = validate_and_get_framework(params.framework_map)
-        
+
         metadata = {}
         if params.metadata:
             metadata = get_metadata(params.framework_metadata)
@@ -564,19 +564,19 @@ def main():
                 "Control - Low",
                 "Control - Very Low"
             ]
-            
+
             # Collect all unique metadata keys that are not 'control_objectives' or 'controls'
             metadata_keys = set()
             for details in map_json.values():
                 metadata_keys.update(k for k in details.keys() if k not in ['control_objectives', 'controls', 'scf'])
             metadata_keys = sorted(metadata_keys)  # Sort to ensure consistent column order
-            
+
             # Initialize the list that will hold all CSV lines (as lists)
             csv_lines = []
 
             # Append the header row first
             csv_lines.append(titles + list(metadata_keys))
-            
+
             # Iterate through each entry in the map_json to populate the CSV rows
             for framework_id, details in map_json.items():
                 # Extract control objectives and control levels with safe defaults if missing
@@ -603,7 +603,7 @@ def main():
 
                 # Append metadata values, using a safe default if a key is missing
                 csv_line.extend(details.get(key, '') for key in metadata_keys)
-                
+
                 # Append the complete row to the list of CSV lines
                 csv_lines.append(csv_line)
 
@@ -615,7 +615,7 @@ def main():
             scf_data = get_scf_data(params.scf, framework_name=params.framework_name)
         else:
             scf_data = validate_and_get_framework(params.framework_map)
-        
+
         metadata = {}
         if params.metadata:
             metadata = get_metadata(params.metadata)
@@ -628,7 +628,7 @@ def main():
             # Extract everything except the 'controls' subkey
             new_entry = {k: v for k, v in map_json[key].items() if k != 'controls'}
             threatmodel_data.threatmodel_json["mapping"][key] = new_entry
-        
+
         for co in threatmodel_data.control_objectives:
             framework_controls = []
             for fw_control in map_json:
