@@ -36,13 +36,13 @@ def test_is_file_or_dir():
     assert is_file_or_dir("existingdir") == "existingdir"
 
 def test_validate():
-    args = Namespace(operation='filter', severity='high', events='login', permissions='read', feature_classes='someservice.FC123,someservice.FC456', ids='someservice.CO123,someservice.FC123')
+    args = Namespace(operation='filter', severity='high', events='login', permissions='read', feature_classes='someservice.FC123,someservice.FC456', ids='someservice.CO123,someservice.CO456')
     validated_args = validate(args)
     assert validated_args.filter_obj.severity == 'high'
     assert 'login' in validated_args.filter_obj.events
     assert 'read' in validated_args.filter_obj.permissions
     assert validated_args.filter_obj.feature_classes == ['SOMESERVICE.FC123','SOMESERVICE.FC456']
-    assert validated_args.filter_obj.ids == ['SOMESERVICE.CO123', 'SOMESERVICE.FC123']
+    assert validated_args.filter_obj.ids == ['SOMESERVICE.CO123', 'SOMESERVICE.CO456']
 
 def test_map(mock_json):
     framework2co = pd.DataFrame({'SCF': ['SCF1', 'SCF1'], 'Framework': ['Framework1', 'Framework2']})
