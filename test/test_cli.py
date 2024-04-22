@@ -1,5 +1,5 @@
 import pytest
-from tmxcaliber.cli import _get_version, is_file_or_dir, validate, map, scan_controls, get_input_data, get_drawio_binary_path, output_result
+from tmxcaliber.cli import _get_version, is_file_or_dir, validate, map, scan_controls, get_input_data, get_drawio_binary_path, output_result, get_metadata, METADATA_MISSING
 import json
 import os
 import io
@@ -45,10 +45,10 @@ def test_validate():
     assert validated_args.filter_obj.ids == ['SOMESERVICE.CO123', 'SOMESERVICE.FC123']
 
 def test_map(mock_json):
-    framework2co = pd.DataFrame({'SCF': ['SCF1'], 'Framework': ['Framework1']})
+    framework2co = pd.DataFrame({'SCF': ['SCF1', 'SCF1'], 'Framework': ['Framework1', 'Framework2']})
     threatmodel_data = ThreatModelData(mock_json)
     metadata = {'Framework1': {'additional_info': 'info'}}
-    result = map(framework2co, threatmodel_data, 'Framework', metadata)
+    result = map(framework2co, threatmodel_data, 'Framework', ['additional_info'], metadata)
     expected_result = {
         'Framework1': {
             'control_objectives': ['someservice.CO1'],
@@ -61,6 +61,18 @@ def test_map(mock_json):
                 'Very Low': []
             },
             'additional_info': 'info'
+        },
+        'Framework2': {
+            'control_objectives': ['someservice.CO1'],
+            'scf': ['SCF1'],
+            'controls': {
+                'Very High': [],
+                'High': ['someservice.C1'],
+                'Medium': [],
+                'Low': [],
+                'Very Low': []
+            },
+            'additional_info': METADATA_MISSING
         }
     }
     assert result == expected_result
@@ -156,3 +168,39 @@ def test_get_drawio_binary_path_not_found():
 def test_output_result_unsupported_type():
     with pytest.raises(TypeError):
         output_result(None, None, 'unsupported_type')
+
+def test_get_metadata_with_complex_csv():
+    # Mock data to simulate CSV content with commas and missing values
+    csv_content = """id,any title 1,"any title_2, including support for commas"
+        MY_CONTROL_1,My control 1,"Description 1, including support for commas"
+        MY_CONTROL_2,My control 2,Description 2
+        MY_CONTROL_3,My control 3,
+        MY_CONTROL_4,,Description 4
+        MY_CONTROL_5,My control 5,Description 5"""
+
+    # Create a MagicMock for csv.DictReader
+    mock_csv_reader = MagicMock()
+    # Configure the MagicMock to mimic DictReader behavior
+    mock_csv_reader.fieldnames = ['id', 'any title 1', 'any title_2, including support for commas']
+    mock_csv_reader.__iter__.return_value = iter([
+        {'id': 'MY_CONTROL_1', 'any title 1': 'My control 1', 'any title_2, including support for commas': 'Description 1, including support for commas'},
+        {'id': 'MY_CONTROL_2', 'any title 1': 'My control 2', 'any title_2, including support for commas': 'Description 2'},
+        {'id': 'MY_CONTROL_3', 'any title 1': 'My control 3', 'any title_2, including support for commas': ''},
+        {'id': 'MY_CONTROL_4', 'any title 1': '', 'any title_2, including support for commas': 'Description 4'},
+        {'id': 'MY_CONTROL_5', 'any title 1': 'My control 5', 'any title_2, including support for commas': 'Description 5'}
+    ])
+
+    # Patch the open function and csv.DictReader in the module where they are used
+    with patch('builtins.open', mock_open(read_data=csv_content)) as mocked_file:
+        with patch('csv.DictReader', return_value=mock_csv_reader):
+            fields, result = get_metadata('dummy_path.csv')
+
+    # Assertions to verify the output
+    assert fields == ['any title 1', 'any title_2, including support for commas'], "Field names beyond the first column are incorrect"
+    assert result == {
+        'MY_CONTROL_1': {'any title 1': 'My control 1', 'any title_2, including support for commas': 'Description 1, including support for commas'},
+        'MY_CONTROL_2': {'any title 1': 'My control 2', 'any title_2, including support for commas': 'Description 2'},
+        'MY_CONTROL_3': {'any title 1': 'My control 3', 'any title_2, including support for commas': ''},
+        'MY_CONTROL_4': {'any title 1': '', 'any title_2, including support for commas': 'Description 4'},
+        'MY_CONTROL_5': {'any title 1': 'My control 5', 'any title_2, including support for commas': 'Description 5'}
+    }, "Dictionary data does not match expected values"

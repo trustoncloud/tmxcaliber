@@ -25,14 +25,13 @@ class Filter:
                     f"Invalid ID format: {value}. Expected format is 'somestring.(FC|T|C|CO)somenumber'"
                 )
             current_prefix = match.group(1)
-        current_prefix = match.group(1)
-        if id_prefix is None:
-            id_prefix = current_prefix
-        elif id_prefix != current_prefix:
-            raise ValueError(
-                "inconsistent ID types. Please provide IDs "
-                "with the same prefix (FC|T|C|CO)"
-            )
+            if id_prefix is None:
+                id_prefix = current_prefix
+            elif id_prefix != current_prefix:
+                raise ValueError(
+                    "inconsistent ID types. Please provide IDs "
+                    "with the same prefix (FC|T|C|CO)"
+                )
         for value in self.feature_classes:
             match = re.match(IDS_FORMAT_REGEX, value)
             if not match:

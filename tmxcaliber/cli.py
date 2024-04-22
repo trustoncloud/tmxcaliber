@@ -27,7 +27,7 @@ from .opacity import generate_xml
 from .opacity import generate_pngs
 from . import parsers
 
-
+GUARDDUTY_PATTERN_NAME = 'guardduty_findings'
 GUARDDUTY_FINDINGS = r"(" + "|".join([
     "Trojan",
     "UnauthorizedAccess",
@@ -51,6 +51,8 @@ GUARDDUTY_FINDINGS = r"(" + "|".join([
 CURR_DIR = os.getcwd()
 XML_DIR = os.path.join(CURR_DIR, "xmls")
 IMG_DIR = os.path.join(CURR_DIR, "img")
+
+METADATA_MISSING = 'Not available in framework-metadata file'
 
 class BinaryNotFound(Exception):
     pass
@@ -180,7 +182,8 @@ def get_params():
     )
     scan_parser.add_argument(
         "--pattern", type=str, required=True,
-        help="regex pattern to find in control descriptions.\n\n"
+        help= ("regex pattern to find in control descriptions.\n"
+            f"For GuardDuty findings, use the pattern: {GUARDDUTY_PATTERN_NAME}\n\n")
     )
 
     gen_parser = subparsers.add_parser(
@@ -233,7 +236,7 @@ def get_params():
         formatter_class=RawTextHelpFormatter
     )
     add_source_json_or_dir_argument(threat_list_parser, control_list_parser)
-    parsers.add_output_argument(threat_list_parser, control_list_parser, map_parser, add_mapping_parser)
+    parsers.add_output_argument(threat_list_parser, control_list_parser, map_parser, add_mapping_parser, filter_parser, scan_parser)
     add_exclude_flag(threat_list_parser)
     parsers.add_source_argument(filter_parser, map_parser, scan_parser, gen_parser)
     add_severity_filter_argument(threat_list_parser, filter_parser)
@@ -241,22 +244,25 @@ def get_params():
     add_ids_filter_argument(filter_parser)
     return validate(parser.parse_args())
 
-def get_metadata(csv_path: str) -> dict:
+def get_metadata(csv_path: str) -> tuple:
     """
-    Reads a CSV file and returns a dictionary where the first column values are the main keys.
+    Reads a CSV file and returns a tuple containing a list of field names beyond the first field and a dictionary where the first column values are the main keys.
     Each key contains a dictionary where the other column headers are the keys.
 
     Parameters:
     csv_path (str): The path to the CSV file.
 
     Returns:
-    dict: A dictionary representation of the CSV data.
+    tuple: A tuple where the first element is a list of fields beyond the first one, and the second element is a dictionary representation of the CSV data.
     """
-    # Dictionary to store the resulting nested structure
     result = {}
+    fields_beyond_id = []
 
     with open(csv_path, mode='r', newline='', encoding='utf-8') as file:
         reader = csv.DictReader(file)  # Using DictReader to automatically use the header row as keys
+
+        # Capture field names beyond the first one
+        fields_beyond_id = reader.fieldnames[1:]
 
         # Process each row in the CSV
         for row in reader:
@@ -275,8 +281,7 @@ def get_metadata(csv_path: str) -> dict:
                 # Add the new key and dictionary to the result
                 result[main_key] = row
 
-    return result
-
+    return fields_beyond_id, result
 
 def validate_and_get_framework(csv_path: str, framework_name: str) -> DataFrame:
     # Read the CSV file into a DataFrame
@@ -320,7 +325,7 @@ def validate(args: Namespace) -> Namespace:
             raise ArgumentTypeError('Only the XML from the main ThreatModel can be used to generate DFD images.')
     return args
 
-def map(framework2co: pd.DataFrame, threatmodel_data: dict, framework_name: str, metadata: dict = {}) -> dict:
+def map(framework2co: pd.DataFrame, threatmodel_data: dict, framework_name: str, metadata_fields: list = [], metadata: dict = {}) -> dict:
     controls, objectives = threatmodel_data.controls, threatmodel_data.control_objectives
     # Step 1: Create a list of tuples from the data dictionary
     entries = []
@@ -355,24 +360,23 @@ def map(framework2co: pd.DataFrame, threatmodel_data: dict, framework_name: str,
         framework2co[framework]["controls"] = control_id_by_cvss_severity
 
     if metadata:
-        for key, values in framework2co.items():
-            if key in metadata:
+        for metadata_id, values in framework2co.items():
+            if metadata_id in metadata:
                 # If the key exists in metadata, merge the metadata values
                 if isinstance(values, dict):
                     # Merge metadata into the existing dictionary for the key in framework2co
-                    values.update(metadata[key])
+                    values.update(metadata[metadata_id])
                 else:
                     # Handle cases where the expected structure is not met
-                    print(f"Error: Expected a dictionary at framework2co['{key}'], but found {type(values)}.")
+                    print(f"Error: Expected a dictionary at framework2co['{metadata_id}'], but found {type(values)}.")
             else:
-                # If the key does not exist in framework2co, initialize with the metadata if needed
-                # This step depends on whether you want to include metadata keys that aren't in framework2co
-                framework2co[key] = metadata[key]
+                for metadata_field in metadata_fields:
+                    framework2co[metadata_id][metadata_field] = METADATA_MISSING
 
     return framework2co
 
 def scan_controls(args: Namespace, data: dict) -> dict:
-    if args.pattern == "guardduty_findings":
+    if args.pattern == GUARDDUTY_PATTERN_NAME:
         pattern = re.compile(GUARDDUTY_FINDINGS)
     else:
         pattern = re.compile(args.pattern)
@@ -476,10 +480,10 @@ def main():
     if params.operation == Operation.filter:
         threatmodel_data = data[0]
         FilterApplier(params.filter_obj, params.exclude).apply_filter(threatmodel_data)
-        print(json.dumps(threatmodel_data.get_json(), indent=2))
+        output_result(params.output, threatmodel_data.get_json(), 'json')
 
     elif params.operation == Operation.scan:
-        print(json.dumps(scan_controls(params, data[0]), indent=2))
+        output_result(params.output, scan_controls(params, data[0].get_json()), 'json')
 
     elif params.operation == Operation.generate:
         if not params.bin:
@@ -555,9 +559,10 @@ def main():
             scf_data = validate_and_get_framework(params.framework_map, framework_name=params.framework_name)
 
         metadata = {}
+        metadata_fields = []
         if params.framework_metadata:
-            metadata = get_metadata(params.framework_metadata)
-        map_json = map(scf_data, data[0], params.framework_name, metadata=metadata)
+            metadata_fields, metadata = get_metadata(params.framework_metadata)
+        map_json = map(scf_data, data[0], params.framework_name, metadata_fields=metadata_fields, metadata=metadata)
         if params.format == "json":
             output_result(params.output, map_json, 'json')
         if params.format == "csv":
@@ -573,17 +578,9 @@ def main():
                 "Control - Very Low"
             ]
 
-            # Collect all unique metadata keys that are not 'control_objectives' or 'controls'
-            metadata_keys = set()
-            for details in map_json.values():
-                metadata_keys.update(k for k in details.keys() if k not in ['control_objectives', 'controls', 'scf'])
-            metadata_keys = sorted(metadata_keys)  # Sort to ensure consistent column order
-
-            # Initialize the list that will hold all CSV lines (as lists)
-            csv_lines = []
-
             # Append the header row first
-            csv_lines.append(titles + list(metadata_keys))
+            csv_lines = []
+            csv_lines.append(titles + list(metadata_fields))
 
             # Iterate through each entry in the map_json to populate the CSV rows
             for framework_id, details in map_json.items():
@@ -610,9 +607,7 @@ def main():
                 ]
 
                 # Append metadata values, using a safe default if a key is missing
-                csv_line.extend(details.get(key, '') for key in metadata_keys)
-
-                # Append the complete row to the list of CSV lines
+                csv_line.extend(details.get(key, '') for key in metadata_fields)
                 csv_lines.append(csv_line)
 
             output_result(params.output, csv_lines, 'csv_list')
@@ -625,11 +620,12 @@ def main():
             scf_data = validate_and_get_framework(params.framework_map, framework_name=params.framework_name)
 
         metadata = {}
+        metadata_fields = []
         if params.framework_metadata:
-            metadata = get_metadata(params.framework_metadata)
+            metadata_fields, metadata = get_metadata(params.framework_metadata)
 
         threatmodel_data = data[0]
-        map_json = map(scf_data, threatmodel_data, params.framework_name, metadata=metadata)
+        map_json = map(scf_data, threatmodel_data, params.framework_name, metadata_fields=metadata_fields, metadata=metadata)
 
         threatmodel_data.threatmodel_json["mapping"] = {}
         for key in sorted(map_json.keys()):

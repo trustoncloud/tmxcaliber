@@ -4,4 +4,4 @@ colorama == 0.4.6
 openpyxl == 3.*
 pandas == 2.*
 tqdm == 4.*
-
+pytest == 8.*
