@@ -1,7 +1,8 @@
 import io
 import csv
 import json
-from .tools import sort_by_id
+import copy
+from .tools import sort_by_id, apply_json_filter
 
 class ThreatModelDataList:
 
@@ -45,7 +46,9 @@ class ThreatModelData:
     threatmodel_data_list = []
 
     def __init__(self, threatmodel_json):
-        self.threatmodel_json = upgrade_to_latest_template_version(threatmodel_json)
+        upgraded_json = upgrade_to_latest_template_version(threatmodel_json)
+        self.threatmodel_json_original = copy.deepcopy(upgraded_json)
+        self.threatmodel_json = upgraded_json
         self.metadata = self.threatmodel_json.get("metadata")
         self.threats = self.threatmodel_json.get("threats")
         self.feature_classes = self.threatmodel_json.get("feature_classes")
@@ -114,6 +117,9 @@ class ThreatModelData:
                 if any(mitigation.get("threat") in threat_ids for mitigation in control.get("mitigate", [])):
                     controls[control_id] = control
         return controls
+    
+    def get_excluded_output(self) -> dict:
+        return apply_json_filter(self.threatmodel_json_original, self.get_json())
 
     def get_json(self) -> dict:
         json_data = {}

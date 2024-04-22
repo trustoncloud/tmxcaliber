@@ -2,7 +2,7 @@ import pytest
 from tmxcaliber.cli import _get_version, is_file_or_dir, validate, map, scan_controls, get_input_data, get_drawio_binary_path, output_result, get_metadata, METADATA_MISSING
 import json
 import os
-import io
+import argparse
 import pandas as pd
 from argparse import Namespace
 
@@ -35,9 +35,30 @@ def test_is_file_or_dir():
     assert is_file_or_dir("existingfile.json") == "existingfile.json"
     assert is_file_or_dir("existingdir") == "existingdir"
 
-def test_validate():
-    args = Namespace(operation='filter', severity='high', events='login', permissions='read', feature_classes='someservice.FC123,someservice.FC456', ids='someservice.CO123,someservice.CO456')
-    validated_args = validate(args)
+@pytest.fixture
+def mock_argv(mocker):
+    # Mock sys.argv for the duration of the test
+    args = [
+        'filter',
+        '--severity', 'high',
+        '--events', 'login',
+        '--permissions', 'read',
+        '--feature_classes', 'someservice.FC123,someservice.FC456',
+        '--ids', 'someservice.CO123,someservice.CO456'
+    ]
+    mocker.patch('sys.argv', ['test_program'] + args)
+
+def test_validate(mock_argv):
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest='operation')
+    filter_parser = subparsers.add_parser('filter')
+    filter_parser.add_argument('--severity')
+    filter_parser.add_argument('--events')
+    filter_parser.add_argument('--permissions')
+    filter_parser.add_argument('--feature_classes')
+    filter_parser.add_argument('--ids')
+    filter_parser.add_argument('--output-excluded')
+    validated_args = validate(parser)
     assert validated_args.filter_obj.severity == 'high'
     assert 'login' in validated_args.filter_obj.events
     assert 'read' in validated_args.filter_obj.permissions
