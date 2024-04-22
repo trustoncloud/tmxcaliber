@@ -287,8 +287,8 @@ def validate_and_get_framework(csv_path: str, framework_name: str) -> DataFrame:
 
         # Function to expand the rows based on semicolon-separated entries
     def expand_rows(row):
-        col0_parts = row[0].split(';')
-        col1_parts = row[1].split(';')
+        col0_parts = str(row[0]).split(';')
+        col1_parts = str(row[1]).split(';')
         # Generate all combinations of splits from both columns
         return pd.DataFrame(product(col0_parts, col1_parts), columns=[0, 1])
 
