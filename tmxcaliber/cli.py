@@ -81,20 +81,11 @@ def add_severity_filter_argument(*parsers: ArgumentParser):
             ], help="filter data by threat for severity equal or above the selected value.\n\n"
         )
 
-def add_feature_classes_filter_argument(*parsers: ArgumentParser):
-    for parser in parsers:
-        parser.add_argument(
-            "--feature-classes", type=str, help=(
-                "filter data by feature class(es) and any of their parent/child feature class(es). "
-                f"Separate by `{FEATURE_CLASSES_INPUT_SEPARATOR}`, if several.\n\n"
-            )
-        )
-
 def add_ids_filter_argument(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
             "--ids", type=str, help=(
-                "filter data by IDs (only works for threats for now). "
+                "filter data by IDs (can be feature classes, threats, controls, or control objectives). "
                 f"Separate by `{IDS_INPUT_SEPARATOR}`, if several.\n\n"
             )
         )
@@ -150,8 +141,6 @@ def get_params():
             f"Separate by `{EVENTS_INPUT_SEPARATOR}`, if several.\n\n"
         )
     )
-
-    add_exclude_flag(filter_parser)
 
     # subparser for add mapping operation.
     add_mapping_parser = subparsers.add_parser(
@@ -239,11 +228,10 @@ def get_params():
     )
     add_source_json_or_dir_argument(threat_list_parser, control_list_parser)
     parsers.add_output_argument(threat_list_parser, control_list_parser, map_parser, add_mapping_parser, filter_parser, scan_parser)
-    add_exclude_flag(threat_list_parser)
+    add_exclude_flag(filter_parser, threat_list_parser, control_list_parser)
     parsers.add_source_argument(filter_parser, map_parser, scan_parser, gen_parser)
     add_severity_filter_argument(threat_list_parser, filter_parser)
-    add_feature_classes_filter_argument(threat_list_parser, filter_parser)
-    add_ids_filter_argument(filter_parser)
+    add_ids_filter_argument(filter_parser, threat_list_parser, control_list_parser)
     return validate(parser)
 
 def get_metadata(csv_path: str) -> tuple:
@@ -317,14 +305,13 @@ def validate(parser: ArgumentParser) -> Namespace:
             severity=args.severity,
             events=getattr(args, 'events', ''),
             permissions=getattr(args, 'permissions', ''),
-            feature_classes=getattr(args, 'feature_classes', ''),
             ids=getattr(args, 'ids', '')
         )
     if args.operation == Operation.list:
         if args.list_type == ListOperation.threats:
-            args.filter_obj = Filter(severity=args.severity, feature_classes=args.feature_classes)
+            args.filter_obj = Filter(severity=args.severity, ids=args.ids)
         if args.list_type == ListOperation.controls:
-            args.filter_obj = Filter()
+            args.filter_obj = Filter(ids=args.ids)
     if args.operation == Operation.generate:
         if isinstance(args.source, str) and not args.source.endswith('_DFD.xml') and not args.source.endswith('.json'):
             parser.error('Only the XML from the main ThreatModel can be used to generate DFD images.')
@@ -566,7 +553,7 @@ def main():
         if params.list_type == ListOperation.controls:
             csv_output = ThreatModelData.get_csv_of_controls()
 
-        output_result(params.output, csv_output)
+        output_result(params.output, csv_output, 'csv_list')
 
     elif params.operation == Operation.map:
         # If SCF-supported framework, we need the data; otherwise we can map directly.

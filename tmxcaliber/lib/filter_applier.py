@@ -12,11 +12,13 @@ class FilterApplier:
         if self.filter.severity:
             self.__filter_by_severity(threatmodel_data=threatmodel_data)
         if self.filter.feature_classes:
-            try:
-                self.__filter_by_feature_class(threatmodel_data=threatmodel_data)
-            except ValueError as ex:
-                print(ex)
-                exit(0)
+            self.__filter_by_feature_class(threatmodel_data=threatmodel_data)
+        if self.filter.threats:
+            self.__filter_by_threats(threatmodel_data=threatmodel_data)
+        if self.filter.controls:
+            self.__filter_by_controls(threatmodel_data=threatmodel_data)
+        if self.filter.control_objectives:
+            self.__filter_by_control_objectives(threatmodel_data=threatmodel_data)
         if self.filter.permissions:
             self.__filter_by_permissions(threatmodel_data=threatmodel_data)
     
@@ -103,3 +105,46 @@ class FilterApplier:
         self.__filter_controls_by_current_threats(threatmodel_data)
         self.__filter_control_objectives_by_current_controls(threatmodel_data)
         self.__filter_actions_by_current_feature_classes(threatmodel_data)
+
+    def __filter_by_threats(self, threatmodel_data: ThreatModelData):
+        if self.exclude_as_filter:
+            for threat_id in threatmodel_data.threats.copy():
+                if threat_id in self.filter.threats:
+                    threatmodel_data.threats.pop(threat_id)
+        else:
+            for threat_id in threatmodel_data.threats.copy():
+                if threat_id not in self.filter.threats:
+                    threatmodel_data.threats.pop(threat_id)
+        self.__filter_feature_classes_by_current_threats(threatmodel_data)
+        self.__filter_controls_by_current_threats(threatmodel_data)
+        self.__filter_control_objectives_by_current_controls(threatmodel_data)
+        self.__filter_actions_by_current_feature_classes(threatmodel_data)
+
+    def __filter_by_controls(self, threatmodel_data: ThreatModelData):
+        if self.exclude_as_filter:
+            downstream_controls = threatmodel_data.get_downstream_controls(self.filter.controls)
+            for control_id in threatmodel_data.controls.copy():
+                if control_id in self.filter.controls or control_id in downstream_controls:
+                    threatmodel_data.controls.pop(control_id)
+        else:
+            all_control_dependencies = {}
+            for control_id in self.filter.controls:
+                upstream_controls = threatmodel_data.get_upstream_controls(control_id)
+                for upstream_control_id, upstream_control in upstream_controls.items():
+                    if upstream_control_id not in all_control_dependencies:
+                        all_control_dependencies[upstream_control_id] = upstream_control
+            for control_id in threatmodel_data.controls.copy():
+                if control_id not in self.filter.controls and control_id not in all_control_dependencies:
+                    threatmodel_data.controls.pop(control_id)
+        self.__filter_control_objectives_by_current_controls(threatmodel_data)
+    
+    def __filter_by_control_objectives(self, threatmodel_data: ThreatModelData):
+        if self.exclude_as_filter:
+            for control_objective_id in threatmodel_data.control_objectives.copy():
+                if control_objective_id in self.filter.control_objectives:
+                    threatmodel_data.control_objectives.pop(control_objective_id)
+        else:
+            for control_objective_id in threatmodel_data.control_objectives.copy():
+                if control_objective_id not in self.filter.control_objectives:
+                    threatmodel_data.control_objectives.pop(control_objective_id)
+        self.__filter_controls_by_current_control_objectives(threatmodel_data)

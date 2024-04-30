@@ -43,8 +43,7 @@ def mock_argv(mocker):
         '--severity', 'high',
         '--events', 'login',
         '--permissions', 'read',
-        '--feature_classes', 'someservice.FC123,someservice.FC456',
-        '--ids', 'someservice.CO123,someservice.CO456'
+        '--ids', 'someservice.CO123,someservice.C134,someservice.CO456,someservice.C123,SOMESERVICE.FC123,SOMESERVICE.FC456,someservice.T123,someservice.T223'
     ]
     mocker.patch('sys.argv', ['test_program'] + args)
 
@@ -55,7 +54,6 @@ def test_validate(mock_argv):
     filter_parser.add_argument('--severity')
     filter_parser.add_argument('--events')
     filter_parser.add_argument('--permissions')
-    filter_parser.add_argument('--feature_classes')
     filter_parser.add_argument('--ids')
     filter_parser.add_argument('--output-excluded')
     validated_args = validate(parser)
@@ -63,7 +61,10 @@ def test_validate(mock_argv):
     assert 'login' in validated_args.filter_obj.events
     assert 'read' in validated_args.filter_obj.permissions
     assert validated_args.filter_obj.feature_classes == ['SOMESERVICE.FC123','SOMESERVICE.FC456']
-    assert validated_args.filter_obj.ids == ['SOMESERVICE.CO123', 'SOMESERVICE.CO456']
+    assert validated_args.filter_obj.controls == ['SOMESERVICE.C134','SOMESERVICE.C123']
+    assert validated_args.filter_obj.control_objectives == ['SOMESERVICE.CO123','SOMESERVICE.CO456']
+    assert validated_args.filter_obj.threats == ['SOMESERVICE.T123','SOMESERVICE.T223']
+    assert validated_args.filter_obj.ids == ['SOMESERVICE.CO123','SOMESERVICE.C134','SOMESERVICE.CO456','SOMESERVICE.C123','SOMESERVICE.FC123','SOMESERVICE.FC456','SOMESERVICE.T123','SOMESERVICE.T223']
 
 def test_map(mock_json):
     framework2co = pd.DataFrame({'SCF': ['SCF1', 'SCF1'], 'Framework': ['Framework1', 'Framework2']})
