@@ -1,10 +1,11 @@
 import pytest
-from tmxcaliber.cli import _get_version, is_file_or_dir, validate, map, scan_controls, get_input_data, get_drawio_binary_path, output_result, get_metadata, METADATA_MISSING
+from tmxcaliber.cli import _get_version, is_file_or_dir, validate, map, scan_controls, get_input_data, get_drawio_binary_path, output_result, get_metadata, METADATA_MISSING, validate_and_get_framework
 import json
 import os
 import argparse
 import pandas as pd
 from argparse import Namespace
+from pandas.testing import assert_frame_equal
 
 import csv
 from tmxcaliber.lib.threatmodel_data import ThreatModelData
@@ -226,3 +227,60 @@ def test_get_metadata_with_complex_csv():
         'MY_CONTROL_4': {'any title 1': '', 'any title_2, including support for commas': 'Description 4'},
         'MY_CONTROL_5': {'any title 1': 'My control 5', 'any title_2, including support for commas': 'Description 5'}
     }, "Dictionary data does not match expected values"
+
+# Sample CSV content with multiple lines and missing entries
+valid_multiline_csv = "scf1;scf2,framework1;framework2\nscf4,framework8;framework2\nscf3,framework3"
+missing_entries_csv = "scf1;scf2,\n,framework1;framework2\nscf3,framework3"
+
+def test_validate_and_get_framework_success_multiline():
+    # Mock reading from a CSV with valid, multiline data
+    with patch("pandas.read_csv", return_value=pd.DataFrame([
+        ["scf1;scf2", "framework1;framework2"],
+        ["scf4;scf2", "framework8;framework2"],
+        ["scf3", "framework3"]
+    ], columns=[0, 1])):
+        result = validate_and_get_framework("dummy_path.csv", "Framework")
+        expected = pd.DataFrame([
+            ["scf1", "framework1"],
+            ["scf1", "framework2"],
+            ["scf2", "framework1"],
+            ["scf2", "framework2"],
+            ["scf4", "framework8"],
+            ["scf4", "framework2"],
+            ["scf2", "framework8"],
+            ["scf3", "framework3"]
+        ], columns=['SCF', 'Framework'])
+        # Resetting index to compare DataFrames accurately
+        result = result.reset_index(drop=True)
+        expected = expected.reset_index(drop=True)
+        assert_frame_equal(result, expected)
+
+def test_validate_and_get_framework_missing_entries():
+    # Mock reading from a CSV where one side of the semicolon is missing
+    with patch("pandas.read_csv", return_value=pd.DataFrame([
+        ["scf1;scf2", ""],
+        ["", "framework1;framework2"],
+        ["scf3", "framework3"]
+    ], columns=[0, 1])):
+        result = validate_and_get_framework("dummy_path.csv", "Framework")
+        expected = pd.DataFrame([
+            ["scf3", "framework3"]
+        ], columns=['SCF', 'Framework'])
+        assert_frame_equal(result, expected)
+
+# Additional test cases from previous example
+def test_validate_and_get_framework_failure_column_mismatch():
+    # Mock reading from a CSV with invalid data
+    with patch("pandas.read_csv", return_value=pd.DataFrame([
+        ["only_one_column"]
+    ], columns=[0])):
+        with pytest.raises(ValueError) as exc_info:
+            validate_and_get_framework("dummy_path.csv", "Framework")
+        assert "should have exactly 2 columns" in str(exc_info.value)
+
+def test_validate_and_get_framework_file_not_found():
+    # Simulate file not found by throwing FileNotFoundError
+    with patch("pandas.read_csv", side_effect=FileNotFoundError("File not found")):
+        with pytest.raises(FileNotFoundError) as exc_info:
+            validate_and_get_framework("nonexistent_path.csv", "Framework")
+        assert "File not found" in str(exc_info.value)

@@ -280,10 +280,19 @@ def validate_and_get_framework(csv_path: str, framework_name: str) -> DataFrame:
     if len(df.columns) != 2:
         raise ValueError(f"The CSV file at {csv_path} should have exactly 2 columns. The SCF on the first, and your framework in the second.")
 
-        # Function to expand the rows based on semicolon-separated entries
+    # Function to expand the rows based on semicolon-separated entries
     def expand_rows(row):
         col0_parts = str(row[0]).split(';')
         col1_parts = str(row[1]).split(';')
+        
+        # Filter out empty strings from both columns
+        col0_parts = [part for part in col0_parts if part.strip()]
+        col1_parts = [part for part in col1_parts if part.strip()]
+        
+        # If either side is empty after filtering, return an empty DataFrame
+        if not col0_parts or not col1_parts:
+            return pd.DataFrame(columns=[0, 1])
+        
         # Generate all combinations of splits from both columns
         return pd.DataFrame(product(col0_parts, col1_parts), columns=[0, 1])
 
