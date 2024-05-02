@@ -68,12 +68,12 @@ def test_validate(mock_argv):
     assert validated_args.filter_obj.ids == ['SOMESERVICE.CO123','SOMESERVICE.C134','SOMESERVICE.CO456','SOMESERVICE.C123','SOMESERVICE.FC123','SOMESERVICE.FC456','SOMESERVICE.T123','SOMESERVICE.T223']
 
 def test_map(mock_json):
-    framework2co = pd.DataFrame({'SCF': ['SCF1', 'SCF1'], 'Framework': ['Framework1', 'Framework2']})
+    framework2co = pd.DataFrame({'SCF': ['SCF1', 'SCF1', 'SCF2'], 'Framework': ['FrameworkControl1', 'FrameworkControl2', '']})
     threatmodel_data = ThreatModelData(mock_json)
-    metadata = {'Framework1': {'additional_info': 'info'}}
+    metadata = {'FrameworkControl1': {'additional_info': 'info'}}
     result = map(framework2co, threatmodel_data, 'Framework', ['additional_info'], metadata)
     expected_result = {
-        'Framework1': {
+        'FrameworkControl1': {
             'control_objectives': ['someservice.CO1'],
             'scf': ['SCF1'],
             'controls': {
@@ -85,7 +85,7 @@ def test_map(mock_json):
             },
             'additional_info': 'info'
         },
-        'Framework2': {
+        'FrameworkControl2': {
             'control_objectives': ['someservice.CO1'],
             'scf': ['SCF1'],
             'controls': {
@@ -258,8 +258,9 @@ def test_validate_and_get_framework_success_multiline():
 def test_validate_and_get_framework_missing_entries():
     # Mock reading from a CSV where one side of the semicolon is missing
     with patch("pandas.read_csv", return_value=pd.DataFrame([
-        ["scf1;scf2", ""],
-        ["", "framework1;framework2"],
+        ["scf1;scf2", pd.NA],
+        [float('nan'), "framework1;framework2"],
+        [None, "framework4"],
         ["scf3", "framework3"]
     ], columns=[0, 1])):
         result = validate_and_get_framework("dummy_path.csv", "Framework")

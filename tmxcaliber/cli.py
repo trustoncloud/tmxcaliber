@@ -276,6 +276,10 @@ def get_metadata(csv_path: str) -> tuple:
 def validate_and_get_framework(csv_path: str, framework_name: str) -> DataFrame:
     # Read the CSV file into a DataFrame
     df = pd.read_csv(csv_path, header=None)
+    df = df.replace({None: pd.NA})
+    df = df.replace({float('nan'): pd.NA})
+    df = df.dropna()
+
     # Validate that the DataFrame has exactly 2 columns
     if len(df.columns) != 2:
         raise ValueError(f"The CSV file at {csv_path} should have exactly 2 columns. The SCF on the first, and your framework in the second.")
@@ -302,7 +306,6 @@ def validate_and_get_framework(csv_path: str, framework_name: str) -> DataFrame:
     # Remove any duplicate rows
     df_expanded = df_expanded.drop_duplicates()
     df_expanded.columns = ['SCF', framework_name]
-
     return df_expanded
 
 def validate(parser: ArgumentParser) -> Namespace:
