@@ -110,24 +110,24 @@ Details for supported operations are as follows:
 
 ### Filter
 
-The `filter` operation allows you to filter relevant information from a ThreatModel JSON based on various criteria, such as any ids (like features classes, controls, threats, or control objectives), threat severity, or IAM permission. You can also create a second file with all excluded controls for traceability, using `--output-excluded`.
+The `filter` operation allows you to filter relevant information from a ThreatModel JSON based on various criteria, such as any ids (like features classes, controls, threats, or control objectives), threat severity, or IAM permission. You can also create a second file with all excluded controls for traceability, using `--output-removed`.
 ```sh
 $: tmxcaliber filter path/to/threatmodel.json --severity high
 
 $: tmxcaliber filter -h
-usage: tmxcaliber filter [-h] [--output-excluded] [--permissions PERMISSIONS] [--events EVENTS] [--output OUTPUT] [--exclude] [--severity {very high,high,medium,low,very low}] [--ids IDS] source
+usage: tmxcaliber filter [-h] [--output-removed] [--permissions PERMISSIONS] [--events EVENTS] [--output OUTPUT] [--exclude] [--severity {very high,high,medium,low,very low}] [--ids IDS] source
 
 positional arguments:
   source                Path to the ThreatModel JSON file. We support XML file for internal purposes.
 
 options:
   -h, --help            show this help message and exit
-  --output-excluded     flag to output all the filtered information into another file. Require --output.
+  --output-removed      flag to output all the removed information into another file. Require --output.
   --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
   --permissions PERMISSIONS
                         filter data by IAM permission(s). Separate by `,`, if several.
 
-  --events EVENTS       filter data by actions log events. Separate by `,`, if several.
+  --events EVENTS       filter data by actions log event(s). Separate by `,`, if several.
 
   --exclude             Enable exclusion mode. Items specified will be excluded from the output.
   --severity {very high,high,medium,low,very low}

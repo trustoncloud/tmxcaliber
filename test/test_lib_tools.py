@@ -1,4 +1,3 @@
-import pytest
 from tmxcaliber.lib.tools import apply_json_filter
 
 def test_json_modification():

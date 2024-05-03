@@ -16,7 +16,7 @@ class FilterApplier:
         if self.filter.threats:
             self.__filter_by_threats(threatmodel_data=threatmodel_data)
         if self.filter.controls:
-            self.__filter_by_controls(threatmodel_data=threatmodel_data)
+            self.__filter_by_controls(self.filter.controls, threatmodel_data=threatmodel_data)
         if self.filter.control_objectives:
             self.__filter_by_control_objectives(threatmodel_data=threatmodel_data)
         if self.filter.permissions:
@@ -33,28 +33,33 @@ class FilterApplier:
             for threat_id, threat in threatmodel_data.threats.copy().items():
                 if threat.get("cvss_severity", "").lower() not in allowed_severities:
                     threatmodel_data.threats.pop(threat_id)
-        self.__filter_feature_classes_by_current_threats(threatmodel_data)
         self.__filter_controls_by_current_threats(threatmodel_data)
         self.__filter_control_objectives_by_current_controls(threatmodel_data)
         self.__filter_actions_by_current_feature_classes(threatmodel_data)
 
-    def __filter_feature_classes_by_current_threats(self, threatmodel_data: ThreatModelData):
-        active_fc_ids = threatmodel_data.get_feature_classes_for_current_threats()
-        for feature_class_id, _ in threatmodel_data.feature_classes.copy().items():
-            if feature_class_id not in active_fc_ids:
-                threatmodel_data.feature_classes.pop(feature_class_id)
-
     def __filter_controls_by_current_threats(self, threatmodel_data: ThreatModelData):
         active_controls = threatmodel_data.get_controls_for_current_threats()
-        for control_id, _ in threatmodel_data.controls.copy().items():
+        for control_id, control in threatmodel_data.controls.copy().items():
             if control_id not in active_controls:
                 threatmodel_data.controls.pop(control_id)
+            mitigations_with_current_threats = []
+            for mitigation in control['mitigate']:
+                if mitigation['threat'] in threatmodel_data.threats:
+                    mitigations_with_current_threats.append(mitigation)
+            control['mitigate'] = mitigations_with_current_threats
+        self.__filter_orphan_assurance_controls(threatmodel_data)
 
     def __filter_control_objectives_by_current_controls(self, threatmodel_data: ThreatModelData):
         active_control_objectives = [value['objective'] for value in threatmodel_data.controls.values()]
         for co_id, _ in threatmodel_data.control_objectives.copy().items():
             if co_id not in active_control_objectives:
                 threatmodel_data.control_objectives.pop(co_id)
+    
+    def __filter_controls_by_current_control_objectives(self, threatmodel_data: ThreatModelData):
+        for control_id, control in threatmodel_data.controls.copy().items():
+            if control['objective'] not in threatmodel_data.control_objectives:
+                threatmodel_data.controls.pop(control_id)
+        self.__filter_orphan_assurance_controls(threatmodel_data)
 
     def __filter_actions_by_current_feature_classes(self, threatmodel_data: ThreatModelData):
         for action_id, action in threatmodel_data.actions.copy().items():
@@ -77,15 +82,22 @@ class FilterApplier:
             for fc_id, _ in threatmodel_data.feature_classes.copy().items():
                 if fc_id not in feature_class_ids:
                     threatmodel_data.feature_classes.pop(fc_id)
-        self.__filter_threats_by_feature_classes(threatmodel_data)
+        self.__filter_threats_by_current_feature_classes(threatmodel_data)
+        self.__filter_controls_by_current_feature_classes(threatmodel_data)
         self.__filter_controls_by_current_threats(threatmodel_data)
         self.__filter_control_objectives_by_current_controls(threatmodel_data)
         self.__filter_actions_by_current_feature_classes(threatmodel_data)
 
-    def __filter_threats_by_feature_classes(self, threatmodel_data: ThreatModelData):
+    def __filter_threats_by_current_feature_classes(self, threatmodel_data: ThreatModelData):
         for threat_id, threat in threatmodel_data.threats.copy().items():
             if threat.get("feature_class") not in threatmodel_data.feature_classes:
                 threatmodel_data.threats.pop(threat_id)
+
+    def __filter_controls_by_current_feature_classes(self, threatmodel_data: ThreatModelData):
+        for control_id, control in threatmodel_data.controls.copy().items():
+            for feature_class in control.get("feature_class").copy():
+                if feature_class not in threatmodel_data.feature_classes:
+                    threatmodel_data.controls[control_id]["feature_class"].remove(feature_class)
 
     def __filter_by_permissions(self, threatmodel_data: ThreatModelData):
         for threat_id, threat in threatmodel_data.threats.copy().items():
@@ -101,7 +113,6 @@ class FilterApplier:
             else:
                 if not has_access:
                     threatmodel_data.threats.pop(threat_id)
-        self.__filter_feature_classes_by_current_threats(threatmodel_data)
         self.__filter_controls_by_current_threats(threatmodel_data)
         self.__filter_control_objectives_by_current_controls(threatmodel_data)
         self.__filter_actions_by_current_feature_classes(threatmodel_data)
@@ -115,30 +126,62 @@ class FilterApplier:
             for threat_id in threatmodel_data.threats.copy():
                 if threat_id not in self.filter.threats:
                     threatmodel_data.threats.pop(threat_id)
-        self.__filter_feature_classes_by_current_threats(threatmodel_data)
         self.__filter_controls_by_current_threats(threatmodel_data)
         self.__filter_control_objectives_by_current_controls(threatmodel_data)
         self.__filter_actions_by_current_feature_classes(threatmodel_data)
 
-    def __filter_by_controls(self, threatmodel_data: ThreatModelData):
+    def __pop_downstream_dependent_controls(self, controls_to_filter: list, threatmodel_data: ThreatModelData):
+        downstream_controls = threatmodel_data.get_downstream_dependent_controls(controls_to_filter)
+        for control_id in threatmodel_data.controls.copy():
+            if control_id in controls_to_filter or control_id in downstream_controls:
+                threatmodel_data.controls.pop(control_id)
+        self.__filter_orphan_assurance_controls(threatmodel_data)
+
+    def __pop_upstream_dependent_controls(self, controls_to_filter: list, threatmodel_data: ThreatModelData):
+        all_control_dependencies = {}
+        for control_id in controls_to_filter:
+            upstream_controls = threatmodel_data.get_upstream_dependent_controls(control_id)
+            for upstream_control_id, upstream_control in upstream_controls.items():
+                if upstream_control_id not in all_control_dependencies:
+                    all_control_dependencies[upstream_control_id] = upstream_control
+        for control_id in threatmodel_data.controls.copy():
+            if control_id not in controls_to_filter and control_id not in all_control_dependencies:
+                threatmodel_data.controls.pop(control_id)
+        self.__filter_orphan_assurance_controls(threatmodel_data)
+    
+    def __filter_orphan_assurance_controls(self, threatmodel_data: ThreatModelData):
+        active_assurance_control_ids = []
+        for control_id, control in threatmodel_data.controls.items():
+            if not control.get('assured_by'):
+                continue
+            for assurance_control in control['assured_by'].split(','):
+                active_assurance_control_ids.append(assurance_control)
+        for control_id, control in threatmodel_data.controls.copy().items():
+
+            # Remove orphan assurance controls
+            if control['coso'] == 'Assurance' and control_id not in active_assurance_control_ids:
+                threatmodel_data.controls.pop(control_id)
+            
+            # Remove orphan reference of removed assurance controls
+            if control['coso'] != 'Assurance':
+                if not control.get('assured_by'):
+                    continue
+                filtered_ids = [id for id in control['assured_by'].split(',') if id in threatmodel_data.controls]
+                threatmodel_data.controls[control_id]['assured_by'] = ','.join(filtered_ids)
+
+    def __filter_by_controls(self, filter_control_ids: list, threatmodel_data: ThreatModelData):
         if self.exclude_as_filter:
-            downstream_controls = threatmodel_data.get_downstream_controls(self.filter.controls)
-            for control_id in threatmodel_data.controls.copy():
-                if control_id in self.filter.controls or control_id in downstream_controls:
-                    threatmodel_data.controls.pop(control_id)
+            self.__pop_downstream_dependent_controls(filter_control_ids, threatmodel_data)
         else:
-            all_control_dependencies = {}
-            for control_id in self.filter.controls:
-                upstream_controls = threatmodel_data.get_upstream_controls(control_id)
-                for upstream_control_id, upstream_control in upstream_controls.items():
-                    if upstream_control_id not in all_control_dependencies:
-                        all_control_dependencies[upstream_control_id] = upstream_control
-            for control_id in threatmodel_data.controls.copy():
-                if control_id not in self.filter.controls and control_id not in all_control_dependencies:
-                    threatmodel_data.controls.pop(control_id)
+            self.__pop_upstream_dependent_controls(filter_control_ids, threatmodel_data)
         self.__filter_control_objectives_by_current_controls(threatmodel_data)
     
     def __filter_by_control_objectives(self, threatmodel_data: ThreatModelData):
+        filter_control_ids = []
+        for control_id, control in threatmodel_data.controls.items():
+            if control['objective'] in self.filter.control_objectives:
+                filter_control_ids.append(control_id)
+        self.__filter_by_controls(filter_control_ids, threatmodel_data)
         if self.exclude_as_filter:
             for control_objective_id in threatmodel_data.control_objectives.copy():
                 if control_objective_id in self.filter.control_objectives:

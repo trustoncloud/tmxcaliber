@@ -2,7 +2,7 @@ import io
 import csv
 import json
 import copy
-from .tools import sort_by_id, apply_json_filter
+from .tools import sort_by_id, sort_dict_by_id, apply_json_filter
 
 class ThreatModelDataList:
 
@@ -50,11 +50,11 @@ class ThreatModelData:
         self.threatmodel_json_original = copy.deepcopy(upgraded_json)
         self.threatmodel_json = upgraded_json
         self.metadata = self.threatmodel_json.get("metadata")
-        self.threats = self.threatmodel_json.get("threats")
-        self.feature_classes = self.threatmodel_json.get("feature_classes")
-        self.controls = self.threatmodel_json.get("controls")
-        self.control_objectives = self.threatmodel_json.get("control_objectives")
-        self.actions = self.threatmodel_json.get("actions")
+        self.threats = sort_dict_by_id(self.threatmodel_json.get("threats"))
+        self.feature_classes = sort_dict_by_id(self.threatmodel_json.get("feature_classes"))
+        self.controls = sort_dict_by_id(self.threatmodel_json.get("controls"))
+        self.control_objectives = sort_dict_by_id(self.threatmodel_json.get("control_objectives"))
+        self.actions = sort_dict_by_id(self.threatmodel_json.get("actions"))
         ThreatModelData.threatmodel_data_list.append(self)
 
     def get_feature_class_hierarchy(self, feature_class_id_to_filter) -> list:
@@ -90,23 +90,6 @@ class ThreatModelData:
                 child_fcs.add(fc)
         return list(child_fcs)
 
-    def get_feature_classes_for_current_threats(self) -> list:
-        feature_classes = {
-            key: value for key, value in self.feature_classes.items()
-            if key in [threat["feature_class"] for threat in self.threats.values()]
-        }
-        feature_classes_ids = []
-        for feature_class_id, feature_class in feature_classes.items():
-            if feature_class_id not in feature_classes_ids:
-                feature_classes_ids.append(feature_class_id)
-            for relation in feature_class["class_relationship"]:
-                if relation["type"] != "parent":
-                    continue
-                class_name = relation["class"]
-                if class_name not in feature_classes_ids:
-                    feature_classes_ids.append(class_name)
-        return feature_classes_ids
-
     def get_controls_for_current_threats(self) -> dict:
         controls = {}
         threat_ids = set(self.threats.keys())
@@ -116,9 +99,13 @@ class ThreatModelData:
                 # Check if any mitigation in the control is related to the threats we have
                 if any(mitigation.get("threat") in threat_ids for mitigation in control.get("mitigate", [])):
                     controls[control_id] = control
-        return controls
+        for control_id, control in controls.copy().items():
+            for assurance_control_id in control['assured_by'].split(','):
+                if assurance_control_id and assurance_control_id not in controls:
+                    controls[assurance_control_id] = self.controls[assurance_control_id]
+        return sort_dict_by_id(controls)
     
-    def get_upstream_controls(self, control_id) -> dict:
+    def get_upstream_dependent_controls(self, control_id) -> dict:
 
         def get_all_dependencies(controls, control_id, seen=None):
             if seen is None:
@@ -143,7 +130,7 @@ class ThreatModelData:
             controls[control_dependency_id] = self.controls[control_dependency_id]
         return controls
 
-    def get_downstream_controls(self, control_ids) -> dict:
+    def get_downstream_dependent_controls(self, control_ids) -> dict:
 
         def build_reverse_dependencies(controls):
             reverse_deps = {}
@@ -187,7 +174,7 @@ class ThreatModelData:
         all_dependents = find_all_dependents(reverse_dependencies, control_ids, self.controls)
         return all_dependents
 
-    def get_excluded_output(self) -> dict:
+    def get_removed_output(self) -> dict:
         return apply_json_filter(self.threatmodel_json_original, self.get_json())
 
     def get_json(self) -> dict:

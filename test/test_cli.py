@@ -1,5 +1,5 @@
 import pytest
-from tmxcaliber.cli import _get_version, is_file_or_dir, validate, map, scan_controls, get_input_data, get_drawio_binary_path, output_result, get_metadata, METADATA_MISSING, validate_and_get_framework
+from tmxcaliber.cli import _get_version, is_file_or_dir, validate, map, scan_controls, get_input_data, get_drawio_binary_path, output_result, get_metadata, METADATA_MISSING, validate_and_get_framework, MISSING_OUTPUT_ERROR
 import json
 import os
 import argparse
@@ -44,7 +44,7 @@ def mock_argv(mocker):
         '--severity', 'high',
         '--events', 'login',
         '--permissions', 'read',
-        '--ids', 'someservice.CO123,someservice.C134,someservice.CO456,someservice.C123,SOMESERVICE.FC123,SOMESERVICE.FC456,someservice.T123,someservice.T223'
+        '--ids', 'someservice.CO123,someservice.C134,someservice.CO456,someservice.C123,SOMESERVICE.FC123,SOMESERVICE.FC456,someservice.T123,someservice.T223',
     ]
     mocker.patch('sys.argv', ['test_program'] + args)
 
@@ -56,7 +56,7 @@ def test_validate(mock_argv):
     filter_parser.add_argument('--events')
     filter_parser.add_argument('--permissions')
     filter_parser.add_argument('--ids')
-    filter_parser.add_argument('--output-excluded')
+    filter_parser.add_argument('--output-removed')
     validated_args = validate(parser)
     assert validated_args.filter_obj.severity == 'high'
     assert 'login' in validated_args.filter_obj.events
@@ -66,6 +66,27 @@ def test_validate(mock_argv):
     assert validated_args.filter_obj.control_objectives == ['SOMESERVICE.CO123','SOMESERVICE.CO456']
     assert validated_args.filter_obj.threats == ['SOMESERVICE.T123','SOMESERVICE.T223']
     assert validated_args.filter_obj.ids == ['SOMESERVICE.CO123','SOMESERVICE.C134','SOMESERVICE.CO456','SOMESERVICE.C123','SOMESERVICE.FC123','SOMESERVICE.FC456','SOMESERVICE.T123','SOMESERVICE.T223']
+
+def test_validate_requires_output_with_output_removed():
+    # Create a parser instance and configure it as it would be in your application
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest='operation')
+    filter_parser = subparsers.add_parser('filter')
+    filter_parser.add_argument('--output-removed', action='store_true')
+    filter_parser.add_argument('--output', type=str)
+
+    # Mock parse_args to return specific configurations
+    args = Namespace(operation='filter', output_removed=True, output=None)
+    parser.parse_args = MagicMock(return_value=args)  # Mock parse_args to return the mocked args
+
+    # Test that the parser.error is called with the correct message when conditions are met
+    with pytest.raises(SystemExit):  # parser.error calls sys.exit
+        validate(parser)
+
+    # You should also check that the error message is correct. For this, you might need to further mock parser.error
+    parser.error = MagicMock()
+    validate(parser)
+    parser.error.assert_called_once_with(MISSING_OUTPUT_ERROR)
 
 def test_map(mock_json):
     framework2co = pd.DataFrame({'SCF': ['SCF1', 'SCF1', 'SCF2'], 'Framework': ['FrameworkControl1', 'FrameworkControl2', '']})

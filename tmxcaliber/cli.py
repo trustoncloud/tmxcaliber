@@ -53,6 +53,7 @@ XML_DIR = os.path.join(CURR_DIR, "xmls")
 IMG_DIR = os.path.join(CURR_DIR, "img")
 
 METADATA_MISSING = 'Not available in framework-metadata file'
+MISSING_OUTPUT_ERROR = "The '--output-removed' flag requires '--output' to be specified."
 
 class BinaryNotFound(Exception):
     pass
@@ -128,7 +129,7 @@ def get_params():
         formatter_class=RawTextHelpFormatter
     )
 
-    filter_parser.add_argument('--output-excluded', action='store_true', help='flag to output all the filtered information into another file. Require --output.')
+    filter_parser.add_argument('--output-removed', action='store_true', help='flag to output all the removed information into another file. Require --output.')
     filter_parser.add_argument(
         "--permissions", type=str, help=(
             "filter data by IAM permission(s). "
@@ -311,10 +312,10 @@ def validate_and_get_framework(csv_path: str, framework_name: str) -> DataFrame:
 def validate(parser: ArgumentParser) -> Namespace:
     args = parser.parse_args()
     if args.operation == Operation.filter:
-        if args.output_excluded and not args.output:
-            parser.error("The '--output-excluded' flag requires '--output' to be specified.")
+        if args.output_removed and not args.output:
+            parser.error(MISSING_OUTPUT_ERROR)
         args.filter_obj = Filter(
-            severity=args.severity,
+            severity=getattr(args, 'severity', ''),
             events=getattr(args, 'events', ''),
             permissions=getattr(args, 'permissions', ''),
             ids=getattr(args, 'ids', '')
@@ -447,13 +448,13 @@ def get_drawio_binary_path():
         "Use --bin flag to specify path to drawio binary."
     )
 
-def output_result(output_param, result, result_type, output_excluded_json: dict = {}):
+def output_result(output_param, result, result_type, output_removed_json: dict = {}):
     is_json = False
     is_csv = False
     if result_type == 'json':
         json_result = json.dumps(result, indent=2)
-        if output_excluded_json:
-            output_excluded_result = json.dumps(output_excluded_json, indent=2)
+        if output_removed_json:
+            output_removed_result = json.dumps(output_removed_json, indent=2)
         is_json = True
     elif result_type == 'csv_list':
         csv_result = result
@@ -465,13 +466,13 @@ def output_result(output_param, result, result_type, output_excluded_json: dict 
         if is_json:
             with open(output_param, 'w+', newline='') as file:
                 file.write(json_result)
-            if output_excluded_json:
+            if output_removed_json:
                 if '.' in output_param:
-                    exclude_file_name = '.'.join(output_param.split('.')[:-1]) + '_excluded.' + output_param.split('.')[-1]
+                    exclude_file_name = '.'.join(output_param.split('.')[:-1]) + '_removed.' + output_param.split('.')[-1]
                 else:
-                    exclude_file_name = output_param + '_excluded'
+                    exclude_file_name = output_param + '_removed'
                 with open(exclude_file_name, 'w+', newline='') as file:
-                    file.write(output_excluded_result)
+                    file.write(output_removed_result)
         elif is_csv:
             with open(output_param, mode='w', newline='', encoding='utf-8') as file:
                 csv_writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
@@ -493,10 +494,10 @@ def main():
     if params.operation == Operation.filter:
         threatmodel_data = data[0]
         FilterApplier(params.filter_obj, params.exclude).apply_filter(threatmodel_data)
-        excluded_json = {}
-        if params.output_excluded:
-            excluded_json = threatmodel_data.get_excluded_output()
-        output_result(params.output, threatmodel_data.get_json(), 'json', output_excluded_json=excluded_json)
+        removed_json = {}
+        if params.output_removed:
+            removed_json = threatmodel_data.get_removed_output()
+        output_result(params.output, threatmodel_data.get_json(), 'json', output_removed_json=removed_json)
 
     elif params.operation == Operation.scan:
         output_result(params.output, scan_controls(params, data[0].get_json()), 'json')
