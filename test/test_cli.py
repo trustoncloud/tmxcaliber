@@ -23,7 +23,7 @@ def mock_json():
     return {'controls': {'someservice.C1': {
       "feature_class": ["someservice.FC1"],
       "objective": 'someservice.CO1',
-      "weighted_priority": "High"}}, 'control_objectives': {'someservice.CO1':{'scf':['SCF1']}}}
+      "weighted_priority": "High"}}, 'control_objectives': {'someservice.CO1':{'scf':['SCF1']}}, 'threats': {}, 'actions': {}, 'feature_classes': {}} 
 
 def test_get_version():
     version = _get_version()
