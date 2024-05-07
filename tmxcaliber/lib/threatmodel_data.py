@@ -2,6 +2,7 @@ import io
 import csv
 import json
 import copy
+from .feature_class_hierarchy import FeatureClassHierarchy
 from .tools import sort_by_id, sort_dict_by_id, apply_json_filter
 
 class ThreatModelDataList:
@@ -39,6 +40,11 @@ def upgrade_to_latest_template_version(tm_json):
         co_data = tm_json['control_objectives'][co]
         if co_data.get('scf') and isinstance(co_data['scf'], str):
             tm_json['control_objectives'][co]['scf'] = co_data['scf'].split(",")
+    
+    for fc in tm_json.get("feature_classes"):
+        if tm_json['feature_classes'][fc]['class_relationship'] == {}:
+            tm_json['feature_classes'][fc]['class_relationship'] = []
+
     return tm_json
 
 class ThreatModelData:
@@ -52,43 +58,34 @@ class ThreatModelData:
         self.metadata = self.threatmodel_json.get("metadata")
         self.threats = sort_dict_by_id(self.threatmodel_json.get("threats"))
         self.feature_classes = sort_dict_by_id(self.threatmodel_json.get("feature_classes"))
+        self.original_feature_classes = sort_dict_by_id(self.threatmodel_json_original.get("feature_classes"))
         self.controls = sort_dict_by_id(self.threatmodel_json.get("controls"))
         self.control_objectives = sort_dict_by_id(self.threatmodel_json.get("control_objectives"))
         self.actions = sort_dict_by_id(self.threatmodel_json.get("actions"))
         ThreatModelData.threatmodel_data_list.append(self)
 
-    def get_feature_class_hierarchy(self, feature_class_id_to_filter) -> list:
-
-        actual_feature_class_id_to_filter = None
-        for fc in self.feature_classes.keys():
-            if fc.lower() == feature_class_id_to_filter.lower():
-                actual_feature_class_id_to_filter = fc
-                break
+    def get_feature_classes_not_fully_related(self, feature_class_ids_to_filter: list) -> list:
+        feature_class_hierarchy = FeatureClassHierarchy(self.original_feature_classes)
         
-        if not actual_feature_class_id_to_filter:
-            raise ValueError(f'[ERROR] The provided FC id ({feature_class_id_to_filter}) is not present. Make sure to write the full ID, (e.g., Route53.FC1)')
+        for feature_class_id_to_filter in feature_class_ids_to_filter:
+            actual_feature_class_id_to_filter = None
+            for fc in self.feature_classes.keys():
+                if fc.lower() == feature_class_id_to_filter.lower():
+                    actual_feature_class_id_to_filter = fc
+                    break
+            
+            if not actual_feature_class_id_to_filter:
+                raise ValueError(f'[ERROR] The provided FC id ({feature_class_id_to_filter}) is not present. Make sure to write the full ID, (e.g., Route53.FC1)')
 
-        if actual_feature_class_id_to_filter not in self.feature_classes:
-            raise ValueError(f'[ERROR] The provided FC id ({feature_class_id_to_filter}) is not present. Make sure to write the full ID, (e.g., Route53.FC1)')
+            if actual_feature_class_id_to_filter not in self.feature_classes:
+                raise ValueError(f'[ERROR] The provided FC id ({feature_class_id_to_filter}) is not present. Make sure to write the full ID, (e.g., Route53.FC1)')
 
-        def build_hierarchy(class_id, hierarchy):
-            if class_id not in hierarchy:
-                hierarchy.insert(0, class_id)
-                for relation in self.feature_classes[class_id]["class_relationship"]:
-                    if relation["type"] == "parent":
-                        build_hierarchy(relation["class"], hierarchy)
+        feature_class_hierarchy.remove_feature_classes_and_orphan_descendants(feature_class_ids_to_filter)
+        return list(set(feature_class_hierarchy.graph.nodes()))
 
-        hierarchy = []
-        build_hierarchy(actual_feature_class_id_to_filter, hierarchy)
-        return list(hierarchy)
-
-    def get_child_feature_classes(self, parent_feature_class_id):
-        child_fcs = set()
-        for fc in self.feature_classes.keys():
-            fc_hierarchy = self.get_feature_class_hierarchy(fc)
-            if parent_feature_class_id in fc_hierarchy:
-                child_fcs.add(fc)
-        return list(child_fcs)
+    def get_ancestors_feature_classes(self, feature_class_id):
+        feature_class_hierarchy = FeatureClassHierarchy(self.original_feature_classes)
+        return list(set(feature_class_hierarchy.get_ancestors(feature_class_id)))
 
     def get_controls_for_current_threats(self) -> dict:
         controls = {}
@@ -139,9 +136,9 @@ class ThreatModelData:
                 if depends_on:
                     depends_on_ids = [dep_id.strip() for dep_id in depends_on.split(',')]
                     for dep_id in depends_on_ids:
-                        if dep_id not in reverse_deps:
-                            reverse_deps[dep_id] = []
-                        reverse_deps[dep_id].append(ctrl_id)
+                        if dep_id.lower() not in reverse_deps:
+                            reverse_deps[dep_id.lower()] = []
+                        reverse_deps[dep_id.lower()].append(ctrl_id.lower())
             return reverse_deps
 
         def find_all_dependents(reverse_deps, initial_controls, all_controls, seen=None):
@@ -157,9 +154,14 @@ class ThreatModelData:
                     for dependent in reverse_deps[current_control]:
                         if dependent not in seen:
                             # Check if all dependencies of 'dependent' are in 'seen' or are among the initial controls
-                            dependent_data = all_controls[dependent]
+                            real_control_id = None
+                            for control_id in all_controls:
+                                if control_id.lower() == dependent:
+                                    real_control_id = control_id
+                                    break
+                            dependent_data = all_controls[real_control_id]
                             if 'depends_on' in dependent_data and dependent_data['depends_on']:
-                                dependent_dependencies = [dep.strip() for dep in dependent_data['depends_on'].split(',')]
+                                dependent_dependencies = [dep.strip() for dep in dependent_data['depends_on'].lower().split(',')]
                                 if all(dep in seen or dep in initial_controls for dep in dependent_dependencies):
                                     seen.add(dependent)
                                     stack.append(dependent)

@@ -7,3 +7,10 @@ class FrameworkNotFoundError(Exception):
     def print_error(self):
         print(self.message)
         exit(0)
+
+class FeatureClassCycleError(Exception):
+    """Exception raised for errors in the input due to cyclic dependencies in feature classes."""
+    def __init__(self, cycle):
+        self.cycle = cycle
+        message = f"Invalid Feature Class relationships. Cycle detected: {cycle}"
+        super().__init__(message)
