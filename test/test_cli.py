@@ -22,8 +22,8 @@ def mock_json_file(mock_json):
 def mock_json():
     return {'controls': {'someservice.C1': {
       "feature_class": ["someservice.FC1"],
-      "objective": 'someservice.CO1',
-      "weighted_priority": "High"}}, 'control_objectives': {'someservice.CO1':{'scf':['SCF1']}}, 'threats': {}, 'actions': {}, 'feature_classes': {}} 
+      "objective": 'someservice.co1',
+      "weighted_priority": "High"}}, 'control_objectives': {'someservice.co1':{'scf':['SCF1']}}, 'threats': {}, 'actions': {}, 'feature_classes': {}} 
 
 def test_get_version():
     version = _get_version()
@@ -44,7 +44,7 @@ def mock_argv(mocker):
         '--severity', 'high',
         '--events', 'login',
         '--permissions', 'read',
-        '--ids', 'someservice.CO123,someservice.C134,someservice.CO456,someservice.C123,SOMESERVICE.FC123,SOMESERVICE.FC456,someservice.T123,someservice.T223',
+        '--ids', 'someservice.co123,someservice.C134,someservice.co456,someservice.C123,someservice.fc123,someservice.fc456,someservice.t123,someservice.t223',
     ]
     mocker.patch('sys.argv', ['test_program'] + args)
 
@@ -61,11 +61,11 @@ def test_validate(mock_argv):
     assert validated_args.filter_obj.severity == 'high'
     assert 'login' in validated_args.filter_obj.events
     assert 'read' in validated_args.filter_obj.permissions
-    assert validated_args.filter_obj.feature_classes == ['SOMESERVICE.FC123','SOMESERVICE.FC456']
-    assert validated_args.filter_obj.controls == ['SOMESERVICE.C134','SOMESERVICE.C123']
-    assert validated_args.filter_obj.control_objectives == ['SOMESERVICE.CO123','SOMESERVICE.CO456']
-    assert validated_args.filter_obj.threats == ['SOMESERVICE.T123','SOMESERVICE.T223']
-    assert validated_args.filter_obj.ids == ['SOMESERVICE.CO123','SOMESERVICE.C134','SOMESERVICE.CO456','SOMESERVICE.C123','SOMESERVICE.FC123','SOMESERVICE.FC456','SOMESERVICE.T123','SOMESERVICE.T223']
+    assert validated_args.filter_obj.feature_classes == ['someservice.fc123','someservice.fc456']
+    assert validated_args.filter_obj.controls == ['someservice.c134','someservice.c123']
+    assert validated_args.filter_obj.control_objectives == ['someservice.co123','someservice.co456']
+    assert validated_args.filter_obj.threats == ['someservice.t123','someservice.t223']
+    assert validated_args.filter_obj.ids == ['someservice.co123','someservice.c134','someservice.co456','someservice.c123','someservice.fc123','someservice.fc456','someservice.t123','someservice.t223']
 
 def test_validate_requires_output_with_output_removed():
     # Create a parser instance and configure it as it would be in your application
@@ -95,7 +95,7 @@ def test_map(mock_json):
     result = map(framework2co, threatmodel_data, 'Framework', ['additional_info'], metadata)
     expected_result = {
         'FrameworkControl1': {
-            'control_objectives': ['someservice.CO1'],
+            'control_objectives': ['someservice.co1'],
             'scf': ['SCF1'],
             'controls': {
                 'Very High': [],
@@ -107,7 +107,7 @@ def test_map(mock_json):
             'additional_info': 'info'
         },
         'FrameworkControl2': {
-            'control_objectives': ['someservice.CO1'],
+            'control_objectives': ['someservice.co1'],
             'scf': ['SCF1'],
             'controls': {
                 'Very High': [],

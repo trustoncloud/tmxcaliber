@@ -21,6 +21,7 @@ from colorama import Fore
 from .lib.filter import Filter, IDS_INPUT_SEPARATOR, FEATURE_CLASSES_INPUT_SEPARATOR, EVENTS_INPUT_SEPARATOR, PERMISSIONS_INPUT_SEPARATOR
 from .lib.threatmodel_data import ThreatModelData, get_classified_cvssed_control_ids_by_co
 from .lib.filter_applier import FilterApplier
+from .lib.errors import FeatureClassCycleError
 from .lib.scf import get_scf_data
 from .lib.tools import sort_by_id
 from .opacity import generate_xml
@@ -488,8 +489,10 @@ def output_result(output_param, result, result_type, output_removed_json: dict =
 def main():
 
     params = get_params()
-    # it's either a list of JSON dict, or a string from XML file.
-    data = get_input_data(params)
+    try:
+        data = get_input_data(params)
+    except FeatureClassCycleError as e:
+        raise SystemExit(e)
 
     if params.operation == Operation.filter:
         threatmodel_data = data[0]
