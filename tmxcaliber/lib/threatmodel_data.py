@@ -2,6 +2,7 @@ import io
 import csv
 import json
 import copy
+from .feature_class_hierarchy import FeatureClassHierarchy
 from .tools import sort_by_id, sort_dict_by_id, apply_json_filter
 
 class ThreatModelDataList:
@@ -52,6 +53,7 @@ class ThreatModelData:
         self.metadata = self.threatmodel_json.get("metadata")
         self.threats = sort_dict_by_id(self.threatmodel_json.get("threats"))
         self.feature_classes = sort_dict_by_id(self.threatmodel_json.get("feature_classes"))
+        self.feature_class_hierarchy = FeatureClassHierarchy(self.feature_classes)
         self.controls = sort_dict_by_id(self.threatmodel_json.get("controls"))
         self.control_objectives = sort_dict_by_id(self.threatmodel_json.get("control_objectives"))
         self.actions = sort_dict_by_id(self.threatmodel_json.get("actions"))
