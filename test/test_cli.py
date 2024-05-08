@@ -289,9 +289,10 @@ def test_get_input_data_multiple_files():
         get_input_data(args)
 
 
-def test_get_drawio_binary_path_not_found():
+def test_get_drawio_binary_path_not_found(monkeypatch):
+    # Mocking os.path.isfile to return False for any path
+    monkeypatch.setattr(os.path, "isfile", lambda path: False)
     with patch("os.path.isfile", return_value=False), pytest.raises(BinaryNotFound):
-        get_drawio_binary_path()
         get_drawio_binary_path()
 
 
