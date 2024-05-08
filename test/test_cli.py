@@ -1,4 +1,5 @@
 import pytest
+import unittest
 from tmxcaliber.cli import (
     _get_version,
     is_file_or_dir,
@@ -229,9 +230,40 @@ def test_get_input_data_nonexistent_file():
             get_input_data(args)
 
 
-def test_get_drawio_binary_path():
-    path = get_drawio_binary_path()
-    assert os.path.exists(path)
+def test_get_drawio_binary_path_windows(monkeypatch):
+    monkeypatch.setattr(platform, "system", lambda: "Windows")
+    potential_paths = [
+        r"C:\Program Files\draw.io\draw.io.exe",
+        r"C:\Program Files (x86)\draw.io\draw.io.exe",
+    ]
+    with unittest.mock.patch("os.path.isfile", return_value=True) as isfile_mock:
+        path = get_drawio_binary_path()
+        isfile_mock.assert_any_call(potential_paths[0])  # Ensure first path is checked
+        assert path in potential_paths  # Ensure one of the potential paths is returned
+
+
+def test_get_drawio_binary_path_linux(monkeypatch):
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    with unittest.mock.patch("os.path.isfile", return_value=False):
+        path = get_drawio_binary_path()
+        assert path == "xvfb-run -a drawio"
+
+
+def test_get_drawio_binary_path_macos(monkeypatch):
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    potential_path = "/Applications/draw.io.app/Contents/MacOS/draw.io"
+    with unittest.mock.patch("os.path.isfile", return_value=True) as isfile_mock:
+        path = get_drawio_binary_path()
+        isfile_mock.assert_called_once_with(
+            potential_path
+        )  # Ensure macOS path is checked
+        assert path == potential_path
+
+
+def test_get_drawio_binary_path_not_found(monkeypatch):
+    monkeypatch.setattr(platform, "system", lambda: "Unknown")
+    with pytest.raises(BinaryNotFound):
+        get_drawio_binary_path()
 
 
 def test_output_json_result():
@@ -289,10 +321,6 @@ def test_get_input_data_multiple_files():
     with pytest.raises(SystemExit):
         get_input_data(args)
 
-def test_get_drawio_binary_path_not_found(monkeypatch):
-    monkeypatch.setattr(platform, "system", lambda: "blah")
-    with pytest.raises(BinaryNotFound):
-        get_drawio_binary_path()
 
 def test_output_result_unsupported_type():
     with pytest.raises(TypeError):
