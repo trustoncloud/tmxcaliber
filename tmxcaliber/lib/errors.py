@@ -16,3 +16,9 @@ class FeatureClassCycleError(Exception):
         self.cycle = cycle
         message = f"Invalid Feature Class relationships. Cycle detected: {cycle}"
         super().__init__(message)
+
+
+class BinaryNotFound(Exception):
+
+    def __init__(self, message):
+        super().__init__(message)

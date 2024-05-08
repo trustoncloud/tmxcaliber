@@ -22,7 +22,8 @@ from pandas.testing import assert_frame_equal
 
 import csv
 from tmxcaliber.lib.threatmodel_data import ThreatModelData
-from tmxcaliber.cli import BinaryNotFound, ArgumentTypeError
+from tmxcaliber.cli import ArgumentTypeError
+from tmxcaliber.lib.errors import BinaryNotFound
 
 import pytest
 from unittest.mock import mock_open, patch, MagicMock, call

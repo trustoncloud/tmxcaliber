@@ -21,7 +21,6 @@ from colorama import Fore
 from .lib.filter import (
     Filter,
     IDS_INPUT_SEPARATOR,
-    FEATURE_CLASSES_INPUT_SEPARATOR,
     EVENTS_INPUT_SEPARATOR,
     PERMISSIONS_INPUT_SEPARATOR,
 )
@@ -30,7 +29,7 @@ from .lib.threatmodel_data import (
     get_classified_cvssed_control_ids_by_co,
 )
 from .lib.filter_applier import FilterApplier
-from .lib.errors import FeatureClassCycleError
+from .lib.errors import FeatureClassCycleError, BinaryNotFound
 from .lib.scf import get_scf_data
 from .lib.tools import sort_by_id
 from .opacity import generate_xml
@@ -73,10 +72,6 @@ METADATA_MISSING = "Not available in framework-metadata file"
 MISSING_OUTPUT_ERROR = (
     "The '--output-removed' flag requires '--output' to be specified."
 )
-
-
-class BinaryNotFound(Exception):
-    pass
 
 
 class Operation:
@@ -556,8 +551,7 @@ def get_drawio_binary_path():
                 return potential_path
 
     raise BinaryNotFound(
-        "drawio binary not found automatically.",
-        "Use --bin flag to specify path to drawio binary.",
+        "drawio binary not found automatically. Use --bin flag to specify path to drawio binary."
     )
 
 
