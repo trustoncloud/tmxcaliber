@@ -55,7 +55,6 @@ class TestFilterApplier:
         filter_applier.apply_filter(threatmodel_data)
         expected_classes = [
             "Someservice.FC1",
-            
             "Someservice.FC5",
             "Someservice.FC8",
             "Someservice.FC10",
