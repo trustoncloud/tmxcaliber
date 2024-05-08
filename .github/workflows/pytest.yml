@@ -26,13 +26,13 @@ jobs:
       run: |
         pip install -r requirements.txt
         pip install coverage black
+        pip install .
 
     - name: Run pytest test suite with coverage
       run: |
+        python ./test/run_tests.py
         coverage run ./test/run_tests.py
-
-    - name: Generate coverage report
-      run: coverage report -m
+        coverage report -m
 
     - name: Run Black
       run: black --check .
