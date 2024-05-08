@@ -15,6 +15,7 @@ from tmxcaliber.cli import (
 )
 import json
 import os
+import platform
 import argparse
 import pandas as pd
 from argparse import Namespace
@@ -288,13 +289,10 @@ def test_get_input_data_multiple_files():
     with pytest.raises(SystemExit):
         get_input_data(args)
 
-
 def test_get_drawio_binary_path_not_found(monkeypatch):
-    # Mocking os.path.isfile to return False for specific path
-    monkeypatch.setattr(os.path, "isfile", lambda path: False if path == "xvfb-run -a drawio" else os.path.isfile(path))
+    monkeypatch.setattr(platform, "system", lambda: "blah")
     with pytest.raises(BinaryNotFound):
         get_drawio_binary_path()
-
 
 def test_output_result_unsupported_type():
     with pytest.raises(TypeError):
