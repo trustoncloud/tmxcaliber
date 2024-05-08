@@ -29,7 +29,7 @@ jobs:
 
     - name: Run pytest with coverage
       run: |
-        coverage run -m pytest ./test/run_tests.py
+        coverage run ./test/run_tests.py
 
     - name: Generate coverage report
       run: coverage report -m
