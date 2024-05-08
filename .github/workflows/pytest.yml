@@ -1,0 +1,42 @@
+name: Pytest
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Run Pytest
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.11
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install coverage black
+
+    - name: Run pytest with coverage
+      run: |
+        coverage run -m pytest ./test/run_tests.py
+
+    - name: Generate coverage report
+      run: coverage report -m
+
+    - name: Run Black
+      run: black --check .
+
+    - name: Run pytest test suite
+      run: py ./test/run_tests.py
+
