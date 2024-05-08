@@ -498,6 +498,18 @@ def scan_controls(args: Namespace, data: dict) -> dict:
     return {"controls": matched_controls}
 
 
+def repair_json_strings(input_str):
+    # In case the URL are replaced poorly by an email gateway.
+    pattern = re.compile(r"(href=\\\"[^\"]*)")
+
+    def replace_angle(match):
+        return f"{match.group(1)}\\"
+
+    repaired_str = pattern.sub(replace_angle, input_str)
+    parsed_json = json.loads(repaired_str)
+    return parsed_json
+
+
 def get_input_data(params: Namespace) -> Union[dict, str, list]:
     is_threatmodel_json = False
     if os.path.isdir(params.source):
@@ -519,16 +531,28 @@ def get_input_data(params: Namespace) -> Union[dict, str, list]:
         exit(1)
 
     if is_threatmodel_json:
-        threatmodel_data_list = []
         if params.operation != "list" and len(json_file_paths) > 1:
             raise ArgumentTypeError(f"Only 1 file can be given for {params.operation}")
+        threatmodel_data_list = []
         for json_file_path in json_file_paths:
             try:
-                with open(json_file_path) as f:
-                    threatmodel_data_list.append(ThreatModelData(json.load(f)))
-            except json.JSONDecodeError:
-                print(f"Invalid JSON data in file: {json_file_path}")
-                exit(1)
+                with open(json_file_path, "r") as f:
+                    file_content = f.read()
+                    try:
+                        # Try to parse the JSON directly first
+                        data = json.loads(file_content)
+                        threatmodel_data_list.append(ThreatModelData(data))
+                    except json.JSONDecodeError:
+                        print(
+                            f"Invalid JSON data in file: {json_file_path}. Trying to repair..."
+                        )
+                        try:
+                            data = repair_json_strings(file_content)
+                            threatmodel_data_list.append(ThreatModelData(data))
+                            print("Repair successful!")
+                        except json.JSONDecodeError:
+                            print("Repair failed. Exiting.")
+                            exit(1)
             except FileNotFoundError:
                 print(f"File not found: {json_file_path}")
                 exit(1)
