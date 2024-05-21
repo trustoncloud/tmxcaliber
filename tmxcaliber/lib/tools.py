@@ -2,7 +2,7 @@ import re
 import json
 
 
-def extract_number(s: str) -> int:
+def extract_number_from_tm_ids(s: str) -> int:
     # Use a regular expression to find all digits at the end of the string
     match = re.search(r"\d+$", s)
     # Return the number as an integer if found, otherwise return 0
@@ -11,12 +11,12 @@ def extract_number(s: str) -> int:
 
 def sort_by_id(strings: list) -> list:
     # Sort the list of strings using the extracted number as the key
-    return sorted(strings, key=extract_number)
+    return sorted(strings, key=extract_number_from_tm_ids)
 
 
 def sort_dict_by_id(data_dict: dict) -> dict:
     # Sort the dictionary by extracting numbers from the keys using the provided extract_number function
-    sorted_items = sorted(data_dict.items(), key=lambda item: extract_number(item[0]))
+    sorted_items = sorted(data_dict.items(), key=lambda item: extract_number_from_tm_ids(item[0]))
     # Rebuild the dictionary with sorted items
     return dict(sorted_items)
 
