@@ -2,7 +2,6 @@ import pytest
 import unittest
 from tmxcaliber.cli import (
     _get_version,
-    is_file_or_dir,
     validate,
     map,
     scan_controls,
@@ -15,7 +14,6 @@ from tmxcaliber.cli import (
     MISSING_OUTPUT_ERROR,
 )
 import json
-import os
 import platform
 import argparse
 import pandas as pd
@@ -24,7 +22,6 @@ from pandas.testing import assert_frame_equal
 
 import csv
 from tmxcaliber.lib.threatmodel_data import ThreatModelData
-from tmxcaliber.cli import ArgumentTypeError
 from tmxcaliber.lib.errors import BinaryNotFound
 
 import pytest
@@ -52,20 +49,15 @@ def mock_json():
         "feature_classes": {},
     }
 
+@pytest.fixture
+def mock_invalid_json():
+    return 'this is not json'
+
 
 def test_get_version():
     version = _get_version()
     assert isinstance(version, str)
     assert version.startswith("tmxcaliber")
-
-
-def test_is_file_or_dir():
-    with pytest.raises(
-        ArgumentTypeError, match="The path nonexistentpath.json does not exist"
-    ):
-        is_file_or_dir("nonexistentpath.json")
-    assert is_file_or_dir("existingfile.json") == "existingfile.json"
-    assert is_file_or_dir("existingdir") == "existingdir"
 
 
 @pytest.fixture
@@ -201,33 +193,106 @@ def test_scan_controls():
     result = scan_controls(args, data)
     assert "1" in result["controls"]
 
+def test_get_input_data_valid_sources(mock_json_file, mock_json):
+    args = Namespace(new_source="valid_new_source.json", old_source="valid_old_source.json", operation="create_change_log")
+
+    with patch("builtins.open", mock_open(read_data=mock_json_file)), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.isdir", return_value=False), \
+         patch("os.path.exists", return_value=True):
+        
+        result = get_input_data(args)
+        
+        assert isinstance(result, dict)
+        assert "new_source" in result
+        assert "old_source" in result
+        assert len(result["new_source"]) == 1
+        assert isinstance(result["new_source"][0], ThreatModelData)
+        assert result["new_source"][0].threatmodel_json == mock_json
+        assert len(result["old_source"]) == 1
+        assert isinstance(result["old_source"][0], ThreatModelData)
+        assert result["old_source"][0].threatmodel_json == mock_json
+
+def test_get_input_data_invalid_json_new_source(mock_invalid_json):
+    args = Namespace(new_source="invalid_new_source.json", old_source="valid_old_source.json", operation="create_change_log")
+    
+    with patch("builtins.open", mock_open(read_data=mock_invalid_json)), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.isdir", return_value=False), \
+         patch("os.path.exists", return_value=True):
+        with pytest.raises(SystemExit):
+            get_input_data(args)
+
+def test_get_input_data_invalid_json_old_source(mock_invalid_json):
+    args = Namespace(new_source="valid_new_source.json", old_source="invalid_old_source.json", operation="create_change_log")
+    
+    with patch("builtins.open", mock_open(read_data=mock_invalid_json)), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.isdir", return_value=False), \
+         patch("os.path.exists", return_value=True):
+        with pytest.raises(SystemExit):
+            get_input_data(args)
+
+def test_get_input_data_nonexistent_new_source():
+    args = Namespace(new_source="nonexistent_new_source.json", old_source="valid_old_source.json", operation="create_change_log")
+    
+    with patch("os.path.exists", return_value=False):
+        with pytest.raises(SystemExit):
+            get_input_data(args)
+
+def test_get_input_data_nonexistent_old_source():
+    args = Namespace(new_source="valid_new_source.json", old_source="nonexistent_old_source.json", operation="create_change_log")
+    
+    with patch("os.path.exists", return_value=False):
+        with pytest.raises(SystemExit):
+            get_input_data(args)
+
+def test_get_input_data_valid_json_source(mock_json_file, mock_json):
+    args = Namespace(source="validpath.json", operation="list")
+    
+    with patch("builtins.open", mock_open(read_data=mock_json_file)), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.isdir", return_value=False), \
+         patch("os.path.exists", return_value=True):
+        
+        result = get_input_data(args)
+        
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], ThreatModelData)
+        assert result[0].threatmodel_json == mock_json
+
+def test_get_input_data_invalid_json_source(mock_invalid_json):
+    args = Namespace(source="invalidpath.json", operation="list")
+    
+    with patch("builtins.open", mock_open(read_data=mock_invalid_json)), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.isdir", return_value=False), \
+         patch("os.path.exists", return_value=True):
+        with pytest.raises(SystemExit):
+            get_input_data(args)
+
+def test_get_input_data_nonexistent_file_source():
+    args = Namespace(source="nonexistent.json", operation="list")
+    
+    with patch("os.path.exists", return_value=False):
+        with pytest.raises(SystemExit):
+            get_input_data(args)
 
 def test_get_input_data_valid_json(mock_json_file, mock_json):
     args = Namespace(source="validpath.json", operation="list")
-    with patch("builtins.open", mock_open(read_data=mock_json_file)), patch(
-        "os.path.isfile", return_value=True
-    ), patch("os.path.isdir", return_value=False):
+    
+    with patch("builtins.open", mock_open(read_data=mock_json_file)), \
+         patch("os.path.isfile", return_value=True), \
+         patch("os.path.isdir", return_value=False), \
+         patch("os.path.exists", return_value=True):
+        
         result = get_input_data(args)
+        
         assert isinstance(result, list)
-        assert result[0].threatmodel_json == mock_json
-
-
-def test_get_input_data_invalid_json():
-    args = Namespace(source="invalidpath.json", operation="list")
-    with patch("builtins.open", mock_open(read_data="this is not json")), patch(
-        "os.path.isfile", return_value=True
-    ), patch("os.path.isdir", return_value=False):
-        with pytest.raises(SystemExit):
-            get_input_data(args)
-
-
-def test_get_input_data_nonexistent_file():
-    args = Namespace(source="nonexistent.json", operation="list")
-    with patch("os.path.isfile", return_value=False), patch(
-        "os.path.isdir", return_value=False
-    ):
-        with pytest.raises(SystemExit):
-            get_input_data(args)
+        assert len(result) == 1
+        assert isinstance(result[0], ThreatModelData)
+        assert result[0].threatmodel_json  == mock_json
 
 
 def test_get_drawio_binary_path_windows(monkeypatch):
@@ -297,23 +362,6 @@ def test_output_csv_result():
     # Check calls to writerow method on the mock csv_writer
     calls = [call(line) for line in result]
     mock_csv_writer().writerow.assert_has_calls(calls, any_order=True)
-
-
-def test_is_file_or_dir():
-    with pytest.raises(
-        ArgumentTypeError, match="The path nonexistentpath.json does not exist"
-    ):
-        is_file_or_dir("nonexistentpath.json")
-
-
-def test_is_file_or_dir_invalid_file_type():
-    with patch("os.path.exists", return_value=True), patch(
-        "os.path.isfile", return_value=True
-    ), patch("os.path.isdir", return_value=False), pytest.raises(
-        ArgumentTypeError,
-        match="The file invalidfiletype.txt is not valid, only json or xml can be given.",
-    ):
-        is_file_or_dir("invalidfiletype.txt")
 
 
 def test_get_input_data_multiple_files():
