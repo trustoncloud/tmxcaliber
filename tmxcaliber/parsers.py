@@ -29,6 +29,7 @@ def add_changelog_parser(subparsers):
     )
     add_source_new_argument(changelog_parser)
     add_source_old_argument(changelog_parser)
+    add_format_argument(changelog_parser, choices=['json', 'md'], default='json', help='format to output (default to JSON)')
     add_output_argument(changelog_parser)
 
 
@@ -246,6 +247,16 @@ def add_exclude_flag(*parsers: ArgumentParser):
             "--exclude",
             action="store_true",
             help="Enable exclusion mode. Items specified will be excluded from the output.",
+        )
+
+def add_format_argument(*parsers: ArgumentParser, choices, default, help):
+    for parser in parsers:
+        parser.add_argument(
+            "--format",
+            type=str,
+            choices=choices,
+            default=default,
+            help=help,
         )
 
 def add_framework_argument(*parsers: ArgumentParser):

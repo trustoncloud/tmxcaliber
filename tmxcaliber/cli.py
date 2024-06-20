@@ -26,7 +26,7 @@ from .lib.threatmodel_data import (
     get_classified_cvssed_control_ids_by_co,
 )
 from .lib.filter_applier import FilterApplier
-from .lib.change_log import generate_change_log
+from .lib.change_log import generate_change_log, convert_change_log_to_md
 from .lib.errors import FeatureClassCycleError, BinaryNotFound
 from .lib.scf import get_scf_data
 from .lib.tools import sort_by_id
@@ -365,6 +365,7 @@ def get_drawio_binary_path():
 def output_result(output_param, result, result_type, output_removed_json: dict = {}):
     is_json = False
     is_csv = False
+    is_md = False
     if result_type == "json":
         json_result = json.dumps(result, indent=2)
         if output_removed_json:
@@ -373,6 +374,9 @@ def output_result(output_param, result, result_type, output_removed_json: dict =
     elif result_type == "csv_list":
         csv_result = result
         is_csv = True
+    elif result_type == 'md':
+        markdown = result
+        is_md = True
     else:
         raise TypeError("Invalid output result type")
 
@@ -398,12 +402,17 @@ def output_result(output_param, result, result_type, output_removed_json: dict =
                 )
                 for line in csv_result:
                     csv_writer.writerow(line)
+        elif is_md:
+            with open(output_param, "w") as md_file:
+                md_file.write(markdown)
     elif is_json:
         print(json_result)
     elif is_csv:
         writer = csv.writer(sys.stdout, quoting=csv.QUOTE_MINIMAL)
         for row in csv_result:
             writer.writerow(row)
+    elif is_md:
+        print(markdown)
 
 
 def main():
@@ -455,10 +464,14 @@ def main():
         output_result(params.output, threatmodel_data.threatmodel_json, "json")
 
     elif params.operation == Operation.create_change_log:
-        tm_old = data['old_source']
-        tm_new = data['new_source']
-        change_log_json = generate_change_log(tm_old, tm_new)
-        output_result(params.output, change_log_json, "json")
+        tm_old_json = data['old_source'][0].threatmodel_json
+        tm_new_json = data['new_source'][0].threatmodel_json
+        change_log_json = generate_change_log(tm_old_json, tm_new_json)
+        if params.format == 'json':
+            output_result(params.output, change_log_json, "json")
+        elif params.format == 'md':
+            change_log_md = convert_change_log_to_md(change_log_json)
+            output_result(params.output, change_log_md, "md")
 
     elif params.operation == Operation.filter:
         threatmodel_data = data[0]

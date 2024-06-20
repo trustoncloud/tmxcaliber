@@ -1,0 +1,685 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "ThreatModel Schema",
+    "description": "Schema for ThreatModel including metadata, scorecards, feature classes, threats, control objectives, controls, actions, and data flow diagrams.",
+    "type": "object",
+    "properties": {
+        "metadata": {
+            "type": "object",
+            "description": "Metadata about the service and the ThreatModel",
+            "properties": {
+                "provider": {
+                    "type": "string",
+                    "description": "Cloud provider, e.g., 'gcp'"
+                },
+                "service": {
+                    "type": "string",
+                    "description": "Specific cloud service, e.g., '[A-Za-z0-9]+'"
+                },
+                "service_name": {
+                    "type": "string",
+                    "description": "Full name of the cloud service, e.g., 'BigQuery'"
+                },
+                "version": {
+                    "type": "string",
+                    "description": "Version of the template schema"
+                },
+                "scf_version": {
+                    "type": "string",
+                    "description": "Version of the Security Control Framework (SCF)"
+                },
+                "license": {
+                    "type": "string",
+                    "description": "License information for the ThreatModel"
+                }
+            },
+            "required": [
+                "provider",
+                "service",
+                "service_name",
+                "version",
+                "scf_version",
+                "license"
+            ]
+        },
+        "scorecard": {
+            "type": "object",
+            "description": "Scorecard of various security aspects",
+            "properties": {
+                "identity_management": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "string",
+                            "description": "Score for identity management, e.g., 'Cloud IAM'"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "resource_based": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "string",
+                            "description": "Score for resource-based security aspects, e.g., 'tables<br>rows<br>columns<br>connections'"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "network_filtering": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "string",
+                            "description": "Score for network filtering, e.g., 'No'"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "encryption_at_rest": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "string",
+                            "description": "Score for encryption at rest, e.g., 'Yes'"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "encryption_in_transit": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "string",
+                            "description": "Score for encryption in transit, e.g., 'Yes'"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "aws_cloudformation": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "string",
+                            "description": "Score for AWS CloudFormation, e.g., '-'"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "aws_tag_based_abac": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "string",
+                            "description": "Score for AWS tag-based ABAC, e.g., 'No'"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "aws_cloudwatch_events": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "string",
+                            "description": "Score for AWS CloudWatch Events, e.g., 'via Logging'"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "aws_vpc_endpoint": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "string",
+                            "description": "Score for AWS VPC Endpoint, e.g., '-'"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "aws_vpc_endpoint_policy": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "string",
+                            "description": "Score for AWS VPC Endpoint Policy, e.g., '-'"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "gcp_vpc_service_controls": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "string",
+                            "description": "Score for GCP VPC Service Controls, e.g., 'Yes'"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "number_of_actions": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "integer",
+                            "description": "Number of actions, e.g., 141"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "number_of_iam_permissions": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "integer",
+                            "description": "Number of IAM permissions, e.g., 95"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "number_of_events": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "integer",
+                            "description": "Number of events, e.g., 42"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "event_coverage": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "string",
+                            "description": "Event coverage percentage, e.g., '29.7'"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                },
+                "api_without_event": {
+                    "type": "object",
+                    "properties": {
+                        "score": {
+                            "type": "integer",
+                            "description": "Number of APIs without events, e.g., 78"
+                        }
+                    },
+                    "required": [
+                        "score"
+                    ]
+                }
+            }
+        },
+        "feature_classes": {
+            "type": "object",
+            "description": "Feature classes for the cloud service",
+            "patternProperties": {
+                "^[A-Za-z0-9]+\\.FC[0-9]+$": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Name of the feature class"
+                        },
+                        "class_relationship": {
+                            "type": "array",
+                            "description": "Relationships with other feature classes",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "type": {
+                                        "type": "string",
+                                        "description": "Type of relationship, e.g., 'parent'"
+                                    },
+                                    "class": {
+                                        "type": "string",
+                                        "description": "Class identifier of the related feature class"
+                                    }
+                                },
+                                "required": [
+                                    "type",
+                                    "class"
+                                ]
+                            }
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Brief description of the feature class"
+                        },
+                        "long_description": {
+                            "type": "string",
+                            "description": "Detailed description of the feature class"
+                        },
+                        "order": {
+                            "type": "integer",
+                            "description": "Order of the feature class"
+                        }
+                    },
+                    "required": [
+                        "name",
+                        "class_relationship",
+                        "description",
+                        "long_description",
+                        "order"
+                    ]
+                }
+            }
+        },
+        "threats": {
+            "type": "object",
+            "description": "List of threats associated with the feature classes",
+            "patternProperties": {
+                "^[A-Za-z0-9]+\\.T[0-9]+$": {
+                    "type": "object",
+                    "properties": {
+                        "feature_class": {
+                            "type": "string",
+                            "description": "Identifier of the feature class associated with the threat"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Name of the threat"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Description of the threat"
+                        },
+                        "access": {
+                            "type": "object",
+                            "description": "Access requirements for the threat",
+                            "properties": {
+                                "access": {
+                                    "type": "object",
+                                    "description": "Access requirements for the threat",
+                                    "properties": {
+                                        "OPTIONAL": {
+                                            "description": "Optional permissions required to perform the threat",
+                                            "oneOf": [
+                                                {
+                                                    "type": "string"
+                                                },
+                                                {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "oneOf": [
+                                                            {
+                                                                "type": "string"
+                                                            },
+                                                            {
+                                                                "$ref": "#/properties/access"
+                                                            }
+                                                        ]
+                                                    }
+                                                }
+                                            ]
+                                        },
+                                        "OR": {
+                                            "type": "array",
+                                            "description": "List of permissions required to perform the threat",
+                                            "items": {
+                                                "oneOf": [
+                                                    {
+                                                        "type": "string"
+                                                    },
+                                                    {
+                                                        "$ref": "#/properties/access"
+                                                    }
+                                                ]
+                                            }
+                                        },
+                                        "AND": {
+                                            "type": "array",
+                                            "description": "List of permissions required to perform the threat",
+                                            "items": {
+                                                "oneOf": [
+                                                    {
+                                                        "type": "string"
+                                                    },
+                                                    {
+                                                        "$ref": "#/properties/access"
+                                                    }
+                                                ]
+                                            }
+                                        },
+                                        "UNIQUE": {
+                                            "type": "string",
+                                            "description": "Unique permission required to perform the threat"
+                                        }
+                                    },
+                                    "additionalProperties": false
+                                }
+                            }
+                        },
+                        "hlgoal": {
+                            "type": "string",
+                            "description": "High-level goal of the threat, e.g., 'DoS'"
+                        },
+                        "mitre_attack": {
+                            "type": "string",
+                            "description": "MITRE ATT&CK technique identifier, e.g., 'TA0040'"
+                        },
+                        "cvss": {
+                            "type": "string",
+                            "description": "CVSS vector string"
+                        },
+                        "retired": {
+                            "type": "string",
+                            "description": "Status of the threat, e.g., 'false'"
+                        },
+                        "cvss_severity": {
+                            "type": "string",
+                            "description": "CVSS severity rating, e.g., 'Low', 'Medium'"
+                        },
+                        "cvss_score": {
+                            "type": "number",
+                            "description": "CVSS score, e.g., 3.5"
+                        }
+                    },
+                    "required": [
+                        "feature_class",
+                        "name",
+                        "description",
+                        "access",
+                        "hlgoal",
+                        "mitre_attack",
+                        "cvss",
+                        "retired",
+                        "cvss_severity",
+                        "cvss_score"
+                    ]
+                }
+            }
+        },
+        "control_objectives": {
+            "type": "object",
+            "description": "Control objectives associated with the threats",
+            "patternProperties": {
+                "^[A-Za-z0-9]+\\.CO[0-9]+$": {
+                    "type": "object",
+                    "properties": {
+                        "description": {
+                            "type": "string",
+                            "description": "Description of the control objective"
+                        },
+                        "scf": {
+                            "type": "array",
+                            "description": "List of Security Control Framework (SCF) references",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "required": [
+                        "description",
+                        "scf"
+                    ]
+                }
+            }
+        },
+        "controls": {
+            "type": "object",
+            "description": "Controls implemented to mitigate threats",
+            "patternProperties": {
+                "^[A-Za-z0-9]+\\.C[0-9]+$": {
+                    "type": "object",
+                    "properties": {
+                        "coso": {
+                            "type": "string",
+                            "description": "COSO framework classification, e.g., 'Directive'"
+                        },
+                        "nist_csf": {
+                            "type": "string",
+                            "description": "NIST Cybersecurity Framework classification, e.g., 'Protect'"
+                        },
+                        "objective": {
+                            "type": "string",
+                            "description": "Control objective identifier"
+                        },
+                        "retired": {
+                            "type": "string",
+                            "description": "Status of the control, e.g., 'false'"
+                        },
+                        "assured_by": {
+                            "type": "string",
+                            "description": "Comma-separated controls assuring the control"
+                        },
+                        "depends_on": {
+                            "type": "string",
+                            "description": "Comma-separated controls required for the control"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Description of the control"
+                        },
+                        "testing": {
+                            "type": "string",
+                            "description": "Testing procedure for the control"
+                        },
+                        "effort": {
+                            "type": "string",
+                            "description": "Effort required to implement the control, e.g., 'High', 'Low'",
+                            "enum": [
+                                "Very High",
+                                "High",
+                                "Medium",
+                                "Low",
+                                "Very Low"
+                            ]
+                        },
+                        "mitigate": {
+                            "type": "array",
+                            "description": "List of threats mitigated by the control",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "threat": {
+                                        "type": "string",
+                                        "description": "Identifier of the threat"
+                                    },
+                                    "impact": {
+                                        "type": "string",
+                                        "description": "Impact of the threat, e.g., 'Very High'",
+                                        "enum": [
+                                            "Very High",
+                                            "High",
+                                            "Medium",
+                                            "Low",
+                                            "Very Low"
+                                        ]
+                                    },
+                                    "priority": {
+                                        "type": "number",
+                                        "description": "Priority of the threat mitigation"
+                                    },
+                                    "max_dependency": {
+                                        "type": "number",
+                                        "description": "Maximum dependency for the threat"
+                                    },
+                                    "priority_overall": {
+                                        "type": "number",
+                                        "description": "Overall priority of the threat mitigation"
+                                    },
+                                    "cvss": {
+                                        "type": "string",
+                                        "description": "CVSS severity rating for the threat",
+                                        "enum": [
+                                            "Very High",
+                                            "High",
+                                            "Medium",
+                                            "Low",
+                                            "Very Low"
+                                        ]
+                                    }
+                                },
+                                "required": [
+                                    "threat",
+                                    "impact",
+                                    "priority",
+                                    "max_dependency",
+                                    "priority_overall",
+                                    "cvss"
+                                ]
+                            }
+                        },
+                        "feature_class": {
+                            "type": "array",
+                            "description": "Feature classes related to the control",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "weighted_priority": {
+                            "type": "string",
+                            "description": "Weighted priority of the control, e.g., 'High'",
+                            "enum": [
+                                "Very High",
+                                "High",
+                                "Medium",
+                                "Low",
+                                "Very Low"
+                            ]
+                        },
+                        "weighted_priority_score": {
+                            "type": "number",
+                            "description": "Weighted priority score"
+                        },
+                        "queryable_objective_id": {
+                            "type": "number",
+                            "description": "Queryable objective identifier"
+                        },
+                        "queryable_id": {
+                            "type": "number",
+                            "description": "Queryable control identifier"
+                        }
+                    },
+                    "required": [
+                        "coso",
+                        "nist_csf",
+                        "objective",
+                        "retired",
+                        "description",
+                        "testing",
+                        "effort",
+                        "mitigate",
+                        "feature_class",
+                        "weighted_priority",
+                        "weighted_priority_score",
+                        "queryable_objective_id",
+                        "queryable_id"
+                    ]
+                }
+            }
+        },
+        "actions": {
+            "type": "object",
+            "description": "Actions associated with the feature classes",
+            "patternProperties": {
+                "^[A-Za-z0-9]+\\.A[0-9]+$": {
+                    "type": "object",
+                    "properties": {
+                        "action_description": {
+                            "type": "string",
+                            "description": "Description of the action"
+                        },
+                        "api": {
+                            "type": "string",
+                            "description": "API endpoint for the action"
+                        },
+                        "endpoint": {
+                            "type": "string",
+                            "description": "Service endpoint for the action"
+                        },
+                        "feature_class": {
+                            "type": "string",
+                            "description": "Identifier of the related feature class"
+                        },
+                        "feature_class_action_type": {
+                            "type": "string",
+                            "description": "Type of action for the feature class, e.g., 'other'"
+                        },
+                        "iam_permission": {
+                            "type": "string",
+                            "description": "IAM permission required for the action"
+                        },
+                        "event_name": {
+                            "type": "string",
+                            "description": "Event name associated with the action"
+                        },
+                        "stage": {
+                            "type": "string",
+                            "description": "Stage of the action, e.g., 'v2'"
+                        },
+                        "action_id_int": {
+                            "type": "integer",
+                            "description": "Integer identifier for the action"
+                        }
+                    },
+                    "required": [
+                        "action_description",
+                        "api",
+                        "endpoint",
+                        "feature_class",
+                        "feature_class_action_type",
+                        "iam_permission",
+                        "event_name",
+                        "stage",
+                        "action_id_int"
+                    ]
+                }
+            }
+        },
+        "dfd": {
+            "type": "object",
+            "description": "Data flow diagram",
+            "properties": {
+                "body": {
+                    "type": "string",
+                    "description": "Base64 encoded data flow diagram"
+                }
+            },
+            "required": [
+                "body"
+            ]
+        }
+    },
+    "required": [
+        "metadata",
+        "scorecard",
+        "feature_classes",
+        "threats",
+        "control_objectives",
+        "controls",
+        "actions",
+        "dfd"
+    ]
+}
