@@ -1,3 +1,4 @@
+import json
 from deepdiff import DeepDiff
 from deepdiff.model import PrettyOrderedSet
 from .tools import (
@@ -147,7 +148,7 @@ def manual_diff(old_json, new_json) -> List[Change]:
 class ChangeLog:
 
     def __init__(self, old_epoch: int, new_epoch: int):
-        self.changes = []
+        self.changes: List[Change] = []
         self.old_epoch = old_epoch
         self.new_epoch = new_epoch
 
@@ -347,6 +348,9 @@ def diff_scf(scf_list1, scf_list2) -> List[Change]:
 
 def generate_change_log(old_json, new_json) -> ChangeLog:
     # Perform manual diff on top-level keys and identifiers
+    old_json = json.loads(json.dumps(old_json))
+    new_json = json.loads(json.dumps(new_json))
+    
     change_log = ChangeLog(
         int(old_json["metadata"]["release"]), int(new_json["metadata"]["release"])
     )
@@ -359,13 +363,13 @@ def generate_change_log(old_json, new_json) -> ChangeLog:
     for key in remaining_keys:
         if key == "dfd":
             if key not in old_json and key in new_json:
-                change_log.add_change(Change("added", category="dfd").get_json())
+                change_log.add_change(Change("added", category="dfd", identifier="body"))
             elif (
                 old_json.get("dfd")
                 and new_json.get("dfd")
                 and old_json["dfd"] != new_json["dfd"]
             ):
-                change_log.add_change(Change("modified", category="dfd").get_json())
+                change_log.add_change(Change("modified", category="dfd", identifier="body"))
             continue
         if key in old_json and key in new_json:
             diff = DeepDiff(
