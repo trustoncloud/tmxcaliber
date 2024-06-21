@@ -14,11 +14,14 @@ scf_versions = {
     # Add more versions as needed
 }
 
+
 def get_latest_supported_scf():
     return sorted(get_supported_scf())[-1]
 
+
 def get_supported_scf():
     return scf_versions.keys()
+
 
 def get_scf_config(version):
     if version in scf_versions:
@@ -26,9 +29,11 @@ def get_scf_config(version):
     else:
         raise ValueError("Unsupported SCF version requested")
 
+
 def get_valid_scf_controls(version):
     scf_data = get_full_scf_data(version)
-    return scf_data['SCF #'].tolist()
+    return scf_data["SCF #"].tolist()
+
 
 def get_full_scf_data(version):
     scf_config = get_scf_config(version)
@@ -38,6 +43,7 @@ def get_full_scf_data(version):
     # Get the data from the worksheet
     scf_data = read_excel(xls, scf_config["sheet_name"])
     return scf_data
+
 
 def get_scf_data(version, framework_name):
     scf_data = get_full_scf_data(version=version)

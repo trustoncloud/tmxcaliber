@@ -96,7 +96,10 @@ class ThreatModelData:
                     actual_feature_class_id_to_filter = fc
                     break
 
-            if not actual_feature_class_id_to_filter or actual_feature_class_id_to_filter not in self.feature_classes:
+            if (
+                not actual_feature_class_id_to_filter
+                or actual_feature_class_id_to_filter not in self.feature_classes
+            ):
                 logging.warning(
                     f"[WARM] The provided FC id ({feature_class_id_to_filter}) is not present in {self.release}. Make sure to write the full ID, (e.g., Route53.FC1)"
                 )

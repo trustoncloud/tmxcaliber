@@ -18,9 +18,7 @@ from argparse import RawTextHelpFormatter
 
 from colorama import Fore
 
-from .lib.filter import (
-    Filter
-)
+from .lib.filter import Filter
 from .lib.threatmodel_data import (
     ThreatModelData,
     get_classified_cvssed_control_ids_by_co,
@@ -33,7 +31,16 @@ from .lib.tools import sort_by_id
 from .opacity import generate_xml
 from .opacity import generate_pngs
 from . import parsers
-from .params import Operation, ListOperation, GUARDDUTY_PATTERN_NAME, XML_DIR, IMG_DIR, GUARDDUTY_FINDINGS, METADATA_MISSING, MISSING_OUTPUT_ERROR
+from .params import (
+    Operation,
+    ListOperation,
+    GUARDDUTY_PATTERN_NAME,
+    XML_DIR,
+    IMG_DIR,
+    GUARDDUTY_FINDINGS,
+    METADATA_MISSING,
+    MISSING_OUTPUT_ERROR,
+)
 
 
 def _get_version():
@@ -276,11 +283,14 @@ def repair_json_strings(input_str):
 
 def get_file_paths(source: str) -> List[str]:
     if os.path.isdir(source):
-        return [os.path.join(source, f) for f in os.listdir(source) if f.endswith(".json")]
+        return [
+            os.path.join(source, f) for f in os.listdir(source) if f.endswith(".json")
+        ]
     elif os.path.isfile(source):
         if source.endswith(".json"):
             return [source]
     return []
+
 
 def load_json_files(json_file_paths: List[str]) -> List[ThreatModelData]:
     threatmodel_data_list = []
@@ -292,7 +302,9 @@ def load_json_files(json_file_paths: List[str]) -> List[ThreatModelData]:
                     data = json.loads(file_content)
                     threatmodel_data_list.append(ThreatModelData(data))
                 except json.JSONDecodeError:
-                    print(f"Invalid JSON data in file: {json_file_path}. Trying to repair...")
+                    print(
+                        f"Invalid JSON data in file: {json_file_path}. Trying to repair..."
+                    )
                     try:
                         data = repair_json_strings(file_content)
                         threatmodel_data_list.append(ThreatModelData(data))
@@ -305,17 +317,18 @@ def load_json_files(json_file_paths: List[str]) -> List[ThreatModelData]:
             exit(1)
     return threatmodel_data_list
 
-def get_input_data(params: Namespace) -> Union[dict, str, List[ThreatModelData]]:
-    
-    all_sources = {}
-    if hasattr(params, 'source') and params.source:
-        all_sources['source'] = params.source
 
-    if hasattr(params, 'new_source') and params.new_source:
-        all_sources['new_source'] = params.new_source
-    
-    if hasattr(params, 'old_source') and params.old_source:
-        all_sources['old_source'] = params.old_source
+def get_input_data(params: Namespace) -> Union[dict, str, List[ThreatModelData]]:
+
+    all_sources = {}
+    if hasattr(params, "source") and params.source:
+        all_sources["source"] = params.source
+
+    if hasattr(params, "new_source") and params.new_source:
+        all_sources["new_source"] = params.new_source
+
+    if hasattr(params, "old_source") and params.old_source:
+        all_sources["old_source"] = params.old_source
 
     all_data = {}
     for key, source in all_sources.items():
@@ -338,8 +351,8 @@ def get_input_data(params: Namespace) -> Union[dict, str, List[ThreatModelData]]
                 print(f"Invalid file type for {source}")
                 exit(1)
 
-    if 'source' in all_data:
-        return all_data['source']
+    if "source" in all_data:
+        return all_data["source"]
     else:
         return all_data
 
@@ -376,7 +389,7 @@ def output_result(output_param, result, result_type, output_removed_json: dict =
     elif result_type == "csv_list":
         csv_result = result
         is_csv = True
-    elif result_type == 'md':
+    elif result_type == "md":
         markdown = result
         is_md = True
     else:
@@ -466,14 +479,14 @@ def main():
         output_result(params.output, threatmodel_data.threatmodel_json, "json")
 
     elif params.operation == Operation.create_change_log:
-        old_tm_data = data['old_source'][0]
+        old_tm_data = data["old_source"][0]
         FilterApplier(params.filter_obj, params.exclude).apply_filter(old_tm_data)
-        new_tm_data = data['new_source'][0]
+        new_tm_data = data["new_source"][0]
         FilterApplier(params.filter_obj, params.exclude).apply_filter(new_tm_data)
         change_log = generate_change_log(old_tm_data.get_json(), new_tm_data.get_json())
-        if params.format == 'json':
+        if params.format == "json":
             output_result(params.output, change_log.get_json(), "json")
-        elif params.format == 'md':
+        elif params.format == "md":
             output_result(params.output, change_log.get_md(), "md")
 
     elif params.operation == Operation.filter:

@@ -9,6 +9,7 @@ from .lib.filter import (
     PERMISSIONS_INPUT_SEPARATOR,
 )
 
+
 def add_add_mapping_parser(subparsers):
     add_mapping_parser = subparsers.add_parser(
         Operation.add_mapping,
@@ -21,6 +22,7 @@ def add_add_mapping_parser(subparsers):
     add_source_argument(add_mapping_parser)
     add_output_argument(add_mapping_parser)
 
+
 def add_changelog_parser(subparsers):
     changelog_parser = subparsers.add_parser(
         Operation.create_change_log,
@@ -29,10 +31,16 @@ def add_changelog_parser(subparsers):
     )
     add_source_new_argument(changelog_parser)
     add_source_old_argument(changelog_parser)
-    add_format_argument(changelog_parser, choices=['json', 'md'], default='json', help='format to output (default to JSON)')
+    add_format_argument(
+        changelog_parser,
+        choices=["json", "md"],
+        default="json",
+        help="format to output (default to JSON)",
+    )
     add_output_argument(changelog_parser)
     add_ids_filter_argument(changelog_parser)
     add_exclude_flag(changelog_parser)
+
 
 def add_filter_parser(subparsers):
     filter_parser = subparsers.add_parser(
@@ -67,6 +75,7 @@ def add_filter_parser(subparsers):
     add_severity_filter_argument(filter_parser)
     add_ids_filter_argument(filter_parser)
     add_exclude_flag(filter_parser)
+
 
 def add_gen_parser(subparsers):
     gen_parser = subparsers.add_parser(
@@ -103,6 +112,7 @@ def add_gen_parser(subparsers):
     )
     add_source_argument(gen_parser)
 
+
 def add_list_parser(subparsers):
     list_parser = subparsers.add_parser(
         Operation.list,
@@ -124,7 +134,7 @@ def add_list_parser(subparsers):
         add_exclude_flag(threat_list_parser)
         add_severity_filter_argument(threat_list_parser)
         add_ids_filter_argument(threat_list_parser)
-    
+
     def add_list_controls_parser(list_subparsers):
         control_list_parser = list_subparsers.add_parser(
             ListOperation.controls,
@@ -159,6 +169,7 @@ def add_map_parser(subparsers):
     add_output_argument(map_parser)
     add_source_argument(map_parser)
 
+
 def add_scan_parser(subparsers):
     scan_parser = subparsers.add_parser(
         Operation.scan,
@@ -176,6 +187,7 @@ def add_scan_parser(subparsers):
     )
     add_source_argument(scan_parser)
     add_output_argument(scan_parser)
+
 
 def valid_csv_path(file_path):
     try:
@@ -229,6 +241,7 @@ def is_file(path: str) -> str:
         )
     return path
 
+
 def is_file_or_dir(path: str) -> str:
     if not os.path.exists(path):
         raise ArgumentTypeError(f"The path {path} does not exist.")
@@ -242,6 +255,7 @@ def is_file_or_dir(path: str) -> str:
         )
     return path
 
+
 def add_exclude_flag(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
@@ -249,6 +263,7 @@ def add_exclude_flag(*parsers: ArgumentParser):
             action="store_true",
             help="Enable exclusion mode. Items specified will be excluded from the output.",
         )
+
 
 def add_format_argument(*parsers: ArgumentParser, choices, default, help):
     for parser in parsers:
@@ -259,6 +274,7 @@ def add_format_argument(*parsers: ArgumentParser, choices, default, help):
             default=default,
             help=help,
         )
+
 
 def add_framework_argument(*parsers: ArgumentParser):
     for parser in parsers:
@@ -291,6 +307,7 @@ def add_framework_argument(*parsers: ArgumentParser):
             ),
         )
 
+
 def add_ids_filter_argument(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
@@ -302,6 +319,7 @@ def add_ids_filter_argument(*parsers: ArgumentParser):
             ),
         )
 
+
 def add_metadata_argument(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
@@ -311,6 +329,7 @@ def add_metadata_argument(*parsers: ArgumentParser):
                 "path to a CSV file to add metadata into your mapping. Header row is used for titles.\n\n"
             ),
         )
+
 
 def add_output_argument(*parsers: ArgumentParser):
     for parser in parsers:
@@ -331,6 +350,7 @@ def add_scf_argument(*parsers: ArgumentParser):
             help=("version of the Secure Control Framework\n\n"),
         )
 
+
 def add_severity_filter_argument(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
@@ -340,6 +360,7 @@ def add_severity_filter_argument(*parsers: ArgumentParser):
             help="filter data by threat for severity equal or above the selected value.\n\n",
         )
 
+
 def add_source_argument(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
@@ -347,6 +368,7 @@ def add_source_argument(*parsers: ArgumentParser):
             type=is_file,
             help="path to the ThreatModel JSON file. We support XML file for internal purposes on some operations.",
         )
+
 
 def add_source_new_argument(*parsers: ArgumentParser):
     for parser in parsers:
@@ -356,6 +378,7 @@ def add_source_new_argument(*parsers: ArgumentParser):
             help="path to the newer ThreatModel JSON file.",
         )
 
+
 def add_source_old_argument(*parsers: ArgumentParser):
     for parser in parsers:
         parser.add_argument(
@@ -363,6 +386,7 @@ def add_source_old_argument(*parsers: ArgumentParser):
             type=is_file,
             help="path to the older ThreatModel JSON file.",
         )
+
 
 def add_source_json_or_dir_argument(*parsers: ArgumentParser):
     for parser in parsers:

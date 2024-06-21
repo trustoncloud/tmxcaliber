@@ -37,6 +37,7 @@ MISSING_OUTPUT_ERROR = (
     "The '--output-removed' flag requires '--output' to be specified."
 )
 
+
 class Operation:
     filter = "filter"
     map = "map"
@@ -45,6 +46,7 @@ class Operation:
     list = "list"
     add_mapping = "add-mapping"
     create_change_log = "create-change-log"
+
 
 class ListOperation:
     threats = "threats"

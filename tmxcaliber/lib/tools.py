@@ -9,17 +9,20 @@ def extract_number_from_tm_ids(s: str) -> int:
     # Return the number as an integer if found, otherwise return 0
     return int(match.group()) if match else 0
 
+
 # Priority mapping for the letter segments
 priority_map = {"FC": 1, "T": 2, "CO": 3, "C": 4, "A": 5}
+
 
 def extract_letters_and_number(s: str) -> tuple:
     # Extract the part between the dot and the digits
     match = re.search(r"\.(\D+)(\d+)$", s)
     if match:
         letters, number = match.groups()
-        return (1, priority_map.get(letters, float('inf')), int(number))
+        return (1, priority_map.get(letters, float("inf")), int(number))
     # If the format is not matched, return 0 to sort them first by alphabetical order
     return (0, s, 0)
+
 
 def sort_by_id(strings: list) -> list:
     # Sort the list of strings using the extracted number as the key
@@ -28,19 +31,25 @@ def sort_by_id(strings: list) -> list:
 
 def sort_dict_by_id(data_dict: dict) -> dict:
     # Sort the dictionary by extracting numbers from the keys using the provided extract_number function
-    sorted_items = sorted(data_dict.items(), key=lambda item: extract_number_from_tm_ids(item[0]))
+    sorted_items = sorted(
+        data_dict.items(), key=lambda item: extract_number_from_tm_ids(item[0])
+    )
     # Rebuild the dictionary with sorted items
     return dict(sorted_items)
 
 
-def sort_dict_list_by_id(data_dict_list: list, key: str, function=extract_letters_and_number) -> list:
+def sort_dict_list_by_id(
+    data_dict_list: list, key: str, function=extract_letters_and_number
+) -> list:
     # Sort the list of dictionaries based on the numerical value extracted from the specified key
-    return sorted(data_dict_list, key=lambda d: function(d[key]) if key in d else (0, '', 0))
+    return sorted(
+        data_dict_list, key=lambda d: function(d[key]) if key in d else (0, "", 0)
+    )
 
 
 def convert_epoch_to_utc(seconds_epoch: int) -> str:
     utc_datetime = datetime.fromtimestamp(seconds_epoch, tz=timezone.utc)
-    return utc_datetime.strftime('%Y-%m-%d-%H-%M-%S')
+    return utc_datetime.strftime("%Y-%m-%d-%H-%M-%S")
 
 
 def apply_json_filter(original_json: dict, filter_json: dict) -> dict:
