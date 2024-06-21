@@ -15,6 +15,10 @@ scf_versions = {
 }
 
 
+def get_latest_supported_scf():
+    return sorted(get_supported_scf())[-1]
+
+
 def get_supported_scf():
     return scf_versions.keys()
 
@@ -26,13 +30,23 @@ def get_scf_config(version):
         raise ValueError("Unsupported SCF version requested")
 
 
-def get_scf_data(version, framework_name):
+def get_valid_scf_controls(version):
+    scf_data = get_full_scf_data(version)
+    return scf_data["SCF #"].tolist()
+
+
+def get_full_scf_data(version):
     scf_config = get_scf_config(version)
     local_scf = get_cached_local_path_for(scf_config["url"])
     # Read the Excel file
     xls = ExcelFile(local_scf, engine="openpyxl")
     # Get the data from the worksheet
     scf_data = read_excel(xls, scf_config["sheet_name"])
+    return scf_data
+
+
+def get_scf_data(version, framework_name):
+    scf_data = get_full_scf_data(version=version)
     scf_data.columns = [col.replace("\n", " ").strip() for col in scf_data.columns]
     if framework_name not in scf_data.columns:
         raise FrameworkNotFoundError(framework_name)

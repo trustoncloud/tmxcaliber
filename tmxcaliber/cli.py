@@ -8,7 +8,7 @@ from pandas import DataFrame
 from itertools import product
 import platform
 import pkg_resources
-from typing import Union
+from typing import Union, List
 from shutil import rmtree
 from base64 import b64decode
 from argparse import Namespace
@@ -18,133 +18,34 @@ from argparse import RawTextHelpFormatter
 
 from colorama import Fore
 
-from .lib.filter import (
-    Filter,
-    IDS_INPUT_SEPARATOR,
-    EVENTS_INPUT_SEPARATOR,
-    PERMISSIONS_INPUT_SEPARATOR,
-)
+from .lib.filter import Filter
 from .lib.threatmodel_data import (
     ThreatModelData,
     get_classified_cvssed_control_ids_by_co,
 )
 from .lib.filter_applier import FilterApplier
+from .lib.change_log import generate_change_log
 from .lib.errors import FeatureClassCycleError, BinaryNotFound
 from .lib.scf import get_scf_data
 from .lib.tools import sort_by_id
 from .opacity import generate_xml
 from .opacity import generate_pngs
 from . import parsers
-
-GUARDDUTY_PATTERN_NAME = "guardduty_findings"
-GUARDDUTY_FINDINGS = (
-    r"("
-    + "|".join(
-        [
-            "Trojan",
-            "UnauthorizedAccess",
-            "Discovery",
-            "Exfiltration",
-            "Impact",
-            "PenTest",
-            "Policy",
-            "Stealth",
-            "CredentialAccess",
-            "Execution",
-            "CryptoCurrency",
-            "Backdoor",
-            "PrivilegeEscalation",
-            "DefenseEvasion",
-            "InitialAccess",
-            "Persistence",
-            "Recon",
-        ]
-    )
-    + r")"
-    + r":\w+\/[\w!.-]+"
+from .params import (
+    Operation,
+    ListOperation,
+    GUARDDUTY_PATTERN_NAME,
+    XML_DIR,
+    IMG_DIR,
+    GUARDDUTY_FINDINGS,
+    METADATA_MISSING,
+    MISSING_OUTPUT_ERROR,
 )
-
-CURR_DIR = os.getcwd()
-XML_DIR = os.path.join(CURR_DIR, "xmls")
-IMG_DIR = os.path.join(CURR_DIR, "img")
-
-METADATA_MISSING = "Not available in framework-metadata file"
-MISSING_OUTPUT_ERROR = (
-    "The '--output-removed' flag requires '--output' to be specified."
-)
-
-
-class Operation:
-    filter = "filter"
-    map = "map"
-    scan = "scan"
-    generate = "generate"
-    list = "list"
-    add_mapping = "add-mapping"
-
-
-class ListOperation:
-    threats = "threats"
-    controls = "controls"
 
 
 def _get_version():
     module_name = vars(sys.modules[__name__])["__package__"]
     return f"{module_name} {pkg_resources.require(module_name)[0].version}"
-
-
-def add_severity_filter_argument(*parsers: ArgumentParser):
-    for parser in parsers:
-        parser.add_argument(
-            "--severity",
-            type=str,
-            choices=["very high", "high", "medium", "low", "very low"],
-            help="filter data by threat for severity equal or above the selected value.\n\n",
-        )
-
-
-def add_ids_filter_argument(*parsers: ArgumentParser):
-    for parser in parsers:
-        parser.add_argument(
-            "--ids",
-            type=str,
-            help=(
-                "filter data by IDs (can be feature classes, threats, controls, or control objectives). "
-                f"Separate by `{IDS_INPUT_SEPARATOR}`, if several.\n\n"
-            ),
-        )
-
-
-def is_file_or_dir(path: str) -> str:
-    if not os.path.exists(path):
-        raise ArgumentTypeError(f"The path {path} does not exist.")
-    if not (os.path.isfile(path) or os.path.isdir(path)):
-        raise ArgumentTypeError(f"The path {path} is neither a file nor a directory.")
-    if os.path.isfile(path) and not (
-        path.lower().endswith(".json") or path.lower().endswith(".xml")
-    ):
-        raise ArgumentTypeError(
-            f"The file {path} is not valid, only json or xml can be given."
-        )
-    return path
-
-
-def add_source_json_or_dir_argument(*parsers: ArgumentParser):
-    for parser in parsers:
-        parser.add_argument(
-            "source",
-            type=is_file_or_dir,
-            help="Path to the ThreatModel JSON file or directory containing ThreatModel JSON files.",
-        )
-
-
-def add_exclude_flag(*parsers: ArgumentParser):
-    for parser in parsers:
-        parser.add_argument(
-            "--exclude",
-            action="store_true",
-            help="Enable exclusion mode. Items specified will be excluded from the output.",
-        )
 
 
 def get_params():
@@ -156,149 +57,17 @@ def get_params():
         version=_get_version(),
         help="show the installed version.\n\n",
     )
-
     subparsers = parser.add_subparsers(
         title="operation", dest="operation", required=True
     )
-    # subparser for filter operation.
-    filter_parser = subparsers.add_parser(
-        Operation.filter,
-        help="filter down the ThreatModel data.",
-        formatter_class=RawTextHelpFormatter,
-    )
+    parsers.add_filter_parser(subparsers)
+    parsers.add_add_mapping_parser(subparsers)
+    parsers.add_map_parser(subparsers)
+    parsers.add_scan_parser(subparsers)
+    parsers.add_gen_parser(subparsers)
+    parsers.add_list_parser(subparsers)
+    parsers.add_changelog_parser(subparsers)
 
-    filter_parser.add_argument(
-        "--output-removed",
-        action="store_true",
-        help="flag to output all the removed information into another file. Require --output.",
-    )
-    filter_parser.add_argument(
-        "--permissions",
-        type=str,
-        help=(
-            "filter data by IAM permission(s). "
-            f"Separate by `{PERMISSIONS_INPUT_SEPARATOR}`, if several.\n\n"
-        ),
-    )
-    filter_parser.add_argument(
-        "--events",
-        type=str,
-        help=(
-            "filter data by actions log events. "
-            f"Separate by `{EVENTS_INPUT_SEPARATOR}`, if several.\n\n"
-        ),
-    )
-
-    # subparser for add mapping operation.
-    add_mapping_parser = subparsers.add_parser(
-        Operation.add_mapping,
-        help="add a supported framework in the Secure Control Framework (https://securecontrolsframework.com) into the ThreatModel JSON data.",
-        formatter_class=RawTextHelpFormatter,
-    )
-    parsers.add_scf_argument(add_mapping_parser)
-    parsers.add_framework_argument(add_mapping_parser)
-    parsers.add_metadata_argument(add_mapping_parser)
-    parsers.add_source_argument(add_mapping_parser)
-
-    # subparser for map operation.
-    map_parser = subparsers.add_parser(
-        Operation.map,
-        help="map ThreatModel data to a supported framework in the Secure Control Framework (https://securecontrolsframework.com).",
-        formatter_class=RawTextHelpFormatter,
-    )
-    parsers.add_scf_argument(map_parser)
-    parsers.add_framework_argument(map_parser)
-    parsers.add_metadata_argument(map_parser)
-
-    map_parser.add_argument(
-        "--format",
-        type=str,
-        choices=["json", "csv"],
-        default="csv",
-        help="format to output (default to CSV).",
-    )
-
-    # subparser for scan operation.
-    scan_parser = subparsers.add_parser(
-        Operation.scan,
-        help="scan the ThreatModel data for a given pattern.",
-        formatter_class=RawTextHelpFormatter,
-    )
-    scan_parser.add_argument(
-        "--pattern",
-        type=str,
-        required=True,
-        help=(
-            "regex pattern to find in control descriptions.\n"
-            f"For GuardDuty findings, use the pattern: {GUARDDUTY_PATTERN_NAME}\n\n"
-        ),
-    )
-
-    gen_parser = subparsers.add_parser(
-        Operation.generate,
-        help="generate threat specific PNGs from XML data.",
-        formatter_class=RawTextHelpFormatter,
-    )
-    gen_parser.add_argument(
-        "--bin", help="path to `drawio` binary (if not detected automatically)"
-    )
-    gen_parser.add_argument(
-        "--threat-dir",
-        default=XML_DIR,
-        help="output dir for threat files "
-        f"(.{os.path.join(os.path.sep, os.path.basename(XML_DIR))})",
-    )
-    gen_parser.add_argument(
-        "--fc-dir",
-        default=XML_DIR,
-        help="output dir for feature class files "
-        f"(.{os.path.join(os.path.sep, os.path.basename(XML_DIR))})",
-    )
-    gen_parser.add_argument(
-        "--validate",
-        default=False,
-        action="store_true",
-        help="flag indicating whether to do validation or not.",
-    )
-    gen_parser.add_argument(
-        "--out-dir",
-        default=IMG_DIR,
-        help="output dir for PNG files "
-        f"(.{os.path.join(os.path.sep, os.path.basename(IMG_DIR))})",
-    )
-
-    # subparser for list operation.
-    list_parser = subparsers.add_parser(
-        Operation.list,
-        help="List data of one or more ThreatModels.",
-        formatter_class=RawTextHelpFormatter,
-    )
-    list_subparsers = list_parser.add_subparsers(
-        title="list_type", dest="list_type", required=True
-    )
-    threat_list_parser = list_subparsers.add_parser(
-        ListOperation.threats,
-        help="List threat data of one or more ThreatModels.",
-        formatter_class=RawTextHelpFormatter,
-    )
-    control_list_parser = list_subparsers.add_parser(
-        ListOperation.controls,
-        help="List control data of one or more ThreatModels.",
-        formatter_class=RawTextHelpFormatter,
-    )
-    add_source_json_or_dir_argument(threat_list_parser, control_list_parser)
-    parsers.add_output_argument(
-        threat_list_parser,
-        control_list_parser,
-        map_parser,
-        add_mapping_parser,
-        filter_parser,
-        scan_parser,
-    )
-    add_exclude_flag(filter_parser, threat_list_parser, control_list_parser)
-    parsers.add_source_argument(filter_parser, map_parser, scan_parser, gen_parser)
-    add_severity_filter_argument(threat_list_parser, filter_parser)
-    add_ids_filter_argument(filter_parser, threat_list_parser, control_list_parser)
     return validate(parser)
 
 
@@ -388,7 +157,9 @@ def validate_and_get_framework(csv_path: str, framework_name: str) -> DataFrame:
 
 def validate(parser: ArgumentParser) -> Namespace:
     args = parser.parse_args()
-    if args.operation == Operation.filter:
+    if args.operation == Operation.create_change_log:
+        args.filter_obj = Filter(ids=args.ids)
+    elif args.operation == Operation.filter:
         if args.output_removed and not args.output:
             parser.error(MISSING_OUTPUT_ERROR)
         args.filter_obj = Filter(
@@ -397,12 +168,7 @@ def validate(parser: ArgumentParser) -> Namespace:
             permissions=getattr(args, "permissions", ""),
             ids=getattr(args, "ids", ""),
         )
-    if args.operation == Operation.list:
-        if args.list_type == ListOperation.threats:
-            args.filter_obj = Filter(severity=args.severity, ids=args.ids)
-        if args.list_type == ListOperation.controls:
-            args.filter_obj = Filter(ids=args.ids)
-    if args.operation == Operation.generate:
+    elif args.operation == Operation.generate:
         if (
             isinstance(args.source, str)
             and not args.source.endswith("_DFD.xml")
@@ -411,6 +177,11 @@ def validate(parser: ArgumentParser) -> Namespace:
             parser.error(
                 "Only the XML from the main ThreatModel can be used to generate DFD images."
             )
+    elif args.operation == Operation.list:
+        if args.list_type == ListOperation.threats:
+            args.filter_obj = Filter(severity=args.severity, ids=args.ids)
+        if args.list_type == ListOperation.controls:
+            args.filter_obj = Filter(ids=args.ids)
     return args
 
 
@@ -510,53 +281,80 @@ def repair_json_strings(input_str):
     return parsed_json
 
 
-def get_input_data(params: Namespace) -> Union[dict, str, list]:
-    is_threatmodel_json = False
-    if os.path.isdir(params.source):
-        json_file_paths = [
-            os.path.join(params.source, f)
-            for f in os.listdir(params.source)
-            if f.endswith(".json")
+def get_file_paths(source: str) -> List[str]:
+    if os.path.isdir(source):
+        return [
+            os.path.join(source, f) for f in os.listdir(source) if f.endswith(".json")
         ]
-        is_threatmodel_json = True
-    elif os.path.isfile(params.source):
-        if params.source.endswith(".xml"):
-            with open(params.source, "r") as file:
-                return file.read()
-        elif params.source.endswith(".json"):
-            json_file_paths = [params.source]
-            is_threatmodel_json = True
-    else:
-        print(f"File or directory not found: {params.source}")
-        exit(1)
+    elif os.path.isfile(source):
+        if source.endswith(".json"):
+            return [source]
+    return []
 
-    if is_threatmodel_json:
+
+def load_json_files(json_file_paths: List[str]) -> List[ThreatModelData]:
+    threatmodel_data_list = []
+    for json_file_path in json_file_paths:
+        try:
+            with open(json_file_path, "r") as f:
+                file_content = f.read()
+                try:
+                    data = json.loads(file_content)
+                    threatmodel_data_list.append(ThreatModelData(data))
+                except json.JSONDecodeError:
+                    print(
+                        f"Invalid JSON data in file: {json_file_path}. Trying to repair..."
+                    )
+                    try:
+                        data = repair_json_strings(file_content)
+                        threatmodel_data_list.append(ThreatModelData(data))
+                        print("Repair successful!")
+                    except json.JSONDecodeError:
+                        print("Repair failed. Exiting.")
+                        exit(1)
+        except FileNotFoundError:
+            print(f"File not found: {json_file_path}")
+            exit(1)
+    return threatmodel_data_list
+
+
+def get_input_data(params: Namespace) -> Union[dict, str, List[ThreatModelData]]:
+
+    all_sources = {}
+    if hasattr(params, "source") and params.source:
+        all_sources["source"] = params.source
+
+    if hasattr(params, "new_source") and params.new_source:
+        all_sources["new_source"] = params.new_source
+
+    if hasattr(params, "old_source") and params.old_source:
+        all_sources["old_source"] = params.old_source
+
+    all_data = {}
+    for key, source in all_sources.items():
+        if not os.path.exists(source):
+            print(f"File or directory not found: {source}")
+            exit(1)
+
+        json_file_paths = get_file_paths(source)
+
         if params.operation != "list" and len(json_file_paths) > 1:
             raise ArgumentTypeError(f"Only 1 file can be given for {params.operation}")
-        threatmodel_data_list = []
-        for json_file_path in json_file_paths:
-            try:
-                with open(json_file_path, "r") as f:
-                    file_content = f.read()
-                    try:
-                        # Try to parse the JSON directly first
-                        data = json.loads(file_content)
-                        threatmodel_data_list.append(ThreatModelData(data))
-                    except json.JSONDecodeError:
-                        print(
-                            f"Invalid JSON data in file: {json_file_path}. Trying to repair..."
-                        )
-                        try:
-                            data = repair_json_strings(file_content)
-                            threatmodel_data_list.append(ThreatModelData(data))
-                            print("Repair successful!")
-                        except json.JSONDecodeError:
-                            print("Repair failed. Exiting.")
-                            exit(1)
-            except FileNotFoundError:
-                print(f"File not found: {json_file_path}")
+
+        if json_file_paths:
+            all_data[key] = load_json_files(json_file_paths)
+        else:
+            if source.endswith(".xml"):
+                with open(source, "r") as file:
+                    all_data[key] = file.read()
+            else:
+                print(f"Invalid file type for {source}")
                 exit(1)
-        return threatmodel_data_list
+
+    if "source" in all_data:
+        return all_data["source"]
+    else:
+        return all_data
 
 
 def get_drawio_binary_path():
@@ -582,6 +380,7 @@ def get_drawio_binary_path():
 def output_result(output_param, result, result_type, output_removed_json: dict = {}):
     is_json = False
     is_csv = False
+    is_md = False
     if result_type == "json":
         json_result = json.dumps(result, indent=2)
         if output_removed_json:
@@ -590,6 +389,9 @@ def output_result(output_param, result, result_type, output_removed_json: dict =
     elif result_type == "csv_list":
         csv_result = result
         is_csv = True
+    elif result_type == "md":
+        markdown = result
+        is_md = True
     else:
         raise TypeError("Invalid output result type")
 
@@ -615,12 +417,17 @@ def output_result(output_param, result, result_type, output_removed_json: dict =
                 )
                 for line in csv_result:
                     csv_writer.writerow(line)
+        elif is_md:
+            with open(output_param, "w") as md_file:
+                md_file.write(markdown)
     elif is_json:
         print(json_result)
     elif is_csv:
         writer = csv.writer(sys.stdout, quoting=csv.QUOTE_MINIMAL)
         for row in csv_result:
             writer.writerow(row)
+    elif is_md:
+        print(markdown)
 
 
 def main():
@@ -631,7 +438,58 @@ def main():
     except FeatureClassCycleError as e:
         raise SystemExit(e)
 
-    if params.operation == Operation.filter:
+    if params.operation == Operation.add_mapping:
+        # If SCF-supported framework, we need the data; otherwise we can map directly.
+        if not params.framework_map:
+            scf_data = get_scf_data(params.scf, framework_name=params.framework_name)
+        else:
+            scf_data = validate_and_get_framework(
+                params.framework_map, framework_name=params.framework_name
+            )
+
+        metadata = {}
+        metadata_fields = []
+        if params.framework_metadata:
+            metadata_fields, metadata = get_metadata(params.framework_metadata)
+
+        threatmodel_data = data[0]
+        map_json = map(
+            scf_data,
+            threatmodel_data,
+            params.framework_name,
+            metadata_fields=metadata_fields,
+            metadata=metadata,
+        )
+
+        threatmodel_data.threatmodel_json["mapping"] = {}
+        for key in sorted(map_json.keys()):
+            # Extract everything except the 'controls' subkey
+            new_entry = {k: v for k, v in map_json[key].items() if k != "controls"}
+            threatmodel_data.threatmodel_json["mapping"][key] = new_entry
+
+        for co in threatmodel_data.control_objectives:
+            framework_controls = []
+            for fw_control in map_json:
+                if co in map_json[fw_control].get("control_objectives"):
+                    framework_controls.append(fw_control)
+            threatmodel_data.threatmodel_json["control_objectives"][co][
+                params.framework_name
+            ] = sorted(list(set(framework_controls)))
+
+        output_result(params.output, threatmodel_data.threatmodel_json, "json")
+
+    elif params.operation == Operation.create_change_log:
+        old_tm_data = data["old_source"][0]
+        FilterApplier(params.filter_obj, params.exclude).apply_filter(old_tm_data)
+        new_tm_data = data["new_source"][0]
+        FilterApplier(params.filter_obj, params.exclude).apply_filter(new_tm_data)
+        change_log = generate_change_log(old_tm_data.get_json(), new_tm_data.get_json())
+        if params.format == "json":
+            output_result(params.output, change_log.get_json(), "json")
+        elif params.format == "md":
+            output_result(params.output, change_log.get_md(), "md")
+
+    elif params.operation == Operation.filter:
         threatmodel_data = data[0]
         FilterApplier(params.filter_obj, params.exclude).apply_filter(threatmodel_data)
         removed_json = {}
@@ -643,9 +501,6 @@ def main():
             "json",
             output_removed_json=removed_json,
         )
-
-    elif params.operation == Operation.scan:
-        output_result(params.output, scan_controls(params, data[0].get_json()), "json")
 
     elif params.operation == Operation.generate:
         if not params.bin:
@@ -776,42 +631,5 @@ def main():
 
             output_result(params.output, csv_lines, "csv_list")
 
-    elif params.operation == Operation.add_mapping:
-        # If SCF-supported framework, we need the data; otherwise we can map directly.
-        if not params.framework_map:
-            scf_data = get_scf_data(params.scf, framework_name=params.framework_name)
-        else:
-            scf_data = validate_and_get_framework(
-                params.framework_map, framework_name=params.framework_name
-            )
-
-        metadata = {}
-        metadata_fields = []
-        if params.framework_metadata:
-            metadata_fields, metadata = get_metadata(params.framework_metadata)
-
-        threatmodel_data = data[0]
-        map_json = map(
-            scf_data,
-            threatmodel_data,
-            params.framework_name,
-            metadata_fields=metadata_fields,
-            metadata=metadata,
-        )
-
-        threatmodel_data.threatmodel_json["mapping"] = {}
-        for key in sorted(map_json.keys()):
-            # Extract everything except the 'controls' subkey
-            new_entry = {k: v for k, v in map_json[key].items() if k != "controls"}
-            threatmodel_data.threatmodel_json["mapping"][key] = new_entry
-
-        for co in threatmodel_data.control_objectives:
-            framework_controls = []
-            for fw_control in map_json:
-                if co in map_json[fw_control].get("control_objectives"):
-                    framework_controls.append(fw_control)
-            threatmodel_data.threatmodel_json["control_objectives"][co][
-                params.framework_name
-            ] = sorted(list(set(framework_controls)))
-
-        output_result(params.output, threatmodel_data.threatmodel_json, "json")
+    elif params.operation == Operation.scan:
+        output_result(params.output, scan_controls(params, data[0].get_json()), "json")

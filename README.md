@@ -82,7 +82,7 @@ To get complete help on `tmxcaliber` command, run the following.
 ```sh
 $: tmxcaliber -h
 
-usage: tmxcaliber [-h] [-v] {filter,map,scan,generate,list,add-mapping} ...
+usage: tmxcaliber [-h] [-v] {filter,add-mapping,map,scan,generate,list,create-change-log} ...
 
 options:
   -h, --help            show this help message and exit
@@ -90,15 +90,16 @@ options:
 
 
 operation:
-  {filter,map,scan,generate,list}
-    filter              filter down the ThreatModel data. 
-    map                 map ThreatModel data to a supported framework in the Secure Control Framework.
-    add-mapping         add a supported framework in the Secure Control Framework into the ThreatModel JSON data.
-    scan                scan the ThreatModel data for a given pattern. 
-    generate            generate threat specific PNGs from XML data. 
-    list                List data of one or more ThreatModels. 
+  {filter,add-mapping,map,scan,generate,list,create-change-log}
+    filter              filter down the ThreatModel data.
+    add-mapping         add a supported framework in the Secure Control Framework (https://securecontrolsframework.com) into the ThreatModel JSON data.
+    map                 map ThreatModel data to a supported framework in the Secure Control Framework (https://securecontrolsframework.com).
+    scan                scan the ThreatModel data for a given pattern.
+    generate            generate threat specific PNGs from XML data.
+    list                List data of one or more ThreatModels.
+    create-change-log   create the change log between 2 ThreatModel data.
 ```
-You can also get more help on each operation:
+You can also get more help on each operation, for example:
 ```sh
 # help for `filter` and `map` operations.
 $: tmxcaliber filter -h
@@ -242,6 +243,29 @@ $: tmxcaliber list controls path/to/threatmodel.json --ids S3.C2 --excluded
 objective,objective_description,id,coso,nist_csf,assured_by,depends_on,description,testing,effort,mitigate,feature_class,weighted_priority,weighted_priority_score,queryable_objective_id,queryable_id,retired
 S3.CO1,Enforce encryption-in-transit,S3.C1,Preventative,Protect,S3.C2,S3.C119,"Block all unencrypted requests...",Make an unencrypte..,Low,"[{'threat': 'S3.T12', 'impact': 'Very High', 'priority': 4.0, 'max_dependency': None, 'priority_overall': 4.0, 'cvss': 'Medium'}]","['S3.FC1', 'S3.FC5']",High,3,1,1,false
 S3.CO1,Enforce encryption-in-transit,S3.C3,Preventative,Protect,S3.C5,S3.C119,"Block all unencrypted requests...",Make an unencrypted AWS API call from one of your VPCs with VPC endpoint; it should be denied.,Low,"[{'threat': 'S3.T12', 'impact': 'Medium', 'priority': 2.0, 'max_dependency': None, 'priority_overall': 2.0, 'cvss': 'Medium'}]","['S3.FC1', 'S3.FC5']",Medium,2,1,3,false
+```
+
+### Create Change Log
+
+The `create-change-log` operation allows you to create a change log between 2 ThreatModel JSONs. You can filter the change log based on relevant information based on IDs (like features classes, controls, threats, or control objectives).
+```sh
+$: tmxcaliber create-change-log path/to/new_tm.json path/to/old_tm.json --ids S3.FC2
+
+$: tmxcaliber create-change-log -h
+usage: tmxcaliber create-change-log [-h] [--format {json,md}] [--output OUTPUT] [--ids IDS] [--exclude]
+                                    new_source old_source
+
+positional arguments:
+  new_source          path to the newer ThreatModel JSON file.
+  old_source          path to the older ThreatModel JSON file.
+
+options:
+  -h, --help          show this help message and exit
+  --format {json,md}  format to output (default to JSON)
+  --output OUTPUT     output file to write the results. If not provided, prints to stdout.
+  --ids IDS           filter data by IDs (can be feature classes, threats, controls, or control objectives). Separate by `,`, if several.
+
+  --exclude           Enable exclusion mode. Items specified will be excluded from the output.
 ```
 
 ## Contributing
