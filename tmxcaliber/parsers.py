@@ -31,7 +31,8 @@ def add_changelog_parser(subparsers):
     add_source_old_argument(changelog_parser)
     add_format_argument(changelog_parser, choices=['json', 'md'], default='json', help='format to output (default to JSON)')
     add_output_argument(changelog_parser)
-
+    add_ids_filter_argument(changelog_parser)
+    add_exclude_flag(changelog_parser)
 
 def add_filter_parser(subparsers):
     filter_parser = subparsers.add_parser(
@@ -62,10 +63,10 @@ def add_filter_parser(subparsers):
         ),
     )
     add_output_argument(filter_parser)
-    add_exclude_flag(filter_parser)
     add_source_argument(filter_parser)
     add_severity_filter_argument(filter_parser)
     add_ids_filter_argument(filter_parser)
+    add_exclude_flag(filter_parser)
 
 def add_gen_parser(subparsers):
     gen_parser = subparsers.add_parser(

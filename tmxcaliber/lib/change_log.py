@@ -1,6 +1,7 @@
 from deepdiff import DeepDiff
 from deepdiff.model import PrettyOrderedSet
-from .tools import convert_epoch_to_utc, sort_dict_list_by_id
+from .tools import convert_epoch_to_utc, sort_dict_list_by_id, extract_letters_and_number
+from typing import List
 
 TOP_KEYS = ["controls", "threats", "control_objectives", "actions", "feature_classes", "scorecard"]
 
@@ -9,8 +10,9 @@ class Change():
         self.change_type = change_type
         self.category = category
         self.identifier = identifier
-        self.sub_changes = []
+        self.sub_changes: List[Change] = []
         self.field_change = {}
+        self.additional_info = {}
     
     def add_sub_change(self, Change):
         self.sub_changes.append(Change)
@@ -31,8 +33,43 @@ class Change():
         if self.field_change:
             for key, value in self.field_change.items():
                 change_json[key] = value
+        if self.additional_info:
+            change_json["additional_info"] = self.additional_info
         return change_json
 
+    def get_short_md(self):
+        short_mds = []
+        if not self.sub_changes:
+            short_md = f'{self.change_type.capitalize()} {self.identifier}'
+            if self.category == 'feature_classes' and self.additional_info.get('name'):
+                short_md += f" \"{self.additional_info['name']}\""
+            if self.category == 'threats' and self.additional_info.get('cvss_severity'):
+                short_md += f" ({self.additional_info['cvss_severity']})"
+            if self.category == 'controls' and self.additional_info.get('weighted_priority'):
+                short_md += f" ({self.additional_info['weighted_priority']})"
+            return short_md
+        for change in self.sub_changes:
+            short_md = f'{self.change_type.capitalize()} {self.identifier}.{change.identifier}'
+            short_mds.append(short_md)
+        return '\r'.join(short_mds)
+
+    def get_long_md(self):
+        long_mds = []
+        if not self.sub_changes:
+            if self.category == 'threats' and self.additional_info.get('name'):
+                return self.get_short_md() + f" \"{self.additional_info['name']}\""
+            if self.category == 'control_objectives' and self.additional_info.get('description'):
+                return self.get_short_md() + f" \"{self.additional_info['description']}\""
+            if self.category == 'controls' and self.additional_info.get('description'):
+                return self.get_short_md() + f" \"{self.additional_info['description']}\""
+            return self.get_short_md()
+        for change in self.sub_changes:
+            long_md = f'{self.change_type.capitalize()} {self.identifier}.{change.identifier}'
+            if change.field_change.get('old_value') and change.field_change.get('new_value'):
+                long_md += f"\r> From: \"{change.field_change['old_value']}\""
+                long_md += f"\r> To:   \"{change.field_change['new_value']}\""
+            long_mds.append(long_md)
+        return '\r'.join(long_mds)
 
 def safe_get(d, keys):
     for key in keys:
@@ -42,7 +79,7 @@ def safe_get(d, keys):
             return {}
     return d
 
-def manual_diff(old_json, new_json):
+def manual_diff(old_json, new_json) -> List[Change]:
     change_log = []
 
     for key in TOP_KEYS:
@@ -54,30 +91,75 @@ def manual_diff(old_json, new_json):
         removed_items = set(items1.keys()) - set(items2.keys())
 
         for item in added_items:
-            change_log_dict = {
-                "action_summary": "added",
-                "category": key,
-                "identifier": item
-            }
+            change = Change(change_type='added', category=key, identifier=item)
+            if key == 'feature_classes':
+                change.additional_info = {
+                    'name': items2[item]['name']
+                }
             if key == 'threats':
-                change_log_dict['additional_info'] = {
+                change.additional_info = {
                     'name': items2[item]['name'],
                     'cvss_severity': items2[item]['cvss_severity']
                 }
             elif key == 'control_objectives':
-                change_log_dict['additional_info'] = {
+                change.additional_info = {
                     'description': items2[item]['description']
                 }
-            change_log.append(change_log_dict)
+            elif key == 'controls':
+                change.additional_info = {
+                    'description': items2[item]['description'].replace('"', '\\"'),
+                    'weighted_priority': items2[item]['weighted_priority']
+                }
+            change_log.append(change)
 
         for item in removed_items:
-            change_log.append({
-                "action_summary": "removed",
-                "category": key,
-                "identifier": item
-            })
+            change_log.append(Change(change_type='removed', category=key, identifier=item))
 
     return change_log
+
+class ChangeLog():
+
+    def __init__(self, old_epoch: int, new_epoch :int):
+        self.changes = []
+        self.old_epoch = old_epoch
+        self.new_epoch = new_epoch
+    
+    def add_change(self, change: Change):
+        if not isinstance(change, Change):
+            raise ValueError("Only Changes object should be added in the ChangeLog")
+        self.changes.append(change)
+
+    def add_changes(self, changes: List[Change]):
+        for change in changes:
+            self.add_change(change)
+    
+    def get_sorted_changes(self) -> List[Change]:
+        return sorted(self.changes, key=lambda change: (change.change_type, extract_letters_and_number(change.identifier)))
+
+    def get_json(self) -> dict:
+        return {
+            'release': {
+                'old_epoch': str(self.old_epoch),
+                'old_utc': convert_epoch_to_utc(self.old_epoch),
+                'new_epoch': str(self.new_epoch),
+                'new_utc': convert_epoch_to_utc(self.new_epoch),
+                },
+            'change_log': sort_dict_list_by_id([change.get_json() for change in self.changes], 'identifier')
+            }
+    
+    def get_md(self) -> str:
+        md = '## Changes Summary\r'
+        md += self.get_short_md() or 'No changes.'
+        md += '\r\r## Changes\r'
+        md += self.get_long_md() or 'No changes.'
+        return md
+
+    def get_short_md(self) -> str:
+        return '\r'.join([change.get_short_md() for change in self.get_sorted_changes()])
+    
+    def get_long_md(self) -> str:
+        return '\r'.join([change.get_long_md() for change in self.get_sorted_changes()])
+        
 
 def map_mitigate_by_threat(mitigate_list):
     return {mitigate["threat"]: mitigate for mitigate in mitigate_list}
@@ -92,7 +174,7 @@ def clean_diff_id(key):
 CHANGES_TO_IGNORE = ['feature_classes.order', 'threats.cvss_score', 'controls.weighted_priority', 'controls.weighted_priority_score',
                      'controls.mitigate.priority_overall', 'controls.mitigate.max_dependency', 'controls.mitigate.priority', 'scorecard.number_of_events.score', 'scorecard.number_of_actions.score', 'scorecard.event_coverage.score', 'scorecard.api_without_event.score', 'metadata.watermark', 'metadata.release']
 
-def get_changes_from_deepdiff(deepdiff, key=None, category=None, identifier=None):
+def get_changes_from_deepdiff(deepdiff, key=None, category=None, identifier=None) -> List[Change]:
     changes = []
     for change_type, fields in deepdiff.items():
         if change_type in ["dictionary_item_added", "iterable_item_added"]:
@@ -123,7 +205,7 @@ def get_changes_from_deepdiff(deepdiff, key=None, category=None, identifier=None
                 changes.append(change)
     return changes
 
-def diff_mitigate(mitigate1, mitigate2):
+def diff_mitigate(mitigate1, mitigate2) -> List[Change]:
     changes = []
     
     # Find added and removed threats
@@ -151,7 +233,7 @@ def diff_mitigate(mitigate1, mitigate2):
 
     return changes
 
-def diff_scf(scf_list1, scf_list2):
+def diff_scf(scf_list1, scf_list2) -> List[Change]:
     changes = []
     
     # Find added and removed scfs
@@ -167,9 +249,10 @@ def diff_scf(scf_list1, scf_list2):
         changes.append(Change(change_type='removed', identifier=scf))
     return changes
 
-def generate_change_log(old_json, new_json):
+def generate_change_log(old_json, new_json) -> ChangeLog:
     # Perform manual diff on top-level keys and identifiers
-    all_change_logs = manual_diff(old_json, new_json)
+    change_log = ChangeLog(int(old_json['metadata']['release']), int(new_json['metadata']['release']))
+    change_log.add_changes(manual_diff(old_json, new_json))
 
     # Identify remaining keys to perform deep diff
     remaining_keys = set(old_json.keys()).union(set(new_json.keys())) - set(TOP_KEYS)
@@ -178,14 +261,14 @@ def generate_change_log(old_json, new_json):
     for key in remaining_keys:
         if key == 'dfd':
             if key not in old_json and key in new_json:
-                all_change_logs.append(Change('added', category='dfd').get_json())
+                change_log.add_change(Change('added', category='dfd').get_json())
             elif old_json.get('dfd') and new_json.get('dfd') and old_json['dfd'] != new_json['dfd']:
-                all_change_logs.append(Change('modified', category='dfd').get_json())
+                change_log.add_change(Change('modified', category='dfd').get_json())
             continue
         if key in old_json and key in new_json:
             diff = DeepDiff(old_json[key], new_json[key], ignore_order=True, report_repetition=True)
-            change_logs = get_changes_from_deepdiff(diff, key=key, category=key)
-            all_change_logs += [change_log.get_json() for change_log in change_logs]
+            changes = get_changes_from_deepdiff(diff, key=key, category=key)
+            change_log.add_changes(changes)
 
     # Perform diff on explored keys at the next level
     for key in TOP_KEYS:
@@ -201,12 +284,12 @@ def generate_change_log(old_json, new_json):
                 # Handle mitigate separately
                 mitigate1 = map_mitigate_by_threat(item1.get("mitigate", []))
                 mitigate2 = map_mitigate_by_threat(item2.get("mitigate", []))
-                diff = diff_mitigate(mitigate1, mitigate2)
-                if diff:
+                sub_mitigate_changes = diff_mitigate(mitigate1, mitigate2)
+                if sub_mitigate_changes:
                     mitigate_change = Change(change_type='modified', identifier='mitigate')
                     item_change.add_sub_change(mitigate_change)
-                    for change_log in diff:
-                        mitigate_change.add_sub_change(change_log)
+                    for sub_mitigate_change in sub_mitigate_changes:
+                        mitigate_change.add_sub_change(sub_mitigate_change)
                 item1.pop("mitigate", None)
                 item2.pop("mitigate", None)
             
@@ -218,12 +301,12 @@ def generate_change_log(old_json, new_json):
             if key == "control_objectives":
                 scf1 = item1.get("scf", [])
                 scf2 = item2.get("scf", [])
-                scf_diff = diff_scf(scf1, scf2)
-                if scf_diff:
+                sub_scf_changes = diff_scf(scf1, scf2)
+                if sub_scf_changes:
                     scf_change = Change(change_type='modified', identifier='scf')
                     item_change.add_sub_change(scf_change)
-                    for change_log in scf_diff:
-                        scf_change.add_sub_change(change_log)
+                    for sub_scf_change in sub_scf_changes:
+                        scf_change.add_sub_change(sub_scf_change)
                 item1.pop("scf", None)
                 item2.pop("scf", None)
 
@@ -241,22 +324,11 @@ def generate_change_log(old_json, new_json):
 
             diff = DeepDiff(item1, item2, ignore_order=True, report_repetition=True)
             if diff:
-                change_logs = get_changes_from_deepdiff(diff, key=key, identifier=item)
-                for change_log in change_logs:
-                    item_change.add_sub_change(change_log)
+                sub_changes = get_changes_from_deepdiff(diff, key=key, identifier=item)
+                for sub_change in sub_changes:
+                    item_change.add_sub_change(sub_change)
             
             if item_change.is_there_change():
-                all_change_logs.append(item_change.get_json())
+                change_log.add_change(item_change)
 
-    return {
-        'release': {
-            'old_epoch': old_json['metadata']['release'],
-            'old_utc': convert_epoch_to_utc(int(old_json['metadata']['release'])),
-            'new_epoch': new_json['metadata']['release'],
-            'new_utc': convert_epoch_to_utc(int(new_json['metadata']['release'])),
-            },
-        'change_log': sort_dict_list_by_id(all_change_logs, 'identifier')
-        }
-
-def convert_change_log_to_md(change_log_json):
-    return 'hello'
+    return change_log

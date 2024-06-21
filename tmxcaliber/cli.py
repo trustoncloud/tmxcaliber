@@ -26,7 +26,7 @@ from .lib.threatmodel_data import (
     get_classified_cvssed_control_ids_by_co,
 )
 from .lib.filter_applier import FilterApplier
-from .lib.change_log import generate_change_log, convert_change_log_to_md
+from .lib.change_log import generate_change_log
 from .lib.errors import FeatureClassCycleError, BinaryNotFound
 from .lib.scf import get_scf_data
 from .lib.tools import sort_by_id
@@ -150,7 +150,9 @@ def validate_and_get_framework(csv_path: str, framework_name: str) -> DataFrame:
 
 def validate(parser: ArgumentParser) -> Namespace:
     args = parser.parse_args()
-    if args.operation == Operation.filter:
+    if args.operation == Operation.create_change_log:
+        args.filter_obj = Filter(ids=args.ids)
+    elif args.operation == Operation.filter:
         if args.output_removed and not args.output:
             parser.error(MISSING_OUTPUT_ERROR)
         args.filter_obj = Filter(
@@ -159,12 +161,7 @@ def validate(parser: ArgumentParser) -> Namespace:
             permissions=getattr(args, "permissions", ""),
             ids=getattr(args, "ids", ""),
         )
-    if args.operation == Operation.list:
-        if args.list_type == ListOperation.threats:
-            args.filter_obj = Filter(severity=args.severity, ids=args.ids)
-        if args.list_type == ListOperation.controls:
-            args.filter_obj = Filter(ids=args.ids)
-    if args.operation == Operation.generate:
+    elif args.operation == Operation.generate:
         if (
             isinstance(args.source, str)
             and not args.source.endswith("_DFD.xml")
@@ -173,6 +170,11 @@ def validate(parser: ArgumentParser) -> Namespace:
             parser.error(
                 "Only the XML from the main ThreatModel can be used to generate DFD images."
             )
+    elif args.operation == Operation.list:
+        if args.list_type == ListOperation.threats:
+            args.filter_obj = Filter(severity=args.severity, ids=args.ids)
+        if args.list_type == ListOperation.controls:
+            args.filter_obj = Filter(ids=args.ids)
     return args
 
 
@@ -464,14 +466,15 @@ def main():
         output_result(params.output, threatmodel_data.threatmodel_json, "json")
 
     elif params.operation == Operation.create_change_log:
-        tm_old_json = data['old_source'][0].threatmodel_json
-        tm_new_json = data['new_source'][0].threatmodel_json
-        change_log_json = generate_change_log(tm_old_json, tm_new_json)
+        old_tm_data = data['old_source'][0]
+        FilterApplier(params.filter_obj, params.exclude).apply_filter(old_tm_data)
+        new_tm_data = data['new_source'][0]
+        FilterApplier(params.filter_obj, params.exclude).apply_filter(new_tm_data)
+        change_log = generate_change_log(old_tm_data.get_json(), new_tm_data.get_json())
         if params.format == 'json':
-            output_result(params.output, change_log_json, "json")
+            output_result(params.output, change_log.get_json(), "json")
         elif params.format == 'md':
-            change_log_md = convert_change_log_to_md(change_log_json)
-            output_result(params.output, change_log_md, "md")
+            output_result(params.output, change_log.get_md(), "md")
 
     elif params.operation == Operation.filter:
         threatmodel_data = data[0]

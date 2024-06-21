@@ -2,6 +2,7 @@ import io
 import csv
 import json
 import copy
+import logging
 from .feature_class_hierarchy import FeatureClassHierarchy
 from .tools import sort_by_id, sort_dict_by_id, apply_json_filter
 
@@ -67,6 +68,8 @@ class ThreatModelData:
         self.threatmodel_json_original = copy.deepcopy(upgraded_json)
         self.threatmodel_json = upgraded_json
         self.metadata = self.threatmodel_json.get("metadata")
+        if self.metadata:
+            self.release = self.metadata.get("release")
         self.threats = sort_dict_by_id(self.threatmodel_json.get("threats"))
         self.feature_classes = sort_dict_by_id(
             self.threatmodel_json.get("feature_classes")
@@ -93,14 +96,9 @@ class ThreatModelData:
                     actual_feature_class_id_to_filter = fc
                     break
 
-            if not actual_feature_class_id_to_filter:
-                raise ValueError(
-                    f"[ERROR] The provided FC id ({feature_class_id_to_filter}) is not present. Make sure to write the full ID, (e.g., Route53.FC1)"
-                )
-
-            if actual_feature_class_id_to_filter not in self.feature_classes:
-                raise ValueError(
-                    f"[ERROR] The provided FC id ({feature_class_id_to_filter}) is not present. Make sure to write the full ID, (e.g., Route53.FC1)"
+            if not actual_feature_class_id_to_filter or actual_feature_class_id_to_filter not in self.feature_classes:
+                logging.warning(
+                    f"[WARM] The provided FC id ({feature_class_id_to_filter}) is not present in {self.release}. Make sure to write the full ID, (e.g., Route53.FC1)"
                 )
 
         feature_class_hierarchy.remove_feature_classes_and_orphan_descendants(
