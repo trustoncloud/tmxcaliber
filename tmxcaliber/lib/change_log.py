@@ -68,7 +68,7 @@ class Change:
                 f"{self.change_type.capitalize()} {self.identifier}.{change.identifier}"
             )
             short_mds.append(short_md)
-        return "\r".join(short_mds)
+        return "\n".join(short_mds)
 
     def get_long_md(self):
         long_mds = []
@@ -93,10 +93,10 @@ class Change:
             if change.field_change.get("old_value") and change.field_change.get(
                 "new_value"
             ):
-                long_md += f"\r> From: \"{change.field_change['old_value']}\""
-                long_md += f"\r> To:   \"{change.field_change['new_value']}\""
+                long_md += f"\n> From: \"{change.field_change['old_value']}\""
+                long_md += f"\n> To:   \"{change.field_change['new_value']}\""
             long_mds.append(long_md)
-        return "\r".join(long_mds)
+        return "\n".join(long_mds)
 
 
 def safe_get(d, keys):
@@ -184,19 +184,19 @@ class ChangeLog:
         }
 
     def get_md(self) -> str:
-        md = "## Changes Summary\r"
+        md = "## Changes Summary\n"
         md += self.get_short_md() or "No changes."
-        md += "\r\r## Changes\r"
+        md += "\n\n## Changes\n"
         md += self.get_long_md() or "No changes."
         return md
 
     def get_short_md(self) -> str:
-        return "\r".join(
+        return "\n".join(
             [change.get_short_md() for change in self.get_sorted_changes()]
         )
 
     def get_long_md(self) -> str:
-        return "\r".join([change.get_long_md() for change in self.get_sorted_changes()])
+        return "\n".join([change.get_long_md() for change in self.get_sorted_changes()])
 
 
 def map_mitigate_by_threat(mitigate_list):
@@ -350,7 +350,7 @@ def generate_change_log(old_json, new_json) -> ChangeLog:
     # Perform manual diff on top-level keys and identifiers
     old_json = json.loads(json.dumps(old_json))
     new_json = json.loads(json.dumps(new_json))
-
+    
     change_log = ChangeLog(
         int(old_json["metadata"]["release"]), int(new_json["metadata"]["release"])
     )
@@ -363,17 +363,13 @@ def generate_change_log(old_json, new_json) -> ChangeLog:
     for key in remaining_keys:
         if key == "dfd":
             if key not in old_json and key in new_json:
-                change_log.add_change(
-                    Change("added", category="dfd", identifier="body")
-                )
+                change_log.add_change(Change("added", category="dfd", identifier="body"))
             elif (
                 old_json.get("dfd")
                 and new_json.get("dfd")
                 and old_json["dfd"] != new_json["dfd"]
             ):
-                change_log.add_change(
-                    Change("modified", category="dfd", identifier="body")
-                )
+                change_log.add_change(Change("modified", category="dfd", identifier="body"))
             continue
         if key in old_json and key in new_json:
             diff = DeepDiff(
