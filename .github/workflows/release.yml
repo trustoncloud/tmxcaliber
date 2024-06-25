@@ -64,10 +64,10 @@ jobs:
         sudo apt-get install -y gh
 
     - name: Authenticate GitHub CLI
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh auth setup-git
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh auth setup-git
   
     - name: Create GitHub Release
       env:
