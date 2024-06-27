@@ -77,13 +77,9 @@ class Change:
             if self.category == "control_objectives" and self.additional_info.get(
                 "description"
             ):
-                return (
-                    self.get_short_md() + f" `{self.additional_info['description']}`"
-                )
+                return self.get_short_md() + f" `{self.additional_info['description']}`"
             if self.category == "controls" and self.additional_info.get("description"):
-                return (
-                    self.get_short_md() + f" `{self.additional_info['description']}`"
-                )
+                return self.get_short_md() + f" `{self.additional_info['description']}`"
             return self.get_short_md()
         for change in self.sub_changes:
             long_md = (
@@ -92,23 +88,25 @@ class Change:
             if change.field_change.get("old_value") and change.field_change.get(
                 "new_value"
             ):
-                long_md += '\n```\n'
+                long_md += "\n```\n"
                 long_md += f"From: {change.field_change['old_value']}\n"
                 long_md += f"To:   {change.field_change['new_value']}\n"
-                long_md += '```'
+                long_md += "```"
         return long_md
 
+
 def custom_md_join(mds):
-    if len(mds) > 0 and not mds[0].startswith('- '):
+    if len(mds) > 0 and not mds[0].startswith("- "):
         result = ["- " + mds[0]]
     else:
         result = [mds[0]]
     for item in mds[1:]:
-        if item.startswith('- '):
+        if item.startswith("- "):
             result.append(item)
         else:
             result.append("- " + item)
     return "\n".join(result)
+
 
 def safe_get(d, keys):
     for key in keys:
@@ -207,7 +205,9 @@ class ChangeLog:
         )
 
     def get_long_md(self) -> str:
-        return custom_md_join([change.get_long_md() for change in self.get_sorted_changes()])
+        return custom_md_join(
+            [change.get_long_md() for change in self.get_sorted_changes()]
+        )
 
 
 def map_mitigate_by_threat(mitigate_list):
