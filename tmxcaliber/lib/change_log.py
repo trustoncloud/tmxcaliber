@@ -55,7 +55,7 @@ class Change:
         if not self.sub_changes:
             short_md = f"{self.change_type.capitalize()} {self.identifier}"
             if self.category == "feature_classes" and self.additional_info.get("name"):
-                short_md += f" \"{self.additional_info['name']}\""
+                short_md += f" `{self.additional_info['name']}`"
             if self.category == "threats" and self.additional_info.get("cvss_severity"):
                 short_md += f" ({self.additional_info['cvss_severity']})"
             if self.category == "controls" and self.additional_info.get(
@@ -68,22 +68,21 @@ class Change:
                 f"{self.change_type.capitalize()} {self.identifier}.{change.identifier}"
             )
             short_mds.append(short_md)
-        return "\n".join(short_mds)
+        return custom_md_join(short_mds)
 
     def get_long_md(self):
-        long_mds = []
         if not self.sub_changes:
             if self.category == "threats" and self.additional_info.get("name"):
-                return self.get_short_md() + f" \"{self.additional_info['name']}\""
+                return self.get_short_md() + f" `{self.additional_info['name']}`"
             if self.category == "control_objectives" and self.additional_info.get(
                 "description"
             ):
                 return (
-                    self.get_short_md() + f" \"{self.additional_info['description']}\""
+                    self.get_short_md() + f" `{self.additional_info['description']}`"
                 )
             if self.category == "controls" and self.additional_info.get("description"):
                 return (
-                    self.get_short_md() + f" \"{self.additional_info['description']}\""
+                    self.get_short_md() + f" `{self.additional_info['description']}`"
                 )
             return self.get_short_md()
         for change in self.sub_changes:
@@ -93,11 +92,23 @@ class Change:
             if change.field_change.get("old_value") and change.field_change.get(
                 "new_value"
             ):
-                long_md += f"\n> From: \"{change.field_change['old_value']}\""
-                long_md += f"\n> To:   \"{change.field_change['new_value']}\""
-            long_mds.append(long_md)
-        return "\n".join(long_mds)
+                long_md += '\n```\n'
+                long_md += f"From: {change.field_change['old_value']}\n"
+                long_md += f"To:   {change.field_change['new_value']}\n"
+                long_md += '```'
+        return long_md
 
+def custom_md_join(mds):
+    if len(mds) > 0 and not mds[0].startswith('- '):
+        result = ["- " + mds[0]]
+    else:
+        result = [mds[0]]
+    for item in mds[1:]:
+        if item.startswith('- '):
+            result.append(item)
+        else:
+            result.append("- " + item)
+    return "\n".join(result)
 
 def safe_get(d, keys):
     for key in keys:
@@ -184,19 +195,19 @@ class ChangeLog:
         }
 
     def get_md(self) -> str:
-        md = "## Changes Summary\n"
+        md = "## Changes Summary\n\n"
         md += self.get_short_md() or "No changes."
-        md += "\n\n## Changes\n"
+        md += "\n\n## Changes\n\n"
         md += self.get_long_md() or "No changes."
         return md
 
     def get_short_md(self) -> str:
-        return "\n".join(
+        return custom_md_join(
             [change.get_short_md() for change in self.get_sorted_changes()]
         )
 
     def get_long_md(self) -> str:
-        return "\n".join([change.get_long_md() for change in self.get_sorted_changes()])
+        return custom_md_join([change.get_long_md() for change in self.get_sorted_changes()])
 
 
 def map_mitigate_by_threat(mitigate_list):
