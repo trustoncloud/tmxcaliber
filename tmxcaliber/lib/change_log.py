@@ -96,6 +96,8 @@ class Change:
 
 
 def custom_md_join(mds):
+    if not mds:
+        return ''
     if len(mds) > 0 and not mds[0].startswith("- "):
         result = ["- " + mds[0]]
     else:
