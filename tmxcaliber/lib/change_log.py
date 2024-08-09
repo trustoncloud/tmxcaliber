@@ -173,7 +173,7 @@ class ChangeLog:
             self.add_change(change)
 
     def empty(self) -> bool:
-        return self.changes==[]
+        return self.changes == []
 
     def get_sorted_changes(self) -> List[Change]:
         return sorted(
