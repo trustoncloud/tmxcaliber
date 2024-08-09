@@ -422,7 +422,7 @@
         },
         "control_objectives": {
             "type": "object",
-            "description": "Control objectives associated with the threats",
+            "description": "Control objectives describing the security intent of their associated controls",
             "patternProperties": {
                 "^[A-Za-z0-9]+\\.CO[0-9]+$": {
                     "type": "object",
@@ -437,6 +437,10 @@
                             "items": {
                                 "type": "string"
                             }
+                        },
+                        "retired": {
+                            "type": "string",
+                            "description": "Status of the control objective, e.g., 'false'"
                         }
                     },
                     "required": [

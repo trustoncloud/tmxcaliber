@@ -96,6 +96,8 @@ class Change:
 
 
 def custom_md_join(mds):
+    if not mds:
+        return ""
     if len(mds) > 0 and not mds[0].startswith("- "):
         result = ["- " + mds[0]]
     else:
@@ -169,6 +171,9 @@ class ChangeLog:
     def add_changes(self, changes: List[Change]):
         for change in changes:
             self.add_change(change)
+
+    def empty(self) -> bool:
+        return self.changes == []
 
     def get_sorted_changes(self) -> List[Change]:
         return sorted(
