@@ -1,4 +1,11 @@
-from tmxcaliber.lib.tools import apply_json_filter
+from tmxcaliber.lib.tools import (
+    apply_json_filter,
+    extract_letters_and_number,
+    sort_by_id,
+    sort_dict_by_id,
+    sort_dict_list_by_id,
+    sort_list_by_id,
+)
 
 
 def test_json_modification():
