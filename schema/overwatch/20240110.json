@@ -1,0 +1,85 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Version of the schema"
+    },
+    "release_epoch": {
+      "type": "integer",
+      "description": "Epoch timestamp of the release"
+    },
+    "provider": {
+      "type": "string",
+      "description": "Cloud provider identifier, e.g., 'gcp'"
+    },
+    "overwatch": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "overwatch_id": {
+            "type": "string",
+            "description": "Unique identifier for the OverWatch entry"
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Service identifier from the provider"
+            }
+          },
+          "threatmodel": {
+            "type": "string",
+            "description": "ThreatModel identifier associated with the entry"
+          },
+          "security_level": {
+            "type": "string",
+            "description": "Security level associated with the entry"
+          },
+          "threatmodel_change": {
+            "type": "string",
+            "description": "Description of changes in the ThreatModel"
+          },
+          "provider_updates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "provider_summary": {
+                  "type": "string",
+                  "description": "Summary provided by the provider"
+                },
+                "provider_description": {
+                  "type": "string",
+                  "description": "Description provided by the provider"
+                },
+                "link": {
+                  "type": "string",
+                  "description": "Link to additional information or documentation"
+                }
+              },
+              "required": [
+                "provider_description",
+                "link"
+              ]
+            }
+          }
+        },
+        "required": [
+          "overwatch_id",
+          "provider_service",
+          "security_level",
+          "threatmodel_change",
+          "updated_data"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "release_epoch",
+	"provider",
+    "overwatch"
+  ]
+}

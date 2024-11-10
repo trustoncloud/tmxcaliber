@@ -7,7 +7,7 @@ import csv
 from pandas import DataFrame
 from itertools import product
 import platform
-import pkg_resources
+from importlib import metadata
 from typing import Union, List
 from shutil import rmtree
 from base64 import b64decode
@@ -45,7 +45,11 @@ from .params import (
 
 def _get_version():
     module_name = vars(sys.modules[__name__])["__package__"]
-    return f"{module_name} {pkg_resources.require(module_name)[0].version}"
+    try:
+        version = metadata.version(module_name)
+        return f"{module_name} {version}"
+    except metadata.PackageNotFoundError:
+        return f"{module_name} version not found"
 
 
 def get_params():
