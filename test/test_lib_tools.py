@@ -133,18 +133,22 @@ def test_json_deletion():
     }
 
     assert apply_json_filter(original_json, filter_json) == expected_diff
+
+
 def test_extract_letters_and_number():
     assert extract_letters_and_number("someservice.FC1") == (1, 1, 1)
     assert extract_letters_and_number("someservice.T2") == (1, 2, 2)
     assert extract_letters_and_number("someservice.CO3") == (1, 3, 3)
-    assert extract_letters_and_number("someservice.C4") == (1, 4, 4)
+    assert extract_letters_and_number("someservic5.C4") == (1, 4, 4)
     assert extract_letters_and_number("someservice.A5") == (1, 5, 5)
     assert extract_letters_and_number("someservice.X6") == (1, float("inf"), 6)
     assert extract_letters_and_number("someservice.123") == (0, "someservice.123", 0)
 
+
 def test_sort_by_id():
     strings = ["someservice.3", "someservice.1", "someservice.2"]
     assert sort_by_id(strings) == ["someservice.1", "someservice.2", "someservice.3"]
+
 
 def test_sort_dict_by_id():
     data_dict = {
@@ -159,6 +163,7 @@ def test_sort_dict_by_id():
     }
     assert sort_dict_by_id(data_dict) == expected
 
+
 def test_sort_dict_list_by_id():
     data_dict_list = [
         {"id": "someservice.C3"},
@@ -171,6 +176,7 @@ def test_sort_dict_list_by_id():
         {"id": "someservice.C3"},
     ]
     assert sort_dict_list_by_id(data_dict_list, "id") == expected
+
 
 def test_sort_list_by_id():
     list_of_lists = [

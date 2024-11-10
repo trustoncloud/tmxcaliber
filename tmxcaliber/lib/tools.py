@@ -47,6 +47,27 @@ def sort_dict_list_by_id(
     )
 
 
+def sort_list_by_id(list_of_lists: list, index: int) -> list:
+    """
+    Sorts a list of lists by the extracted letters and numbers at the specified index in each inner list.
+
+    Parameters:
+    - list_of_lists (list): The list of lists to sort.
+    - index (int): The index in the inner lists to sort by, where each item is expected to be a string.
+
+    Returns:
+    - list: A sorted list of lists.
+    """
+    return sorted(
+        list_of_lists,
+        key=lambda x: (
+            extract_letters_and_number(x[index])
+            if index < len(x) and isinstance(x[index], str)
+            else (0, "", 0)
+        ),
+    )
+
+
 def convert_epoch_to_utc(seconds_epoch: int) -> str:
     utc_datetime = datetime.fromtimestamp(seconds_epoch, tz=timezone.utc)
     return utc_datetime.strftime("%Y-%m-%d-%H-%M-%S")
