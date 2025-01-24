@@ -56,6 +56,10 @@ def upgrade_to_latest_template_version(tm_json):
         if tm_json["feature_classes"][fc]["class_relationship"] == {}:
             tm_json["feature_classes"][fc]["class_relationship"] = []
 
+    # Due to older version calling release time "timestamp"
+    if tm_json.get("metadata"):
+        if tm_json["metadata"].get("timestamp"):
+            tm_json["metadata"]["release"] = tm_json["metadata"]["timestamp"]
     return tm_json
 
 
