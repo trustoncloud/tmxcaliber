@@ -46,16 +46,20 @@ def get_permissions(access: dict) -> list:
 
 
 def upgrade_to_latest_template_version(tm_json):
-    for co in tm_json.get("control_objectives"):
+    for co in tm_json.get("control_objectives", {}):
         co_data = tm_json["control_objectives"][co]
         if co_data.get("scf") and isinstance(co_data["scf"], str):
             tm_json["control_objectives"][co]["scf"] = co_data["scf"].split(",")
 
     # Due to a mistake on the ThreatModels
-    for fc in tm_json.get("feature_classes"):
+    for fc in tm_json.get("feature_classes", {}):
         if tm_json["feature_classes"][fc]["class_relationship"] == {}:
             tm_json["feature_classes"][fc]["class_relationship"] = []
 
+    # Due to older version calling release time "timestamp"
+    if tm_json.get("metadata"):
+        if tm_json["metadata"].get("timestamp"):
+            tm_json["metadata"]["release"] = tm_json["metadata"]["timestamp"]
     return tm_json
 
 
@@ -70,18 +74,18 @@ class ThreatModelData:
         self.metadata = self.threatmodel_json.get("metadata")
         if self.metadata:
             self.release = self.metadata.get("release")
-        self.threats = sort_dict_by_id(self.threatmodel_json.get("threats"))
+        self.threats = sort_dict_by_id(self.threatmodel_json.get("threats", {}))
         self.feature_classes = sort_dict_by_id(
-            self.threatmodel_json.get("feature_classes")
+            self.threatmodel_json.get("feature_classes", {})
         )
         self.original_feature_classes = sort_dict_by_id(
-            self.threatmodel_json_original.get("feature_classes")
+            self.threatmodel_json_original.get("feature_classes", {})
         )
-        self.controls = sort_dict_by_id(self.threatmodel_json.get("controls"))
+        self.controls = sort_dict_by_id(self.threatmodel_json.get("controls", {}))
         self.control_objectives = sort_dict_by_id(
-            self.threatmodel_json.get("control_objectives")
+            self.threatmodel_json.get("control_objectives", {})
         )
-        self.actions = sort_dict_by_id(self.threatmodel_json.get("actions"))
+        self.actions = sort_dict_by_id(self.threatmodel_json.get("actions", {}))
         ThreatModelData.threatmodel_data_list.append(self)
 
     def get_feature_classes_not_fully_related(
