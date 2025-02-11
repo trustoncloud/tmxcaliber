@@ -2,6 +2,7 @@ import pytest
 from deepdiff import DeepDiff
 from deepdiff.model import PrettyOrderedSet
 from tmxcaliber.lib.change_log import (
+    clean_diff_id,
     Change,
     ChangeLog,
     generate_change_log,
@@ -98,7 +99,12 @@ def test_get_changes_from_deepdiff():
     assert len(changes) == 2  # One modified, one added
 
 
-def test_changelog_add_change():
+def test_clean_diff_id():
+    assert clean_diff_id("root['controls']['Service.C1']") == "controls.Service.C1"
+    assert clean_diff_id("root['threats']['Service.T1']") == "threats.Service.T1"
+    assert clean_diff_id("root['metadata']['release']") == "metadata.release"
+    assert clean_diff_id(123) == 123
+    assert clean_diff_id("some_random_string") == "some_random_string"
     changelog = ChangeLog(1625155200, 1627750800)
     change = Change(change_type="added", category="controls", identifier="Service.C1")
     changelog.add_change(change)
