@@ -223,7 +223,7 @@ def clean_diff_id(key):
     if isinstance(key, int):
         return key
     if "root['" in key:
-        return key.replace("root['", "").replace("']", "")
+        return key.replace("root['", "").replace("']", "").replace("['", ".")
     return key
 
 

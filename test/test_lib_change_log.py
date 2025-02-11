@@ -103,6 +103,12 @@ def test_clean_diff_id():
     assert clean_diff_id("root['controls']['Service.C1']") == "controls.Service.C1"
     assert clean_diff_id("root['threats']['Service.T1']") == "threats.Service.T1"
     assert clean_diff_id("root['metadata']['release']") == "metadata.release"
+    assert (
+        clean_diff_id(
+            "root['feature_classes']['Service.FC2']['class_relationship'][0]['class']"
+        )
+        == "feature_classes.Service.FC2.class_relationship[0].class"
+    )
     assert clean_diff_id(123) == 123
     assert clean_diff_id("some_random_string") == "some_random_string"
     changelog = ChangeLog(1625155200, 1627750800)
