@@ -1,4 +1,4 @@
-from tmxcaliber.lib.threatmodel_data import ThreatModelData
+from tmxcaliber.lib.threatmodel_data import ThreatModelData, get_permissions
 
 
 def create_threatmodel(feature_classes=None, threats=None, controls=None):
@@ -151,3 +151,17 @@ def test_get_controls_for_current_threats():
             "assured_by": "",
         },
     }
+def test_get_permissions():
+    access_data = {
+        "READ": ["read_data", {"OPTIONAL": ["optional_read"]}],
+        "WRITE": "write_data",
+        "OPTIONAL": ["optional_write"],
+    }
+
+    # Test with add_optional=True
+    permissions_with_optional = get_permissions(access_data, add_optional=True)
+    assert sorted(permissions_with_optional) == ["optional_read", "optional_write", "read_data", "write_data"]
+
+    # Test with add_optional=False
+    permissions_without_optional = get_permissions(access_data, add_optional=False)
+    assert sorted(permissions_without_optional) == ["read_data", "write_data"]
