@@ -153,8 +153,8 @@ def test_get_controls_for_current_threats():
     }
 def test_get_permissions():
     access_data = {
-        "READ": ["read_data", {"OPTIONAL": ["optional_read"]}],
-        "WRITE": "write_data",
+        "AND": ["read_data", {"OPTIONAL": ["optional_read"]}],
+        "UNIQUE": "write_data",
         "OPTIONAL": ["optional_write"],
     }
 

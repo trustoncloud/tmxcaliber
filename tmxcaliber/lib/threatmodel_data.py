@@ -31,9 +31,13 @@ class ThreatModelDataList:
         return output
 
 
-def get_permissions(access: dict) -> list:
+def get_permissions(access: dict, add_optional: bool = True) -> list:
     permissions = []
-    for _, perms in access.items():
+
+    for key, perms in access.items():
+        if not add_optional and key == "OPTIONAL":
+            continue  # Skip optional permissions if add_optional is False
+
         if isinstance(perms, str):
             permissions.append(perms)
         elif isinstance(perms, list):
@@ -41,7 +45,8 @@ def get_permissions(access: dict) -> list:
                 if isinstance(perm, str):
                     permissions.append(perm)
                 elif isinstance(perm, dict):
-                    permissions.extend(get_permissions(perm))
+                    permissions.extend(get_permissions(perm, add_optional))
+
     return [x.lower() for x in list(set(permissions))]
 
 
