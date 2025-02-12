@@ -151,6 +151,8 @@ def test_get_controls_for_current_threats():
             "assured_by": "",
         },
     }
+
+
 def test_get_permissions():
     access_data = {
         "AND": ["read_data", {"OPTIONAL": ["optional_read"]}],
@@ -160,7 +162,12 @@ def test_get_permissions():
 
     # Test with add_optional=True
     permissions_with_optional = get_permissions(access_data, add_optional=True)
-    assert sorted(permissions_with_optional) == ["optional_read", "optional_write", "read_data", "write_data"]
+    assert sorted(permissions_with_optional) == [
+        "optional_read",
+        "optional_write",
+        "read_data",
+        "write_data",
+    ]
 
     # Test with add_optional=False
     permissions_without_optional = get_permissions(access_data, add_optional=False)
