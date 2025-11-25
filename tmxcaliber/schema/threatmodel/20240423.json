@@ -385,98 +385,159 @@
 							"description": "API action requirements for the threat",
 							"properties": {
 								"api_details": {
-									"$ref": "#/definitions/apiExpression"
-								}
-							}
-						},
-						"definitions": {
-							"apiExpression": {
-								"description": "Recursive API action logic expression",
-								"type": [
-									"object",
-									"string"
-								],
+								"type": "object",
+								"description": "API action requirements for the threat",
 								"properties": {
-									"api": {
-										"description": "Single API call or list of API calls",
-										"oneOf": [
-											{
-												"type": "string"
-											},
-											{
-												"type": "array",
-												"items": {
-													"type": "string"
-												}
-											}
-										]
-									},
-									"field": {
-										"description": "Field selectors associated with the API call",
-										"oneOf": [
-											{
-												"type": "string"
-											},
-											{
-												"type": "array",
-												"items": {
-													"type": "string"
-												}
-											}
-										]
-									},
 									"OPTIONAL": {
-										"description": "Optional logical block",
-										"oneOf": [
+									"description": "Optional API requirements",
+									"oneOf": [
+										{ "type": "string" },
+										{
+										"type": "array",
+										"items": {
+											"oneOf": [
+											{ "type": "string" },
 											{
-												"type": "string"
-											},
-											{
-												"type": "array",
-												"items": {
-													"$ref": "#/definitions/apiExpression"
+												"type": "object",
+												"properties": {
+												"api": {
+													"type": "string"
+												},
+												"field": {
+													"oneOf": [
+													{ "type": "string" },
+													{
+														"type": "array",
+														"items": { "type": "string" }
+													}
+													]
 												}
+												},
+												"required": ["api"],
+												"additionalProperties": false
 											},
-											{
-												"$ref": "#/definitions/apiExpression"
+											{ 
+												"$ref": "#/properties/threats/patternProperties/^[A-Za-z0-9]+\\.T[0-9]+$/properties/api_details"
 											}
-										]
+											]
+										}
+										}
+									]
 									},
 									"OR": {
-										"description": "Logical OR block",
-										"type": "array",
-										"items": {
-											"$ref": "#/definitions/apiExpression"
+									"type": "array",
+									"description": "List of API actions required to perform the threat",
+									"items": {
+										"oneOf": [
+										{ "type": "string" },
+										{
+											"type": "object",
+											"properties": {
+											"api": { "type": "string" },
+											"field": {
+												"oneOf": [
+												{ "type": "string" },
+												{
+													"type": "array",
+													"items": { "type": "string" }
+												}
+												]
+											}
+											},
+											"required": ["api"],
+											"additionalProperties": false
+										},
+										{ 
+											"$ref": "#/properties/threats/patternProperties/^[A-Za-z0-9]+\\.T[0-9]+$/properties/api_details"
 										}
+										]
+									}
 									},
 									"AND": {
-										"description": "Logical AND block",
-										"type": "array",
-										"items": {
-											"$ref": "#/definitions/apiExpression"
+									"type": "array",
+									"description": "List of API actions required to perform the threat",
+									"items": {
+										"oneOf": [
+										{ "type": "string" },
+										{
+											"type": "object",
+											"properties": {
+											"api": { "type": "string" },
+											"field": {
+												"oneOf": [
+												{ "type": "string" },
+												{
+													"type": "array",
+													"items": { "type": "string" }
+												}
+												]
+											}
+											},
+											"required": ["api"],
+											"additionalProperties": false
+										},
+										{ 
+											"$ref": "#/properties/threats/patternProperties/^[A-Za-z0-9]+\\.T[0-9]+$/properties/api_details"
 										}
+										]
+									}
 									},
 									"UNIQUE": {
-										"description": "Unique API requirement or block",
-										"oneOf": [
-											{
-												"type": "string"
-											},
-											{
+									"description": "Unique API action or expression required to perform the threat",
+									"oneOf": [
+										{ "type": "string" },
+										{
+										"type": "object",
+										"properties": {
+											"api": { "type": "string" },
+											"field": {
+											"oneOf": [
+												{ "type": "string" },
+												{
 												"type": "array",
-												"items": {
-													"$ref": "#/definitions/apiExpression"
+												"items": { "type": "string" }
 												}
-											},
-											{
-												"$ref": "#/definitions/apiExpression"
+											]
 											}
-										]
+										},
+										"required": ["api"],
+										"additionalProperties": false
+										},
+										{
+										"type": "array",
+										"items": {
+											"oneOf": [
+											{ "type": "string" },
+											{
+												"type": "object",
+												"properties": {
+												"api": { "type": "string" },
+												"field": {
+													"oneOf": [
+													{ "type": "string" },
+													{
+														"type": "array",
+														"items": { "type": "string" }
+													}
+													]
+												}
+												},
+												"required": ["api"],
+												"additionalProperties": false
+											},
+											{ 
+												"$ref": "#/properties/threats/patternProperties/^[A-Za-z0-9]+\\.T[0-9]+$/properties/api_details"
+											}
+											]
+										}
+										}
+									]
 									}
 								},
 								"additionalProperties": false
+								}
 							}
-						},
+							},
 						"hlgoal": {
 							"type": "string",
 							"description": "High-level goal of the threat, e.g., 'DoS'"
