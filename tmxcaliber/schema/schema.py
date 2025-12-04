@@ -222,7 +222,7 @@ def validate_threatmodel_schema(
         _resolve_json_pointer(instance, instance_pointer) if instance_pointer else instance
     )
 
-    base_uri = root_schema.get("$id", f"urn:tmxcaliber:threatmodel:{_select_latest_schema_resource('threatmodel')}")  # Fallback URN used only for in-memory resolution
+    base_uri = root_schema.get("$id", f"urn:tmxcaliber:threatmodel:{_select_latest_schema_resource('threatmodel')}")
     registry = Registry().with_resources({base_uri: Resource.from_contents(root_schema)})
 
     subschema = {"$ref": f"{base_uri}{schema_pointer}"}
