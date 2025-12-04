@@ -82,7 +82,7 @@ def _validate(instance: object, kind: _SchemaKind) -> None:
     jsonschema.validate(instance=instance, schema=schema)
 
 
-def validate_threatmodel_schema(instance: object) -> None:
+def validate_threatmodel_schema(instance: object) -> None: # Ask would it be possible to validate only part of the schema, like giving the instance and the path where to look in the schema. Or is it too britle, or is there a better way. AI? 
     """
     Validate instance against the latest ThreatModel schema (based on YYYYMMDD in filename).
     Raises jsonschema.ValidationError on validation failure.
