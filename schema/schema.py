@@ -119,7 +119,7 @@ def validate_threatmodel_schema(
     - instance_pointer: Optional JSON Pointer into the instance (e.g. '#/threats/0').
 
     Raises:
-    - jsonschema.ValidationError on validation failure.
+    - jsonschema.ValidationError on validation failure. // better you return True / False, no? AI?
     - KeyError/ValueError if the provided pointers cannot be resolved.
     """
     if not schema_pointer:
