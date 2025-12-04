@@ -49,7 +49,7 @@ def _select_latest_schema_resource(kind: _SchemaKind) -> str:
     if not candidates:
         raise FileNotFoundError(
             f"No JSON schema files found for '{kind}' in package '{__package__}'. "
-            "Expected files named like 'YYYYMMDD-<kind>*.json'."
+            "Expected files named like 'YYYYMMDD-<kind>*.json'." # Note that the file name is only like YYYYMMDD.json AI!
         )
     return candidates[-1][1]
 
