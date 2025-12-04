@@ -128,18 +128,28 @@ def validate_threatmodel_schema(
 
     _ensure_jsonschema()
     import jsonschema
+    try:
+        from referencing import Registry, Resource
+    except Exception as exc:
+        raise RuntimeError(
+            "The 'referencing' package (required by jsonschema >= 4.18) is needed for subschema validation. "
+            "Please install 'referencing'."
+        ) from exc
+    from jsonschema.validators import validator_for
 
     root_schema = _load_schema("threatmodel")
-    Validator = jsonschema.validators.validator_for(root_schema)
+    Validator = validator_for(root_schema)
     Validator.check_schema(root_schema)
 
     target_instance = (
         _resolve_json_pointer(instance, instance_pointer) if instance_pointer else instance
     )
 
-    resolver = jsonschema.RefResolver.from_schema(root_schema)  # deprecated but functional. Why that. AI?
-    subschema = {"$ref": schema_pointer}
-    validator = Validator(subschema, resolver=resolver)
+    base_uri = root_schema.get("$id", "https://tmxcaliber.local/threatmodel.json")
+    registry = Registry().with_resources({base_uri: Resource.from_contents(root_schema)})
+
+    subschema = {"$ref": f"{base_uri}{schema_pointer}"}
+    validator = Validator(subschema, registry=registry)
     validator.validate(target_instance)
 
 
