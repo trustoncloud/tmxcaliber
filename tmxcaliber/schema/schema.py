@@ -108,7 +108,9 @@ def _select_latest_schema_resource(kind: _SchemaKind) -> str:
 
 def _load_schema(kind: _SchemaKind) -> dict[str, Any]:
     resource_name = _select_latest_schema_resource(kind)
-    with files("tmxcaliber").joinpath("schema", kind, resource_name).open("r", encoding="utf-8") as fh:
+    with files("tmxcaliber").joinpath("schema", kind, resource_name).open(
+        "r", encoding="utf-8"
+    ) as fh:
         return json.load(fh)
 
 
@@ -143,8 +145,10 @@ def _path_to_pointer(path_iterable) -> str | None:
     parts = list(path_iterable or [])
     if not parts:
         return None
+
     def esc(token: str) -> str:
         return token.replace("~", "~0").replace("/", "~1")
+
     segments = [esc(str(p)) for p in parts]
     return "#/" + "/".join(segments)
 
@@ -152,6 +156,7 @@ def _path_to_pointer(path_iterable) -> str | None:
 def _ensure_jsonschema():
     try:
         import jsonschema  # type: ignore
+
         return jsonschema
     except Exception as exc:
         raise SchemaValidationUnavailable(
@@ -224,10 +229,15 @@ def validate_threatmodel_schema(
     Validator.check_schema(root_schema)
 
     target_instance = (
-        _resolve_json_pointer(instance, instance_pointer) if instance_pointer else instance
+        _resolve_json_pointer(instance, instance_pointer)
+        if instance_pointer
+        else instance
     )
 
-    base_uri = root_schema.get("$id", f"urn:tmxcaliber:threatmodel:{_select_latest_schema_resource('threatmodel')}")
+    base_uri = root_schema.get(
+        "$id",
+        f"urn:tmxcaliber:threatmodel:{_select_latest_schema_resource('threatmodel')}",
+    )
     resource = Resource.from_contents(root_schema, default_specification=DRAFT202012)
     registry = Registry().with_resources([(base_uri, resource)])
 

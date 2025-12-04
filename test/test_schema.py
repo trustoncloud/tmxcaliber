@@ -44,7 +44,10 @@ def schema_env(tmp_path, monkeypatch) -> SimpleNamespace:
         return path
 
     return SimpleNamespace(
-        root=root, threats_dir=threats_dir, overwatch_dir=overwatch_dir, write=write_schema
+        root=root,
+        threats_dir=threats_dir,
+        overwatch_dir=overwatch_dir,
+        write=write_schema,
     )
 
 
@@ -102,7 +105,10 @@ def test_validate_threatmodel_schema_error_details(schema_env: SimpleNamespace) 
     err = ei.value
     assert err.validator == "required"
     # Message should mention the missing property
-    assert "required property" in err.message or "'name' is a required property" in err.message
+    assert (
+        "required property" in err.message
+        or "'name' is a required property" in err.message
+    )
     # For a root-level required failure, paths may be empty (None)
     assert err.instance_pointer in (None, "#", "")
     assert err.schema_pointer is None or isinstance(err.schema_pointer, str)
@@ -137,7 +143,9 @@ def test_validate_overwatch_selects_latest(schema_env: SimpleNamespace) -> None:
 
 
 @pytest.mark.skipif(not _has_jsonschema(), reason="jsonschema not installed")
-def test_overwatch_no_schema_files_raises(schema_env: SimpleNamespace, monkeypatch) -> None:
+def test_overwatch_no_schema_files_raises(
+    schema_env: SimpleNamespace, monkeypatch
+) -> None:
     # Point files() to an empty package root so no schemas are found
     empty_root = schema_env.root.parent / "empty"
     (empty_root / "tmxcaliber").mkdir(parents=True)
@@ -148,25 +156,32 @@ def test_overwatch_no_schema_files_raises(schema_env: SimpleNamespace, monkeypat
 
 
 @pytest.mark.skipif(not _has_jsonschema(), reason="jsonschema not installed")
-def test_unavailable_jsonschema_bubbles(schema_env: SimpleNamespace, monkeypatch) -> None:
+def test_unavailable_jsonschema_bubbles(
+    schema_env: SimpleNamespace, monkeypatch
+) -> None:
     # Ensure there is at least one overwatch schema (won't be read because we short-circuit)
     schema_env.write(
         "overwatch",
         "20240101",
         {"type": "object", "properties": {}, "additionalProperties": True},
     )
+
     # Force the unavailability path
     def _raise_unavailable():
         raise SchemaValidationUnavailable("jsonschema missing")
 
-    monkeypatch.setattr(schema_mod, "_ensure_jsonschema", _raise_unavailable, raising=True)
+    monkeypatch.setattr(
+        schema_mod, "_ensure_jsonschema", _raise_unavailable, raising=True
+    )
 
     with pytest.raises(SchemaValidationUnavailable):
         validate_overwatch_schema({"x": 1})
 
 
 @pytest.mark.skipif(not _has_jsonschema(), reason="jsonschema not installed")
-def test_subschema_validation_success_or_unavailable(schema_env: SimpleNamespace) -> None:
+def test_subschema_validation_success_or_unavailable(
+    schema_env: SimpleNamespace,
+) -> None:
     # ThreatModel schema with nested array items, to test subschema validation
     schema_env.write(
         "threatmodel",
@@ -221,7 +236,11 @@ def test_subschema_validation_success_or_unavailable(schema_env: SimpleNamespace
 
 def test_SchemaValidationError_str_includes_details() -> None:
     err = SchemaValidationError(
-        "boom", instance_pointer="#/a/0", schema_pointer="#/defs/X", validator="type", validator_value="object"
+        "boom",
+        instance_pointer="#/a/0",
+        schema_pointer="#/defs/X",
+        validator="type",
+        validator_value="object",
     )
     text = str(err)
     assert "boom" in text
