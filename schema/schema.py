@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import re
 from importlib.resources import files
-from typing import Iterable, Literal, Tuple
+from typing import Any, Iterable, Literal, Tuple
 
 _SchemaKind = Literal["threatmodel", "overwatch"]
+
+__all__ = ["validate_threatmodel_schema", "validate_overwatch_schema"]
 
 
 def _parse_compact_date_from_filename(name: str) -> int | None:
@@ -24,15 +26,13 @@ def _parse_compact_date_from_filename(name: str) -> int | None:
 
 def _iter_schema_candidates(kind: _SchemaKind) -> Iterable[Tuple[int, str]]:
     """
-    Iterate over (yyyymmdd_as_int, resource_name) for JSON schema files in this package
-    whose filename contains the kind substring and starts with YYYYMMDD.
+    Iterate over (yyyymmdd_as_int, resource_name) for JSON schema files located under
+    tmxcaliber/schema/{kind} whose filename starts with YYYYMMDD.
     """
     pkg_root = files("tmxcaliber").joinpath("schema", kind)
     for entry in pkg_root.iterdir():
         name = entry.name
         if not name.lower().endswith(".json"):
-            continue
-        if kind not in name.lower():
             continue
         d = _parse_compact_date_from_filename(name)
         if d is None:
@@ -48,13 +48,13 @@ def _select_latest_schema_resource(kind: _SchemaKind) -> str:
     candidates = sorted(_iter_schema_candidates(kind), key=lambda t: t[0])
     if not candidates:
         raise FileNotFoundError(
-            f"No JSON schema files found for '{kind}' in package '{__package__}'. "
+            f"No JSON schema files found for '{kind}' under 'tmxcaliber/schema/{kind}'. "
             "Expected files named like 'YYYYMMDD.json'."
         )
     return candidates[-1][1]
 
 
-def _load_schema(kind: _SchemaKind) -> dict:
+def _load_schema(kind: _SchemaKind) -> dict[str, Any]:
     resource_name = _select_latest_schema_resource(kind)
     with files("tmxcaliber").joinpath("schema", kind, resource_name).open("r", encoding="utf-8") as fh:
         return json.load(fh)
