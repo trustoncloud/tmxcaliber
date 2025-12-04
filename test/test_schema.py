@@ -74,6 +74,7 @@ def test_validate_threatmodel_schema_ok(schema_env: SimpleNamespace) -> None:
         "threatmodel",
         "20240101",
         {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
             "$id": "https://example.com/threatmodel.json",
             "type": "object",
             "properties": {"name": {"type": "string"}},
