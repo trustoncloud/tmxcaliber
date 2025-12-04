@@ -207,6 +207,7 @@ def validate_threatmodel_schema(
     jsonschema = _ensure_jsonschema()
     try:
         from referencing import Registry, Resource
+        from referencing.jsonschema import DRAFT202012
         from jsonschema.validators import validator_for
     except Exception as exc:
         raise SchemaValidationUnavailable(
@@ -215,6 +216,10 @@ def validate_threatmodel_schema(
         ) from exc
 
     root_schema = _load_schema("threatmodel")
+    # Ensure a default dialect if missing, to satisfy `referencing`
+    if "$schema" not in root_schema:
+        root_schema = dict(root_schema)
+        root_schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
     Validator = validator_for(root_schema)
     Validator.check_schema(root_schema)
 
@@ -223,7 +228,8 @@ def validate_threatmodel_schema(
     )
 
     base_uri = root_schema.get("$id", f"urn:tmxcaliber:threatmodel:{_select_latest_schema_resource('threatmodel')}")
-    registry = Registry().with_resources({base_uri: Resource.from_contents(root_schema)})
+    resource = Resource.from_contents(root_schema, default_specification=DRAFT202012)
+    registry = Registry().with_resources({base_uri: resource})
 
     subschema = {"$ref": f"{base_uri}{schema_pointer}"}
     validator = Validator(subschema, registry=registry)
