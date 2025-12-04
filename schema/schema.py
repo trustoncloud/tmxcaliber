@@ -28,7 +28,7 @@ def _iter_schema_candidates(kind: _SchemaKind) -> Iterable[Tuple[int, str]]:
     whose filename contains the kind substring and starts with YYYYMMDD.
     """
     pkg_root = files(__package__)
-    for entry in pkg_root.iterdir():
+    for entry in pkg_root.iterdir(): # note that the schema file are in the directory tmxcaliber/schema/{kind i.e. threatmodel or overwatch}/ AI!
         name = entry.name
         if not name.lower().endswith(".json"):
             continue
@@ -62,7 +62,7 @@ def _load_schema(kind: _SchemaKind) -> dict:
 
 def _ensure_jsonschema():
     try:
-        import jsonschema  # noqa: F401
+        import jsonschema
     except Exception as exc:
         raise RuntimeError(
             "jsonschema is required to validate data against the bundled JSON Schemas. "
