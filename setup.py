@@ -24,7 +24,7 @@ setup(
     author_email="dev@trustoncloud.com",
     python_requires=">=3.8",
     install_requires=[x for x in open("requirements.txt").readlines()],
-    packages=find_packages(exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
+    packages=find_packages(include=["tmxcaliber", "tmxcaliber.*"]),
     include_package_data=True,
     package_data={
         "tmxcaliber": ["schema/*.json", "schema/*/*.json"],
