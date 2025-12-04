@@ -229,7 +229,7 @@ def validate_threatmodel_schema(
 
     base_uri = root_schema.get("$id", f"urn:tmxcaliber:threatmodel:{_select_latest_schema_resource('threatmodel')}")
     resource = Resource.from_contents(root_schema, default_specification=DRAFT202012)
-    registry = Registry().with_resources({base_uri: resource})
+    registry = Registry().with_resources([(base_uri, resource)])
 
     subschema = {"$ref": f"{base_uri}{schema_pointer}"}
     validator = Validator(subschema, registry=registry)
