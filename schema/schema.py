@@ -122,13 +122,13 @@ def _validate(instance: object, kind: _SchemaKind, when: Optional[_DateLike]) ->
     Raises jsonschema.ValidationError on validation failure.
     """
     _ensure_jsonschema()
-    import jsonschema  # type: ignore
+    import jsonschema
 
     schema = _load_schema(kind, when)
     jsonschema.validate(instance=instance, schema=schema)
 
 
-def validate_threatmodel_schema(instance: object, when: Optional[_DateLike] = None) -> None:
+def validate_threatmodel_schema(instance: object, when: Optional[_DateLike] = None) -> None: # No, do not do "when" just use the schema date, which is a string YYYYMMDD only. Clean up the whole file. AI!
     """
     Validate instance against the latest (or specified date) ThreatModel schema.
 
