@@ -1,0 +1,1 @@
+# Create a helper functions "validate_threatmodel_schema" and "validate_overwatch_schema" it should use the JSON files in the directory, optional is the date, otherwise use the latest (iso date name json file name). AI!
