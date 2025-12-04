@@ -60,6 +60,29 @@ def _load_schema(kind: _SchemaKind) -> dict[str, Any]:
         return json.load(fh)
 
 
+def _resolve_json_pointer(doc: Any, pointer: str) -> Any:
+    """
+    Minimal JSON Pointer resolver supporting fragments beginning with '#/'.
+    """
+    if pointer in ("", "#"):
+        return doc
+    p = pointer[1:] if pointer.startswith("#") else pointer
+    if not p.startswith("/"):
+        raise ValueError(f"Invalid JSON Pointer: {pointer!r}")
+    parts = p.lstrip("/").split("/")
+    cur: Any = doc
+    for raw in parts:
+        token = raw.replace("~1", "/").replace("~0", "~")
+        if isinstance(cur, list):
+            idx = int(token)
+            cur = cur[idx]
+        elif isinstance(cur, dict):
+            cur = cur[token]
+        else:
+            raise KeyError(f"Cannot resolve pointer segment {raw!r} in non-container")
+    return cur
+
+
 def _ensure_jsonschema():
     try:
         import jsonschema
@@ -82,12 +105,42 @@ def _validate(instance: object, kind: _SchemaKind) -> None:
     jsonschema.validate(instance=instance, schema=schema)
 
 
-def validate_threatmodel_schema(instance: object) -> None: # Ask would it be possible to validate only part of the schema, like giving the instance and the path where to look in the schema. Or is it too britle, or is there a better way. AI? 
+def validate_threatmodel_schema(
+    instance: object,
+    schema_pointer: str | None = None,
+    instance_pointer: str | None = None,
+) -> None:
     """
-    Validate instance against the latest ThreatModel schema (based on YYYYMMDD in filename).
-    Raises jsonschema.ValidationError on validation failure.
+    Validate instance against the latest ThreatModel schema, or a subschema if schema_pointer is provided.
+
+    Parameters:
+    - instance: JSON-like object to validate.
+    - schema_pointer: Optional JSON Pointer into the root schema (e.g. '#/$defs/Threat' or '#/properties/threats/items').
+    - instance_pointer: Optional JSON Pointer into the instance (e.g. '#/threats/0').
+
+    Raises:
+    - jsonschema.ValidationError on validation failure.
+    - KeyError/ValueError if the provided pointers cannot be resolved.
     """
-    _validate(instance, "threatmodel")
+    if not schema_pointer:
+        _validate(instance, "threatmodel")
+        return
+
+    _ensure_jsonschema()
+    import jsonschema
+
+    root_schema = _load_schema("threatmodel")
+    Validator = jsonschema.validators.validator_for(root_schema)
+    Validator.check_schema(root_schema)
+
+    target_instance = (
+        _resolve_json_pointer(instance, instance_pointer) if instance_pointer else instance
+    )
+
+    resolver = jsonschema.RefResolver.from_schema(root_schema)  # deprecated but functional
+    subschema = {"$ref": schema_pointer}
+    validator = Validator(subschema, resolver=resolver)
+    validator.validate(target_instance)
 
 
 def validate_overwatch_schema(instance: object) -> None:
