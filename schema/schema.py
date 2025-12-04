@@ -27,8 +27,8 @@ def _iter_schema_candidates(kind: _SchemaKind) -> Iterable[Tuple[int, str]]:
     Iterate over (yyyymmdd_as_int, resource_name) for JSON schema files in this package
     whose filename contains the kind substring and starts with YYYYMMDD.
     """
-    pkg_root = files(__package__)
-    for entry in pkg_root.iterdir(): # note that the schema file are in the directory tmxcaliber/schema/{kind i.e. threatmodel or overwatch}/ AI!
+    pkg_root = files("tmxcaliber").joinpath("schema", kind)
+    for entry in pkg_root.iterdir():
         name = entry.name
         if not name.lower().endswith(".json"):
             continue
@@ -56,7 +56,7 @@ def _select_latest_schema_resource(kind: _SchemaKind) -> str:
 
 def _load_schema(kind: _SchemaKind) -> dict:
     resource_name = _select_latest_schema_resource(kind)
-    with files(__package__).joinpath(resource_name).open("r", encoding="utf-8") as fh:
+    with files("tmxcaliber").joinpath("schema", kind, resource_name).open("r", encoding="utf-8") as fh:
         return json.load(fh)
 
 
