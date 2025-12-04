@@ -27,7 +27,7 @@ setup(
     packages=find_packages(exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
     include_package_data=True,
     package_data={
-        "tmxcaliber": ["schema/*.json"],
+        "tmxcaliber": ["schema/*.json", "schema/*/*.json"],
     },
     license=get_license(),
     entry_points={"console_scripts": ["tmxcaliber=tmxcaliber.cli:main"]},
