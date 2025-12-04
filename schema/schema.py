@@ -137,7 +137,7 @@ def validate_threatmodel_schema(
         _resolve_json_pointer(instance, instance_pointer) if instance_pointer else instance
     )
 
-    resolver = jsonschema.RefResolver.from_schema(root_schema)  # deprecated but functional
+    resolver = jsonschema.RefResolver.from_schema(root_schema)  # deprecated but functional. Why that. AI?
     subschema = {"$ref": schema_pointer}
     validator = Validator(subschema, resolver=resolver)
     validator.validate(target_instance)
