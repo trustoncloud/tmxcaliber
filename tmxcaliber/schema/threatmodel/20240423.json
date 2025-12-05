@@ -383,161 +383,8 @@
 						"api_details": {
 							"type": "object",
 							"description": "API action requirements for the threat",
-							"properties": {
-								"api_details": {
-								"type": "object",
-								"description": "API action requirements for the threat",
-								"properties": {
-									"OPTIONAL": {
-									"description": "Optional API requirements",
-									"oneOf": [
-										{ "type": "string" },
-										{
-										"type": "array",
-										"items": {
-											"oneOf": [
-											{ "type": "string" },
-											{
-												"type": "object",
-												"properties": {
-												"api": {
-													"type": "string"
-												},
-												"field": {
-													"oneOf": [
-													{ "type": "string" },
-													{
-														"type": "array",
-														"items": { "type": "string" }
-													}
-													]
-												}
-												},
-												"required": ["api"],
-												"additionalProperties": false
-											},
-											{ 
-												"$ref": "#/properties/threats/patternProperties/^[A-Za-z0-9]+\\.T[0-9]+$/properties/api_details"
-											}
-											]
-										}
-										}
-									]
-									},
-									"OR": {
-									"type": "array",
-									"description": "List of API actions required to perform the threat",
-									"items": {
-										"oneOf": [
-										{ "type": "string" },
-										{
-											"type": "object",
-											"properties": {
-											"api": { "type": "string" },
-											"field": {
-												"oneOf": [
-												{ "type": "string" },
-												{
-													"type": "array",
-													"items": { "type": "string" }
-												}
-												]
-											}
-											},
-											"required": ["api"],
-											"additionalProperties": false
-										},
-										{ 
-											"$ref": "#/properties/threats/patternProperties/^[A-Za-z0-9]+\\.T[0-9]+$/properties/api_details"
-										}
-										]
-									}
-									},
-									"AND": {
-									"type": "array",
-									"description": "List of API actions required to perform the threat",
-									"items": {
-										"oneOf": [
-										{ "type": "string" },
-										{
-											"type": "object",
-											"properties": {
-											"api": { "type": "string" },
-											"field": {
-												"oneOf": [
-												{ "type": "string" },
-												{
-													"type": "array",
-													"items": { "type": "string" }
-												}
-												]
-											}
-											},
-											"required": ["api"],
-											"additionalProperties": false
-										},
-										{ 
-											"$ref": "#/properties/threats/patternProperties/^[A-Za-z0-9]+\\.T[0-9]+$/properties/api_details"
-										}
-										]
-									}
-									},
-									"UNIQUE": {
-									"description": "Unique API action or expression required to perform the threat",
-									"oneOf": [
-										{ "type": "string" },
-										{
-										"type": "object",
-										"properties": {
-											"api": { "type": "string" },
-											"field": {
-											"oneOf": [
-												{ "type": "string" },
-												{
-												"type": "array",
-												"items": { "type": "string" }
-												}
-											]
-											}
-										},
-										"required": ["api"],
-										"additionalProperties": false
-										},
-										{
-										"type": "array",
-										"items": {
-											"oneOf": [
-											{ "type": "string" },
-											{
-												"type": "object",
-												"properties": {
-												"api": { "type": "string" },
-												"field": {
-													"oneOf": [
-													{ "type": "string" },
-													{
-														"type": "array",
-														"items": { "type": "string" }
-													}
-													]
-												}
-												},
-												"required": ["api"],
-												"additionalProperties": false
-											},
-											{ 
-												"$ref": "#/properties/threats/patternProperties/^[A-Za-z0-9]+\\.T[0-9]+$/properties/api_details"
-											}
-											]
-										}
-										}
-									]
-									}
-								},
-								"additionalProperties": false
-								}
-							}
-							},
+							"$ref": "#/definitions/apiDetails"
+						},
 						"hlgoal": {
 							"type": "string",
 							"description": "High-level goal of the threat, e.g., 'DoS'"
@@ -843,5 +690,97 @@
 		"controls",
 		"actions",
 		"dfd"
-	]
+	],
+	"definitions": {
+		"apiDetails": {
+			"type": "object",
+			"description": "API action requirements for the threat",
+			"properties": {
+				"OPTIONAL": {
+					"description": "Optional API requirements",
+					"oneOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "array",
+							"items": {
+								"$ref": "#/definitions/apiDetailsItem"
+							}
+						}
+					]
+				},
+				"OR": {
+					"type": "array",
+					"description": "List of API actions required to perform the threat",
+					"items": {
+						"$ref": "#/definitions/apiDetailsItem"
+					}
+				},
+				"AND": {
+					"type": "array",
+					"description": "List of API actions required to perform the threat",
+					"items": {
+						"$ref": "#/definitions/apiDetailsItem"
+					}
+				},
+				"UNIQUE": {
+					"description": "Unique API action or expression required to perform the threat",
+					"oneOf": [
+						{
+							"type": "string"
+						},
+						{
+							"$ref": "#/definitions/apiObject"
+						},
+						{
+							"type": "array",
+							"items": {
+								"$ref": "#/definitions/apiDetailsItem"
+							}
+						}
+					]
+				}
+			},
+			"additionalProperties": false
+		},
+		"apiDetailsItem": {
+			"oneOf": [
+				{
+					"type": "string"
+				},
+				{
+					"$ref": "#/definitions/apiObject"
+				},
+				{
+					"$ref": "#/definitions/apiDetails"
+				}
+			]
+		},
+		"apiObject": {
+			"type": "object",
+			"properties": {
+				"api": {
+					"type": "string"
+				},
+				"field": {
+					"oneOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "array",
+							"items": {
+								"type": "string"
+							}
+						}
+					]
+				}
+			},
+			"required": [
+				"api"
+			],
+			"additionalProperties": false
+		}
+	}
 }
