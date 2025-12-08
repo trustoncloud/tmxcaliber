@@ -315,70 +315,8 @@
 							"description": "Description of the threat"
 						},
 						"access": {
-							"type": "object",
 							"description": "Access requirements for the threat",
-							"properties": {
-								"access": {
-									"type": "object",
-									"description": "Access requirements for the threat",
-									"properties": {
-										"OPTIONAL": {
-											"description": "Optional permissions required to perform the threat",
-											"oneOf": [
-												{
-													"type": "string"
-												},
-												{
-													"type": "array",
-													"items": {
-														"oneOf": [
-															{
-																"type": "string"
-															},
-															{
-																"$ref": "#/properties/access"
-															}
-														]
-													}
-												}
-											]
-										},
-										"OR": {
-											"type": "array",
-											"description": "List of permissions required to perform the threat",
-											"items": {
-												"oneOf": [
-													{
-														"type": "string"
-													},
-													{
-														"$ref": "#/properties/access"
-													}
-												]
-											}
-										},
-										"AND": {
-											"type": "array",
-											"description": "List of permissions required to perform the threat",
-											"items": {
-												"oneOf": [
-													{
-														"type": "string"
-													},
-													{
-														"$ref": "#/properties/access"
-													}
-												]
-											}
-										},
-										"UNIQUE": {
-											"type": "string",
-											"description": "Unique permission required to perform the threat"
-										}
-									},
-									"additionalProperties": false
-								}
-							}
+							"$ref": "#/definitions/accessDetails"
 						},
 						"api_details": {
 							"type": "object",
@@ -398,8 +336,8 @@
 							"description": "CVSS vector string"
 						},
 						"retired": {
-							"type": "string",
-							"description": "Status of the threat, e.g., 'false'"
+							"type": "boolean",
+							"description": "Status of the threat, e.g., false"
 						},
 						"cvss_severity": {
 							"type": "string",
@@ -444,8 +382,8 @@
 							}
 						},
 						"retired": {
-							"type": "string",
-							"description": "Status of the control objective, e.g., 'false'"
+							"type": "boolean",
+							"description": "Status of the control objective, e.g., false"
 						}
 					},
 					"required": [
@@ -475,8 +413,8 @@
 							"description": "Control objective identifier"
 						},
 						"retired": {
-							"type": "string",
-							"description": "Status of the control, e.g., 'false'"
+							"type": "boolean",
+							"description": "Status of the control, e.g., false"
 						},
 						"assured_by": {
 							"type": "string",
@@ -692,6 +630,56 @@
 		"dfd"
 	],
 	"definitions": {
+		"accessDetails": {
+			"type": "object",
+			"description": "Defines a logical structure of permissions for a threat using AND, OR, OPTIONAL, or UNIQUE operators.",
+			"properties": {
+				"OPTIONAL": {
+					"description": "Optional permissions that may be required.",
+					"oneOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "array",
+							"items": {
+								"$ref": "#/definitions/accessDetailsItem"
+							}
+						}
+					]
+				},
+				"OR": {
+					"type": "array",
+					"description": "A list where at least one permission or permission block is required.",
+					"items": {
+						"$ref": "#/definitions/accessDetailsItem"
+					}
+				},
+				"AND": {
+					"type": "array",
+					"description": "A list where all permissions or permission blocks are required.",
+					"items": {
+						"$ref": "#/definitions/accessDetailsItem"
+					}
+				},
+				"UNIQUE": {
+					"type": "string",
+					"description": "A single, unique permission that is required."
+				}
+			},
+			"additionalProperties": false
+		},
+		"accessDetailsItem": {
+			"description": "An item within a permission list. It can be a permission string or a nested `accessDetails` block for complex logic.",
+			"oneOf": [
+				{
+					"type": "string"
+				},
+				{
+					"$ref": "#/definitions/accessDetails"
+				}
+			]
+		},
 		"apiDetails": {
 			"type": "object",
 			"description": "API action requirements for the threat",
