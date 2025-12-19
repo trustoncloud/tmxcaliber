@@ -11,6 +11,10 @@ scf_versions = {
         "url": "https://github.com/securecontrolsframework/securecontrolsframework/raw/b14c2058fca9bb0085980cbb077b0bd3a71a09ea/Secure%20Controls%20Framework%20(SCF)%20-%202024.1.1.xlsx",
         "sheet_name": "SCF 2024.1.1",
     },
+    "2025.3.1": {
+        "url": "https://github.com/securecontrolsframework/securecontrolsframework/raw/3c65d5907bc9802a310e2523a36dee7bb2fdebbe/secure-controls-framework-scf-2025-3-1.xlsx",
+        "sheet_name": "SCF 2025.3.1",
+    },
     # Add more versions as needed
 }
 
