@@ -2,13 +2,11 @@ import re
 import os
 import sys
 import json
-import pandas as pd
 import csv
-from pandas import DataFrame
 from itertools import product
 import platform
 from importlib import metadata
-from typing import Union, List
+from typing import Iterable, Union, List, Tuple
 from shutil import rmtree
 from base64 import b64decode
 from argparse import Namespace
@@ -28,6 +26,7 @@ from .lib.change_log import generate_change_log
 from .lib.errors import FeatureClassCycleError, BinaryNotFound
 from .lib.scf import get_scf_data
 from .lib.tools import sort_by_id
+from .lib.control_selector import resolve_control_ids
 from .opacity import generate_xml
 from .opacity import generate_pngs
 from . import parsers
@@ -119,44 +118,52 @@ def get_metadata(csv_path: str) -> tuple:
     return fields_beyond_id, result
 
 
-def validate_and_get_framework(csv_path: str, framework_name: str) -> DataFrame:
-    # Read the CSV file into a DataFrame
-    df = pd.read_csv(csv_path, header=None)
-    df = df.replace({None: pd.NA})
-    df = df.replace({float("nan"): pd.NA})
-    df = df.dropna()
+def validate_and_get_framework(
+    csv_path: str, framework_name: str
+) -> list[tuple[str, str]]:
+    del framework_name  # Kept for compatibility with the existing call sites/signature.
 
-    # Validate that the DataFrame has exactly 2 columns
-    if len(df.columns) != 2:
-        raise ValueError(
-            f"The CSV file at {csv_path} should have exactly 2 columns. The SCF on the first, and your framework in the second."
-        )
+    def split_cell(value: str) -> list[str]:
+        if not isinstance(value, str):
+            return []
 
-    # Function to expand the rows based on semicolon-separated entries
-    def expand_rows(row):
-        col0_parts = str(row[0]).split(";")
-        col1_parts = str(row[1]).split(";")
+        normalized_value = value.strip()
+        if normalized_value.lower() in {"", "none", "null", "nan", "n/a"}:
+            return []
 
-        # Filter out empty strings from both columns
-        col0_parts = [part for part in col0_parts if part.strip()]
-        col1_parts = [part for part in col1_parts if part.strip()]
+        return [
+            part
+            for part in (cell.strip() for cell in normalized_value.split(";"))
+            if part and part.lower() not in {"none", "null", "nan", "n/a"}
+        ]
 
-        # If either side is empty after filtering, return an empty DataFrame
-        if not col0_parts or not col1_parts:
-            return pd.DataFrame(columns=[0, 1])
+    expanded_rows: list[tuple[str, str]] = []
+    seen_pairs: set[tuple[str, str]] = set()
 
-        # Generate all combinations of splits from both columns
-        return pd.DataFrame(product(col0_parts, col1_parts), columns=[0, 1])
+    with open(csv_path, mode="r", newline="", encoding="utf-8") as file:
+        reader = csv.reader(file)
+        for row in reader:
+            if not row or not any(str(value).strip() for value in row):
+                continue
 
-    # Apply the function and concatenate the results
-    df_expanded = pd.concat(
-        [expand_rows(row) for index, row in df.iterrows()], ignore_index=True
-    )
+            if len(row) != 2:
+                raise ValueError(
+                    f"The CSV file at {csv_path} should have exactly 2 columns. The SCF on the first, and your framework in the second."
+                )
 
-    # Remove any duplicate rows
-    df_expanded = df_expanded.drop_duplicates()
-    df_expanded.columns = ["SCF", framework_name]
-    return df_expanded
+            scf_parts = split_cell(row[0])
+            framework_parts = split_cell(row[1])
+
+            if not scf_parts or not framework_parts:
+                continue
+
+            for pair in product(scf_parts, framework_parts):
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                expanded_rows.append(pair)
+
+    return expanded_rows
 
 
 def validate(parser: ArgumentParser) -> Namespace:
@@ -190,7 +197,7 @@ def validate(parser: ArgumentParser) -> Namespace:
 
 
 def map(
-    framework2co: pd.DataFrame,
+    framework2co: Iterable[Tuple[str, str]],
     threatmodel_data: dict,
     framework_name: str,
     metadata_fields: list = [],
@@ -200,35 +207,39 @@ def map(
         threatmodel_data.controls,
         threatmodel_data.control_objectives,
     )
-    # Step 1: Create a list of tuples from the data dictionary
-    entries = []
-    for top_key, values in objectives.items():
-        scf_codes = values["scf"]
-        for scf_code in scf_codes:
-            entries.append((scf_code, top_key))
-    # Step 2: Create the DataFrame
-    scf2co = pd.DataFrame(entries, columns=["SCF", "CO"])
-    merged_df = pd.merge(scf2co, framework2co, on="SCF", how="left")
+    scf_to_frameworks: dict[str, list[str]] = {}
+    for scf_code, framework_id in framework2co:
+        if not isinstance(scf_code, str) or not isinstance(framework_id, str):
+            continue
+        scf_to_frameworks.setdefault(scf_code, []).append(framework_id)
 
-    # Group SCFs and COs by framework and collect into lists
-    framework_group = (
-        merged_df.groupby(framework_name)
-        .agg(
-            {
-                "CO": lambda x: list(x.dropna()),  # Collect COs, dropping NaN values
-                "SCF": lambda x: list(x.dropna()),  # Collect SCFs, dropping NaN values
-            }
-        )
-        .dropna()
-        .to_dict("index")
-    )
+    grouped_frameworks: dict[str, dict[str, list[str]]] = {}
+    for objective_id, values in objectives.items():
+        scf_codes = values["scf"]
+        if isinstance(scf_codes, str):
+            scf_codes = [scf_codes]
+
+        for scf_code in scf_codes:
+            if not isinstance(scf_code, str):
+                continue
+            for framework_id in scf_to_frameworks.get(scf_code, []):
+                if framework_id not in grouped_frameworks:
+                    grouped_frameworks[framework_id] = {
+                        "control_objectives": [],
+                        "scf": [],
+                    }
+                grouped_frameworks[framework_id]["control_objectives"].append(
+                    objective_id
+                )
+                grouped_frameworks[framework_id]["scf"].append(scf_code)
 
     # Prepare the new structure with SCFs included
     framework2co = {}
-    for framework, data in framework_group.items():
+    for framework in sorted(grouped_frameworks.keys()):
+        data = grouped_frameworks[framework]
         framework2co[framework] = {
-            "control_objectives": sort_by_id(list(set(data["CO"]))),
-            "scf": sorted(list(set(data["SCF"]))),
+            "control_objectives": sort_by_id(list(set(data["control_objectives"]))),
+            "scf": sorted(list(set(data["scf"]))),
         }
 
         # Your existing logic to classify controls by severity
@@ -285,11 +296,33 @@ def repair_json_strings(input_str):
     return parsed_json
 
 
+def load_json_data(json_file_path: str) -> dict:
+    try:
+        with open(json_file_path, "r") as f:
+            file_content = f.read()
+            try:
+                return json.loads(file_content)
+            except json.JSONDecodeError:
+                print(
+                    f"Invalid JSON data in file: {json_file_path}. Trying to repair..."
+                )
+                try:
+                    repaired_json = repair_json_strings(file_content)
+                    print("Repair successful!")
+                    return repaired_json
+                except json.JSONDecodeError:
+                    print("Repair failed. Exiting.")
+                    exit(1)
+    except FileNotFoundError:
+        print(f"File not found: {json_file_path}")
+        exit(1)
+
+
 def get_file_paths(source: str) -> List[str]:
     if os.path.isdir(source):
-        return [
+        return sorted(
             os.path.join(source, f) for f in os.listdir(source) if f.endswith(".json")
-        ]
+        )
     elif os.path.isfile(source):
         if source.endswith(".json"):
             return [source]
@@ -299,27 +332,82 @@ def get_file_paths(source: str) -> List[str]:
 def load_json_files(json_file_paths: List[str]) -> List[ThreatModelData]:
     threatmodel_data_list = []
     for json_file_path in json_file_paths:
-        try:
-            with open(json_file_path, "r") as f:
-                file_content = f.read()
-                try:
-                    data = json.loads(file_content)
-                    threatmodel_data_list.append(ThreatModelData(data))
-                except json.JSONDecodeError:
-                    print(
-                        f"Invalid JSON data in file: {json_file_path}. Trying to repair..."
-                    )
-                    try:
-                        data = repair_json_strings(file_content)
-                        threatmodel_data_list.append(ThreatModelData(data))
-                        print("Repair successful!")
-                    except json.JSONDecodeError:
-                        print("Repair failed. Exiting.")
-                        exit(1)
-        except FileNotFoundError:
-            print(f"File not found: {json_file_path}")
-            exit(1)
+        data = load_json_data(json_file_path)
+        threatmodel_data_list.append(ThreatModelData(data))
     return threatmodel_data_list
+
+
+def get_recursive_json_file_paths(source: str) -> List[str]:
+    if os.path.isfile(source):
+        if source.lower().endswith(".json"):
+            return [os.path.abspath(source)]
+        print(f"Invalid file type for {source}")
+        exit(1)
+
+    json_file_paths = []
+    for root, _, files in os.walk(source):
+        for filename in files:
+            if filename.lower().endswith(".json"):
+                json_file_paths.append(os.path.abspath(os.path.join(root, filename)))
+    return sorted(json_file_paths)
+
+
+def get_service_rows(source: str) -> list[dict[str, str]]:
+    service_rows = []
+
+    for json_file_path in get_recursive_json_file_paths(source):
+        data = load_json_data(json_file_path)
+        metadata = data.get("metadata", {})
+        if not isinstance(metadata, dict):
+            continue
+
+        names = []
+        primary_name = metadata.get("service_name")
+        if isinstance(primary_name, str):
+            primary_name = primary_name.strip()
+            if primary_name:
+                names.append(primary_name)
+
+        other_services = metadata.get("other_covered_services", [])
+        if isinstance(other_services, list):
+            for service_name in other_services:
+                if not isinstance(service_name, str):
+                    continue
+                service_name = service_name.strip()
+                if service_name and service_name not in names:
+                    names.append(service_name)
+
+        for service_name in names:
+            service_rows.append({"name": service_name, "file": json_file_path})
+
+    return service_rows
+
+
+def get_feature_class_rows(source: str) -> list[dict[str, str]]:
+    data = load_json_data(source)
+    feature_classes = data.get("feature_classes", {})
+    if not isinstance(feature_classes, dict):
+        return []
+
+    feature_class_rows = []
+    for feature_class_id, feature_class in feature_classes.items():
+        name = ""
+        description = ""
+        if isinstance(feature_class, dict):
+            if isinstance(feature_class.get("name"), str):
+                name = feature_class["name"]
+            if isinstance(feature_class.get("description"), str):
+                description = feature_class["description"]
+
+        feature_class_rows.append(
+            {
+                "id": feature_class_id,
+                "name": name,
+                "description": description,
+            }
+        )
+
+    return feature_class_rows
 
 
 def get_input_data(params: Namespace) -> Union[dict, str, List[ThreatModelData]]:
@@ -437,6 +525,36 @@ def output_result(output_param, result, result_type, output_removed_json: dict =
 def main():
 
     params = get_params()
+    if (
+        params.operation == Operation.list
+        and params.list_type == ListOperation.services
+    ):
+        service_rows = get_service_rows(params.source)
+        if params.format == "json":
+            output_result(params.output, service_rows, "json")
+        else:
+            csv_output = [["name", "file"]]
+            csv_output.extend([[row["name"], row["file"]] for row in service_rows])
+            output_result(params.output, csv_output, "csv_list")
+        return
+    if (
+        params.operation == Operation.list
+        and params.list_type == ListOperation.feature_classes
+    ):
+        feature_class_rows = get_feature_class_rows(params.source)
+        if params.format == "json":
+            output_result(params.output, feature_class_rows, "json")
+        else:
+            csv_output = [["id", "name", "description"]]
+            csv_output.extend(
+                [
+                    [row["id"], row["name"], row["description"]]
+                    for row in feature_class_rows
+                ]
+            )
+            output_result(params.output, csv_output, "csv_list")
+        return
+
     try:
         data = get_input_data(params)
     except FeatureClassCycleError as e:
@@ -564,14 +682,27 @@ def main():
             generate_pngs(binary, params.fc_dir, params.out_dir, 1500)
 
     elif params.operation == Operation.list:
-        for threatmodel_data in ThreatModelData.threatmodel_data_list:
-            FilterApplier(params.filter_obj, params.exclude).apply_filter(
-                threatmodel_data
-            )
+        models: list[ThreatModelData] = data if isinstance(data, list) else []
+        ThreatModelData.threatmodel_data_list = models
+
         if params.list_type == ListOperation.threats:
+            for threatmodel_data in models:
+                FilterApplier(params.filter_obj, params.exclude).apply_filter(
+                    threatmodel_data
+                )
             csv_output = ThreatModelData.get_csv_of_threats()
+
         if params.list_type == ListOperation.controls:
-            csv_output = ThreatModelData.get_csv_of_controls()
+            # Selection is handled by a resolver to keep list semantics explicit and extensible.
+            ids_were_provided = bool(getattr(params, "ids", None))
+            control_ids = resolve_control_ids(
+                models,
+                list_type=params.type,
+                filter_obj=params.filter_obj,
+                exclude=params.exclude,
+                ids_were_provided=ids_were_provided,
+            )
+            csv_output = ThreatModelData.get_csv_of_controls(control_ids, exclude=False)
 
         output_result(params.output, csv_output, "csv_list")
 

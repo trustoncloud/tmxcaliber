@@ -141,19 +141,13 @@ class FilterApplier:
                     )
 
     def __filter_by_permissions(self, threatmodel_data: ThreatModelData):
+        filter_permissions = {p.lower() for p in (self.filter.permissions or [])}
+
         for threat_id, threat in threatmodel_data.threats.copy().items():
-            has_access = False
-            permissions = get_permissions(threat.get("access"))
-            # Determine if any of the specified permissions match the threat's permissions
-            if any(
-                permission.lower()
-                in [
-                    filter_permission.lower()
-                    for filter_permission in self.filter.permissions
-                ]
-                for permission in permissions
-            ):
-                has_access = True
+            # Optional permissions should not drive filtering decisions by default.
+            permissions = set(get_permissions(threat.get("access"), add_optional=False))
+            has_access = bool(permissions.intersection(filter_permissions))
+
             # Apply the exclusion or inclusion logic based on the exclude_as_filter flag
             if self.exclude_as_filter:
                 if has_access:
@@ -161,6 +155,7 @@ class FilterApplier:
             else:
                 if not has_access:
                     threatmodel_data.threats.pop(threat_id)
+
         self.__filter_controls_by_current_threats(threatmodel_data)
         self.__filter_control_objectives_by_current_controls(threatmodel_data)
         self.__filter_actions_by_current_feature_classes(threatmodel_data)

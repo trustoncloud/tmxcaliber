@@ -68,10 +68,10 @@
         },
         "required": [
           "overwatch_id",
-          "provider_service",
+          "services",
           "security_level",
           "threatmodel_change",
-          "updated_data"
+          "provider_updates"
         ]
       }
     }
@@ -79,7 +79,7 @@
   "required": [
     "schema_version",
     "release_epoch",
-	"provider",
+	  "provider",
     "overwatch"
   ]
 }

@@ -1,14 +1,34 @@
+import pytest
+
 from tmxcaliber.lib.threatmodel_data import ThreatModelData, get_permissions
 
 
-def create_threatmodel(feature_classes=None, threats=None, controls=None):
-    base_json = {"metadata": {"name": "Model"}, "control_objectives": {}, "actions": {}}
+def create_threatmodel(
+    feature_classes=None,
+    threats=None,
+    controls=None,
+    scorecard=None,
+    control_objectives=None,
+):
+    base_json = {
+        "metadata": {"name": "Model"},
+        "control_objectives": (
+            control_objectives if control_objectives is not None else {}
+        ),
+        "actions": {},
+    }
     base_json["threats"] = threats if threats is not None else {}
     base_json["controls"] = controls if controls is not None else {}
     base_json["feature_classes"] = (
         feature_classes if feature_classes is not None else {}
     )
+    if scorecard is not None:
+        base_json["scorecard"] = scorecard
     return ThreatModelData(base_json)
+
+
+def reset_threatmodel_data_list():
+    ThreatModelData.threatmodel_data_list = []
 
 
 def test_feature_classes_not_fully_related():
@@ -172,3 +192,301 @@ def test_get_permissions():
     # Test with add_optional=False
     permissions_without_optional = get_permissions(access_data, add_optional=False)
     assert sorted(permissions_without_optional) == ["read_data", "write_data"]
+
+
+def test_get_csv_of_aws_data_perimeter_controls_basic_extraction():
+    reset_threatmodel_data_list()
+    create_threatmodel(
+        scorecard={
+            "aws_data_perimeter": {
+                "Perimeter": ["Service.C1", "Service.C2"],
+                "NA": ["Service.C999"],
+            }
+        },
+        controls={
+            "Service.C1": {"objective": "S3.CO40", "retired": False},
+            "Service.C2": {"objective": "S3.CO40", "retired": False},
+        },
+    )
+
+    csv_matrix = ThreatModelData.get_csv_of_aws_data_perimeter_controls()
+
+    assert csv_matrix == [
+        ["objective", "objective_description", "id", "retired"],
+        ["S3.CO40", "", "Service.C1", False],
+        ["S3.CO40", "", "Service.C2", False],
+    ]
+
+
+def test_get_csv_of_aws_data_perimeter_controls_deduplication():
+    reset_threatmodel_data_list()
+    create_threatmodel(
+        scorecard={
+            "aws_data_perimeter": {
+                "CategoryA": ["Service.C1", "Service.C2"],
+                "CategoryB": ["Service.C2"],
+            }
+        },
+        controls={
+            "Service.C1": {"objective": "S3.CO40", "retired": False},
+            "Service.C2": {"objective": "S3.CO40", "retired": False},
+        },
+    )
+
+    csv_matrix = ThreatModelData.get_csv_of_aws_data_perimeter_controls()
+
+    assert csv_matrix == [
+        ["objective", "objective_description", "id", "retired"],
+        ["S3.CO40", "", "Service.C1", False],
+        ["S3.CO40", "", "Service.C2", False],
+    ]
+
+
+def test_get_csv_of_aws_data_perimeter_controls_missing_scorecard():
+    reset_threatmodel_data_list()
+    create_threatmodel()
+
+    csv_matrix = ThreatModelData.get_csv_of_aws_data_perimeter_controls()
+
+    assert csv_matrix == [["id"]]
+
+
+def test_get_csv_of_aws_data_perimeter_controls_directory_aggregation():
+    reset_threatmodel_data_list()
+    create_threatmodel(
+        scorecard={
+            "aws_data_perimeter": {
+                "CategoryA": ["Service.C1", "Service.C3"],
+                "CategoryB": ["Service.C2", "Service.C3"],
+                "NA": ["Service.C999"],
+            }
+        },
+        controls={
+            "Service.C1": {"objective": "CO1", "retired": False},
+            "Service.C2": {"objective": "CO1", "retired": False},
+            "Service.C3": {"objective": "CO1", "retired": False},
+        },
+    )
+
+    csv_matrix = ThreatModelData.get_csv_of_aws_data_perimeter_controls()
+
+    assert csv_matrix == [
+        ["objective", "objective_description", "id", "retired"],
+        ["CO1", "", "Service.C1", False],
+        ["CO1", "", "Service.C2", False],
+        ["CO1", "", "Service.C3", False],
+    ]
+
+
+def test_get_csv_of_aws_data_perimeter_controls_case_insensitive_na():
+    reset_threatmodel_data_list()
+    create_threatmodel(
+        scorecard={
+            "aws_data_perimeter": {
+                "NA": ["Service.C2"],
+                "CategoryA": ["Service.C3"],
+            }
+        },
+        controls={
+            "Service.C3": {"objective": "CO1", "retired": False},
+        },
+    )
+
+    csv_matrix = ThreatModelData.get_csv_of_aws_data_perimeter_controls()
+    print(csv_matrix)
+
+    assert csv_matrix == [
+        ["objective", "objective_description", "id", "retired"],
+        ["CO1", "", "Service.C3", False],
+    ]
+
+
+def test_get_csv_of_aws_data_perimeter_controls_keeps_rows_from_later_models():
+    reset_threatmodel_data_list()
+    create_threatmodel(
+        scorecard={
+            "aws_data_perimeter": {
+                "Perimeter": ["Service.C1"],
+            }
+        }
+    )
+    create_threatmodel(
+        scorecard={
+            "aws_data_perimeter": {
+                "Perimeter": ["Service.C1"],
+            }
+        },
+        controls={
+            "Service.C1": {"objective": "CO1", "retired": False},
+        },
+        control_objectives={
+            "CO1": {"description": "Objective 1"},
+        },
+    )
+
+    csv_matrix = ThreatModelData.get_csv_of_aws_data_perimeter_controls()
+
+    assert csv_matrix == [
+        ["objective", "objective_description", "id", "retired"],
+        ["CO1", "Objective 1", "Service.C1", False],
+    ]
+
+
+def test_get_csv_of_controls_with_ids_filter_inclusive():
+    reset_threatmodel_data_list()
+    create_threatmodel(
+        controls={
+            "Service.C1": {"objective": "CO1", "retired": False},
+            "Service.C2": {"objective": "CO1", "retired": False},
+        }
+    )
+
+    csv_matrix = ThreatModelData.get_csv_of_controls(["service.c2"], exclude=False)
+
+    assert csv_matrix[0] == [
+        "objective",
+        "objective_description",
+        "id",
+        "retired",
+    ]
+    assert csv_matrix[1:] == [["CO1", "", "Service.C2", False]]
+
+
+def test_get_csv_of_controls_with_ids_filter_exclusive():
+    reset_threatmodel_data_list()
+    create_threatmodel(
+        controls={
+            "Service.C1": {"objective": "CO1", "retired": False},
+            "Service.C2": {"objective": "CO1", "retired": False},
+        }
+    )
+
+    csv_matrix = ThreatModelData.get_csv_of_controls(["service.c2"], exclude=True)
+
+    assert csv_matrix[0] == [
+        "objective",
+        "objective_description",
+        "id",
+        "retired",
+    ]
+    assert csv_matrix[1:] == [["CO1", "", "Service.C1", False]]
+
+
+def test_get_csv_of_controls_includes_objective_description_per_file():
+    reset_threatmodel_data_list()
+
+    create_threatmodel(
+        controls={"Service.C1": {"objective": "Service.CO1", "retired": False}},
+        scorecard={},
+        control_objectives={"Service.CO1": {"description": "Objective 1"}},
+    )
+
+    create_threatmodel(
+        controls={"Service.C2": {"objective": "Service.CO2", "retired": False}},
+        scorecard={},
+        control_objectives={"Service.CO2": {"description": "Objective 2"}},
+    )
+
+    csv_matrix = ThreatModelData.get_csv_of_controls()
+
+    # Header
+    assert csv_matrix[0] == [
+        "objective",
+        "objective_description",
+        "id",
+        "retired",
+    ]
+
+    assert ["Service.CO1", "Objective 1", "Service.C1", False] in csv_matrix[1:]
+    assert ["Service.CO2", "Objective 2", "Service.C2", False] in csv_matrix[1:]
+
+
+def test_list_controls_resolver_aws_data_perimeter_exclude_without_ids():
+    from tmxcaliber.lib.control_selector import resolve_control_ids
+    from tmxcaliber.lib.filter import Filter
+
+    reset_threatmodel_data_list()
+    create_threatmodel(
+        controls={
+            "Service.C1": {"objective": "S3.CO40", "retired": False},
+            "Service.C2": {"objective": "S3.CO40", "retired": False},
+            "Service.C3": {"objective": "S3.CO41", "retired": False},
+        },
+        scorecard={
+            "aws_data_perimeter": {
+                "Perimeter": ["Service.C1", "Service.C2"],
+                "NA": ["Service.C999"],
+            }
+        },
+    )
+
+    ids = resolve_control_ids(
+        ThreatModelData.threatmodel_data_list,
+        list_type="AWS_DATA_PERIMETER",
+        filter_obj=Filter(ids=""),
+        exclude=True,
+        ids_were_provided=False,
+    )
+
+    assert ids == ["Service.C3"]
+
+
+def test_list_controls_resolver_aws_data_perimeter_intersect_control_objective():
+    from tmxcaliber.lib.control_selector import resolve_control_ids
+    from tmxcaliber.lib.filter import Filter
+
+    reset_threatmodel_data_list()
+    create_threatmodel(
+        controls={
+            "Service.C1": {"objective": "S3.CO40", "retired": False},
+            "Service.C2": {"objective": "S3.CO41", "retired": False},
+            "Service.C3": {"objective": "S3.CO40", "retired": False},
+        },
+        scorecard={
+            "aws_data_perimeter": {
+                "Perimeter": ["Service.C1", "Service.C2", "Service.C3"],
+            }
+        },
+    )
+
+    ids = resolve_control_ids(
+        ThreatModelData.threatmodel_data_list,
+        list_type="AWS_DATA_PERIMETER",
+        filter_obj=Filter(ids="S3.CO40"),
+        exclude=False,
+        ids_were_provided=True,
+    )
+
+    assert ids == ["Service.C1", "Service.C3"]
+
+
+def test_list_controls_resolver_empty_intersection_does_not_dump_all_controls():
+    from tmxcaliber.lib.control_selector import resolve_control_ids
+    from tmxcaliber.lib.filter import Filter
+
+    reset_threatmodel_data_list()
+    create_threatmodel(
+        controls={
+            "Service.C1": {"objective": "CO1", "retired": False},
+            "Service.C2": {"objective": "CO2", "retired": False},
+        },
+        control_objectives={
+            "CO1": {"description": "Objective 1"},
+            "CO2": {"description": "Objective 2"},
+        },
+        scorecard={"aws_data_perimeter": {}},
+    )
+
+    ids = resolve_control_ids(
+        ThreatModelData.threatmodel_data_list,
+        list_type="AWS_DATA_PERIMETER",
+        filter_obj=Filter(),
+        exclude=False,
+        ids_were_provided=True,
+    )
+
+    assert ids == []
+
+    csv_matrix = ThreatModelData.get_csv_of_controls(ids, exclude=False)
+
+    assert csv_matrix == [["objective", "objective_description", "id", "retired"]]
