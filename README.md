@@ -1,272 +1,322 @@
-# TMxCaliber
+# tmxcaliber
 
-TMxCaliber is a CLI utility to refine TrustOnCloud ThreatModel, extracting the most pertinent information.
+`tmxcaliber` is a command-line toolkit for refining, querying, and transforming TrustOnCloud ThreatModels. It helps engineers work with large model files more efficiently by filtering JSON, exporting threats and controls, mapping control objectives to frameworks, generating DFD artifacts, and comparing model versions without writing custom scripts for each task.
+
+## Highlights
+
+- Filter ThreatModel JSON files by IDs, severity, IAM permissions, and events.
+- List threats, controls, services, and feature classes from a single model or an entire directory.
+- Map control objectives to SCF-supported frameworks or your own custom framework.
+- Write mapping data back into a ThreatModel JSON.
+- Generate threat-focused and feature-class-focused DFD XML and PNG outputs.
+- Create structured change logs in JSON or Markdown.
+- Scan control descriptions with regex patterns or the built-in `guardduty_findings` alias.
+
+## Quickstart
+
+`tmxcaliber` supports Python `3.8+`.
+
+```sh
+git clone https://github.com/trustoncloud/tmxcaliber.git
+cd tmxcaliber
+python -m venv .venv
+```
+
+Activate the environment:
+
+```sh
+# PowerShell
+.venv\Scripts\Activate.ps1
+
+# bash / zsh
+source .venv/bin/activate
+```
+
+Install and verify:
+
+```sh
+pip install .
+tmxcaliber -h
+```
+
+First commands to try:
+
+```sh
+tmxcaliber list threats path/to/threatmodel.json
+tmxcaliber filter path/to/threatmodel.json --severity high --output filtered.json
+tmxcaliber map path/to/threatmodel.json --scf 2025.3.1 --framework-name "NIST CSF v2.0"
+```
 
 ## Installation
 
-This package is intended for `python3` and has been tested in `python3.8+`.
+### Install from source
 
-Follow the instructions below to install the package on your operating system.
+This is the recommended setup for most users and contributors:
+
+```sh
+git clone https://github.com/trustoncloud/tmxcaliber.git
+cd tmxcaliber
+python -m venv .venv
+pip install .
+```
+
+### Install a tagged release
+
+To install a specific release directly from Git:
+
+```sh
+pip install "git+https://github.com/trustoncloud/tmxcaliber.git@{VERSION_TAG}"
+```
 
 ### Docker
-Build the image and run the tool from the container as follows.
-```sh
-$: docker build -t tmxcaliber .
-$: docker run --rm -it tmxcaliber [arg1] [arg2] ...
 
-# example to get help doc
-$: docker run --rm -it tmxcaliber -h
+The repository includes a Dockerfile for containerized use:
+
+```sh
+docker build -t tmxcaliber .
+docker run --rm -it tmxcaliber -h
 ```
 
-### Linux / MacOS
-Initiate and activate the virtual environment by running the following commands.
-```sh
-# Replace `[path/to/virtual-env]` with your desired directory for the virtual environment.
-$ python -m venv [path/to/virtual-env]
-# Activate the virtual environment. Use the appropriate command for your operating system.
-# On Linux or MacOS:
-$ source [path/to/virtual-env]/bin/activate
-# On Windows:
-$ .\[path/to/virtual-env]\Scripts\activate.bat
-```
-> **Note:** Virtual environment is used to isolate yourself from global installation of Python, enabling you to install packages of your desired versions. More details can be found [here](https://docs.python.org/3/library/venv.html).
+### Requirement note for `generate`
 
-Once the environment is activated, install the package via `pip` by running:
-```sh
-$: pip install git+ssh://git@github.com/trustoncloud/tmxcaliber.git
-```
+The `generate` command depends on `drawio`. If the binary is not automatically detected, provide it explicitly with `--bin`.
 
-Alternatively, you can pull the repo first and then install:
-```sh
-$: git clone https://github.com/trustoncloud/tmxcaliber.git
-$: cd tmxcaliber
-$: pip install .
-```
+## Command Overview
 
-### Windows
-First, initiate and activate the environment as follows.
+| Command | Purpose | Typical output |
+| --- | --- | --- |
+| `filter` | Produce a refined ThreatModel JSON based on filters. | JSON |
+| `list threats` | Export threat rows from one model or a directory. | CSV |
+| `list controls` | Export control rows from one model or a directory. | CSV |
+| `list services` | List service names and their source files. | CSV or JSON |
+| `list feature-classes` | Inspect feature classes in a single ThreatModel. | CSV or JSON |
+| `map` | Generate a framework mapping from ThreatModel control objectives. | CSV or JSON |
+| `add-mapping` | Insert mapping data into the ThreatModel JSON. | JSON |
+| `scan` | Find controls whose descriptions match a pattern. | JSON |
+| `generate` | Generate XML and PNG DFD artifacts. | Files on disk |
+| `create-change-log` | Compare two ThreatModels and summarize differences. | JSON or Markdown |
+
+## Core Workflows
+
+### Filter a ThreatModel
+
+Use `filter` when you want a refined ThreatModel JSON as the output.
+
 ```sh
-# Replace `[path/to/virtual-env]` with your desired directory for the virtual environment.
-$ python -m venv [path/to/virtual-env]
-# Activate the virtual environment. Use the appropriate command for your operating system.
-# On Linux or MacOS:
-$ source [path/to/virtual-env]/bin/activate
-# On Windows:
-$ .\[path/to/virtual-env]\Scripts\activate.bat
-```
-Then, clone the git repository and install using `pip`.
-```sh
-$: git clone https://github.com/trustoncloud/tmxcaliber.git
-$: cd tmxcaliber
-$: pip install .
+tmxcaliber filter path/to/threatmodel.json \
+  --severity high \
+  --output filtered.json
 ```
 
-### Versioned Release
-To install a specific release from git, you can take a look at all the available releases [here](../../releases). Then using `pip`, you install the version directly as follows.
+Create a filtered file and a companion file containing everything removed:
+
 ```sh
-$: pip install git+ssh://git@github.com/trustoncloud/tmxcaliber.git@{VERSION_TAG}
-```
-**`VERSION_TAG`** is the git tag associated with the release.
-
-Alternatively, you can switch to a specific release after cloning the repository, and then install via `pip` as follows.
-```sh
-$: git clone https://github.com/trustoncloud/tmxcaliber.git tmxcaliber
-$: cd tmxcaliber
-$: git checkout tags/{VERSION_TAG}
-$: pip install .
-```
-**`VERSION_TAG`** is the git tag associated with the release.
-
-### Help Documentation
-To get complete help on `tmxcaliber` command, run the following.
-```sh
-$: tmxcaliber -h
-
-usage: tmxcaliber [-h] [-v] {filter,add-mapping,map,scan,generate,list,create-change-log} ...
-
-options:
-  -h, --help            show this help message and exit
-  -v, --version         show the installed version.
-
-
-operation:
-  {filter,add-mapping,map,scan,generate,list,create-change-log}
-    filter              filter down the ThreatModel data.
-    add-mapping         add a supported framework in the Secure Control Framework (https://securecontrolsframework.com) into the ThreatModel JSON data.
-    map                 map ThreatModel data to a supported framework in the Secure Control Framework (https://securecontrolsframework.com).
-    scan                scan the ThreatModel data for a given pattern.
-    generate            generate threat specific PNGs from XML data.
-    list                List data of one or more ThreatModels.
-    create-change-log   create the change log between 2 ThreatModel data.
-```
-You can also get more help on each operation, for example:
-```sh
-# help for `filter` and `map` operations.
-$: tmxcaliber filter -h
-$: tmxcaliber map -h
-$: tmxcaliber add-mapping -h
-```
-## Usage
-Details for supported operations are as follows:
-
-### Filter
-
-The `filter` operation allows you to filter relevant information from a ThreatModel JSON based on various criteria, such as any ids (like features classes, controls, threats, or control objectives), threat severity, or IAM permission. You can also create a second file with all excluded controls for traceability, using `--output-removed`.
-```sh
-$: tmxcaliber filter path/to/threatmodel.json --severity high
-
-$: tmxcaliber filter -h
-usage: tmxcaliber filter [-h] [--output-removed] [--permissions PERMISSIONS] [--events EVENTS] [--output OUTPUT] [--exclude] [--severity {very high,high,medium,low,very low}] [--ids IDS] source
-
-positional arguments:
-  source                Path to the ThreatModel JSON file. We support XML file for internal purposes.
-
-options:
-  -h, --help            show this help message and exit
-  --output-removed      flag to output all the removed information into another file. Require --output.
-  --output OUTPUT       Output file to write the results. If not provided, prints to stdout.
-  --permissions PERMISSIONS
-                        filter data by IAM permission(s). Separate by `,`, if several.
-
-  --events EVENTS       filter data by actions log event(s). Separate by `,`, if several.
-
-  --exclude             Enable exclusion mode. Items specified will be excluded from the output.
-  --severity {very high,high,medium,low,very low}
-                        filter data by threat for severity equal or above the selected value.
-  --ids IDS             filter data by IDs (can be feature classes, threats, controls, or control objectives). Separate by `,`, if several.
+tmxcaliber filter path/to/threatmodel.json \
+  --permissions s3:GetObject \
+  --output filtered.json \
+  --output-removed
 ```
 
-### Map
+Use `--exclude` to invert an ID-based filter:
 
-The `map` operation allows you to map a ThreatModel control objectives to various frameworks/standards/regulations from the Secure Control Framework (SCF). The tool will execute and map every known control objective to SCF-supported frameworks.
 ```sh
-$: tmxcaliber map path/to/threatmodel.json \
-  --scf 2023.4 \
+tmxcaliber filter path/to/threatmodel.json \
+  --ids S3.T12,S3.CO1 \
+  --exclude \
+  --output filtered.json
+```
+
+### List threats and controls
+
+List threats from a single model:
+
+```sh
+tmxcaliber list threats path/to/threatmodel.json
+```
+
+List only high and very-high severity threats from a directory:
+
+```sh
+tmxcaliber list threats path/to/threatmodels \
+  --severity high \
+  --output threats.csv
+```
+
+List controls from a directory:
+
+```sh
+tmxcaliber list controls path/to/threatmodels --output controls.csv
+```
+
+List only AWS data perimeter controls:
+
+```sh
+tmxcaliber list controls path/to/threatmodels \
+  --type AWS_DATA_PERIMETER \
+  --output perimeter_controls.csv
+```
+
+List services across a directory of models:
+
+```sh
+tmxcaliber list services path/to/threatmodels --format json
+```
+
+List feature classes from a single ThreatModel:
+
+```sh
+tmxcaliber list feature-classes path/to/threatmodel.json
+```
+
+### Map to a supported or custom framework
+
+Generate a mapping to an SCF-supported framework:
+
+```sh
+tmxcaliber map path/to/threatmodel.json \
+  --scf 2025.3.1 \
   --framework-name "ISO 27001 v2013" \
   --format csv
 ```
 
-#### Map to your own framework
-For non-supported frameworks, you can map your framework to the SCF once, then you can use it for all ThreatModels. The format is a CSV mapping (see the template in the `template` folder). Once the mapping is done, you will be able to generate your mapping. Optionally, you can also insert metadata, typically the description of the controls in your framework.
+Use the exact framework name from the selected SCF version header when targeting a built-in framework.
+
+Generate a mapping to your own framework using the starter CSVs in [`template/`](template):
+
 ```sh
-$: tmxcaliber map path/to/threatmodel.json \
-  --scf 2023.4 \
-  --framework-name "My Framework Name" \
-  --framework-map path/to/myframework.csv \
-  --framework-metadata path/to/mymetadata.csv \
-  --format csv
+tmxcaliber map path/to/threatmodel.json \
+  --scf 2025.3.1 \
+  --framework-name "My Framework" \
+  --framework-map template/myframework.csv \
+  --framework-metadata template/mymetadata.csv \
+  --format json
 ```
 
-### Add mapping
+### Add mapping data back into a ThreatModel
 
-You may add the mapping information directly into the ThreatModel JSON. You can use similar arguments than `map`.
+If you want the mapping persisted directly into the ThreatModel output:
 
 ```sh
-$: tmxcaliber add-mapping path/to/threatmodel.json \
-  --scf 2023.4 \
-  --framework-name "ISO 27001 v2013"
+tmxcaliber add-mapping path/to/threatmodel.json \
+  --scf 2025.3.1 \
+  --framework-name "My Framework" \
+  --framework-map template/myframework.csv \
+  --framework-metadata template/mymetadata.csv \
+  --output enriched-threatmodel.json
 ```
 
+### Generate DFD artifacts
+
+`generate` accepts either:
+
+- a ThreatModel JSON containing base64-encoded XML in `dfd.body`
+- a raw XML file from the main ThreatModel DFD
+
+Generate XML and PNG outputs from JSON:
+
 ```sh
-$: tmxcaliber add-mapping path/to/threatmodel.json \
-  --scf 2023.4 \
-  --framework-name "My Framework Name" \
-  --framework-map path/to/myframework.csv \
-  --framework-metadata path/to/mymetadata.csv
+tmxcaliber generate path/to/threatmodel.json \
+  --threat-dir out/threat-xml \
+  --fc-dir out/feature-class-xml \
+  --out-dir out/png
 ```
 
-### Scan
-The `scan` opreation allows you to scan the description of all the controls for a given pattern. Support for currently known Amazon GuardDuty findings pattern has also been added.
+Generate from XML with an explicit `drawio` binary:
+
 ```sh
-$: tmxcaliber scan path/to/threatmodel.json --pattern regex_pattern|guardduty_findings
+tmxcaliber generate path/to/provider_service_DFD.xml \
+  --bin "C:\Program Files\draw.io\draw.io.exe" \
+  --out-dir out/png
 ```
 
-### Generate
-The `generate` operation allows you to create threat focused and feature class focused XMLs and PNGs of the DFD. Input file here can be either a JSON file with XML inside `dfd.body` key as base64 encoded string or a XML file directly.
-```sh
-$: tmxcaliber generate path/to/threatmodel.json | path/to/dfd.xml \
-  --threat-dir path/to/threats \
-  --fc-dir path/to/features \
-  --out-dir images/
-```
-Threats focused XMLs will be saved in `--threat-dir`  
-Feature class focused XMLs will be saved in `--fc-dir`  
-All the DFD images will be saved in `--out-dir`
+### Scan control descriptions
 
-
-### List Threats
-The `list threats` operation allows you to list all threats from a ThreatModel JSON file or a directory containing multiple JSON files. You can also specify an output file to write the results in CSV format.
+Search control descriptions with a regex:
 
 ```sh
-$: tmxcaliber list threats --help
-usage: tmxcaliber list threats [-h] [--output OUTPUT] [--exclude] [--severity {very high,high,medium,low,very low}] [--ids IDS] source
-
-positional arguments:
-  source                Path to the ThreatModel JSON file or directory containing ThreatModel JSON files.
-
-options:
-  -h, --help            show this help message and exit
-  --output OUTPUT       output file to write the results. If not provided, prints to stdout.
-  --exclude             Enable exclusion mode. Items specified will be excluded from the output.
-  --severity {very high,high,medium,low,very low}
-                        filter data by threat for severity equal or above the selected value.
-
-  --ids IDS             filter data by IDs (can be feature classes, threats, controls, or control objectives). Separate by `,`, if several. 
-
-$: tmxcaliber list threats path/to/threatmodels/ --output threats.csv
-
-$: tmxcaliber list threats path/to/threatmodel.json --ids S3.T2 --excluded
-id,feature_class,name,description,access,hlgoal,mitre_attack,cvss,retired,cvss_severity,cvss_score
-S3.T1,S3.FC5,Bucket takeover to gather data,"Bucket names are globally unique and can be recreated...","{""OPTIONAL"": ""s3:DeleteBucket""}",DataTheft,"TA0009,T1586",CVSS:3.1/AV:N/AC:L/PR:H/UI:R/S:U/C:H/I:L/A:N,false,Medium,5.2
-S3.T3,S3.FC1,Exfiltrate your data hosted on an external bucket by using compromised IAM credentials accessed over the Internet,IAM credentials can be compromised. An attacker can use...,"{""UNIQUE"": ""s3:GetObject""}",DataTheft,"TA0010,T1567",CVSS:3.1/AV:A/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N,false,Medium,5.7
+tmxcaliber scan path/to/threatmodel.json --pattern UnauthorizedAccess
 ```
 
-### List Controls
-The `list controls` operation allows you to list all controls from a ThreatModel JSON file or a directory containing multiple JSON files. You can also specify an output file to write the results in CSV format.
+Use the built-in GuardDuty findings alias:
 
 ```sh
-$: tmxcaliber list controls -h
-usage: tmxcaliber list controls [-h] [--output OUTPUT] [--exclude] [--ids IDS] source
-
-positional arguments:
-  source           Path to the ThreatModel JSON file or directory containing ThreatModel JSON files.
-
-options:
-  -h, --help       show this help message and exit
-  --output OUTPUT  output file to write the results. If not provided, prints to stdout.
-  --exclude        Enable exclusion mode. Items specified will be excluded from the output.
-  --ids IDS        filter data by IDs (can be feature classes, threats, controls, or control objectives). Separate by `,`, if several.
-
-$: tmxcaliber list controls path/to/threatmodels/ --output controls.csv
-
-$: tmxcaliber list controls path/to/threatmodel.json --ids S3.C2 --excluded
-objective,objective_description,id,coso,nist_csf,assured_by,depends_on,description,testing,effort,mitigate,feature_class,weighted_priority,weighted_priority_score,queryable_objective_id,queryable_id,retired
-S3.CO1,Enforce encryption-in-transit,S3.C1,Preventative,Protect,S3.C2,S3.C119,"Block all unencrypted requests...",Make an unencrypte..,Low,"[{'threat': 'S3.T12', 'impact': 'Very High', 'priority': 4.0, 'max_dependency': None, 'priority_overall': 4.0, 'cvss': 'Medium'}]","['S3.FC1', 'S3.FC5']",High,3,1,1,false
-S3.CO1,Enforce encryption-in-transit,S3.C3,Preventative,Protect,S3.C5,S3.C119,"Block all unencrypted requests...",Make an unencrypted AWS API call from one of your VPCs with VPC endpoint; it should be denied.,Low,"[{'threat': 'S3.T12', 'impact': 'Medium', 'priority': 2.0, 'max_dependency': None, 'priority_overall': 2.0, 'cvss': 'Medium'}]","['S3.FC1', 'S3.FC5']",Medium,2,1,3,false
+tmxcaliber scan path/to/threatmodel.json --pattern guardduty_findings
 ```
 
-### Create Change Log
+### Create change logs
 
-The `create-change-log` operation allows you to create a change log between 2 ThreatModel JSONs. You can filter the change log based on relevant information based on IDs (like features classes, controls, threats, or control objectives).
+Compare two ThreatModel versions and output JSON:
+
 ```sh
-$: tmxcaliber create-change-log path/to/new_tm.json path/to/old_tm.json --ids S3.FC2
+tmxcaliber create-change-log path/to/new_tm.json path/to/old_tm.json
+```
 
-$: tmxcaliber create-change-log -h
-usage: tmxcaliber create-change-log [-h] [--format {json,md}] [--output OUTPUT] [--ids IDS] [--exclude]
-                                    new_source old_source
+Generate a Markdown report:
 
-positional arguments:
-  new_source          path to the newer ThreatModel JSON file.
-  old_source          path to the older ThreatModel JSON file.
+```sh
+tmxcaliber create-change-log path/to/new_tm.json path/to/old_tm.json \
+  --format md \
+  --output changes.md
+```
 
-options:
-  -h, --help          show this help message and exit
-  --format {json,md}  format to output (default to JSON)
-  --output OUTPUT     output file to write the results. If not provided, prints to stdout.
-  --ids IDS           filter data by IDs (can be feature classes, threats, controls, or control objectives). Separate by `,`, if several.
+You can also scope the comparison to specific IDs and invert the selection with `--exclude`.
 
-  --exclude           Enable exclusion mode. Items specified will be excluded from the output.
+## Common Examples
+
+```sh
+# List all threats across a directory
+tmxcaliber list threats path/to/threatmodels
+
+# Keep only specific controls and objectives in a filtered JSON
+tmxcaliber filter path/to/threatmodel.json --ids S3.C12,S3.CO5 --output filtered.json
+
+# Exclude known noisy threats from a threat export
+tmxcaliber list threats path/to/threatmodel.json --ids S3.T2,S3.T9 --exclude
+
+# Export services for inventory or reporting
+tmxcaliber list services path/to/threatmodels --output services.csv
+
+# Produce a custom-framework mapping
+tmxcaliber map path/to/threatmodel.json --scf 2025.3.1 --framework-name "My Framework" --framework-map template/myframework.csv
+
+# Create a Markdown change log between releases
+tmxcaliber create-change-log new.json old.json --format md --output changes.md
+```
+
+## Help Reference
+
+Use the built-in help to inspect the full CLI surface:
+
+```sh
+tmxcaliber -h
+tmxcaliber filter -h
+tmxcaliber map -h
+tmxcaliber add-mapping -h
+tmxcaliber scan -h
+tmxcaliber generate -h
+tmxcaliber list threats -h
+tmxcaliber list controls -h
+tmxcaliber list services -h
+tmxcaliber list feature-classes -h
+tmxcaliber create-change-log -h
+```
+
+## Development
+
+Set up a local development environment:
+
+```sh
+python -m venv .venv
+pip install -r requirements.txt
+pip install -e .
+```
+
+Run the test suite:
+
+```sh
+pytest -q test
 ```
 
 ## Contributing
-If you'd like to contribute to the development of TMxCaliber, please submit a pull request or open an issue on the project's GitHub repository.
+
+Contributions are welcome. If you want to improve the CLI, add tests, or extend the documentation, open an issue or submit a pull request with a clear description of the change and its intended user impact.

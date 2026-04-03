@@ -13,9 +13,9 @@ def get_license():
 
 setup(
     name="tmxcaliber",
-    version="0.3.9",
+    version="0.3.10",
     description=(
-        "CLI utility to filter down a TrustOnCloud ThreatModel and "
+        "CLI utility to filter down one or more TrustOnCloud ThreatModels and "
         "get more refined information."
     ),
     long_description=readme(),

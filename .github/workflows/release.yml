@@ -18,18 +18,24 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: 3.11
 
     - name: Install dependencies
       run: |
         pip install -r requirements.txt
-        pip install coverage black
         pip install .
+
+    - name: Ensure release version is incremented
+      env:
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: python .github/scripts/check_release_version.py
+      continue-on-error: false
 
     - name: Run pytest test suite with coverage
       run: |
@@ -49,7 +55,7 @@ jobs:
     if: github.event_name == 'push' && contains(github.ref, 'refs/heads/main')
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Extract version from setup.py
       id: get_version

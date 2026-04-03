@@ -4,7 +4,6 @@ from tmxcaliber.lib.feature_class_hierarchy import FeatureClassHierarchy
 from tmxcaliber.lib.errors import FeatureClassCycleError
 import networkx as nx
 
-
 feature_classes_with_cycle = {
     "Someservice.FC1": {
         "class_relationship": [{"type": "parent", "class": "Someservice.FC2"}]

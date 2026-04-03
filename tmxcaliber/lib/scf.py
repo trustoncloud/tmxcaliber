@@ -1,6 +1,6 @@
 from .cache import get_cached_local_path_for
 from .errors import FrameworkNotFoundError
-from pandas import ExcelFile, read_excel
+from openpyxl import load_workbook
 
 scf_versions = {
     "2023.4": {
@@ -36,31 +36,67 @@ def get_scf_config(version):
 
 def get_valid_scf_controls(version):
     scf_data = get_full_scf_data(version)
-    return scf_data["SCF #"].tolist()
+    return [
+        scf_id.strip()
+        for scf_id in (row.get("SCF #") for row in scf_data)
+        if isinstance(scf_id, str) and scf_id.strip()
+    ]
 
 
 def get_full_scf_data(version):
     scf_config = get_scf_config(version)
     local_scf = get_cached_local_path_for(scf_config["url"])
-    # Read the Excel file
-    xls = ExcelFile(local_scf, engine="openpyxl")
-    # Get the data from the worksheet
-    scf_data = read_excel(xls, scf_config["sheet_name"])
-    return scf_data
+    workbook = load_workbook(local_scf, read_only=True, data_only=True)
+    try:
+        worksheet = workbook[scf_config["sheet_name"]]
+        rows = worksheet.iter_rows(values_only=True)
+        try:
+            headers = next(rows)
+        except StopIteration:
+            return []
+
+        scf_data = []
+        for row in rows:
+            scf_data.append(dict(zip(headers, row)))
+        return scf_data
+    finally:
+        workbook.close()
+
+
+def _normalize_header(value):
+    if not isinstance(value, str):
+        return value
+    return value.replace("\n", " ").strip()
+
+
+def _normalize_text(value):
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def get_scf_data(version, framework_name):
     scf_data = get_full_scf_data(version=version)
-    scf_data.columns = [col.replace("\n", " ").strip() for col in scf_data.columns]
-    if framework_name not in scf_data.columns:
+    normalized_headers = {}
+    for row in scf_data:
+        for header in row.keys():
+            normalized_headers.setdefault(_normalize_header(header), header)
+
+    if framework_name not in normalized_headers:
         raise FrameworkNotFoundError(framework_name)
-    # Keep only the columns "SCF #" and the one matching framework_name
-    scf_data = scf_data[["SCF #", framework_name]]
-    scf_data = scf_data.rename(columns={"SCF #": "SCF"})
-    scf_data = (
-        scf_data.assign(**{scf_data.columns[1]: scf_data.iloc[:, 1].str.split("\n")})
-        .explode(scf_data.columns[1])
-        .reset_index(drop=True)
-    )
-    scf_data = scf_data.applymap(lambda x: x.strip() if isinstance(x, str) else x)
-    return scf_data
+
+    framework_header = normalized_headers[framework_name]
+    framework_rows = []
+    for row in scf_data:
+        scf_id = _normalize_text(row.get("SCF #"))
+        framework_values = row.get(framework_header)
+        if not scf_id or not isinstance(framework_values, str):
+            continue
+
+        for framework_value in framework_values.split("\n"):
+            normalized_framework_value = _normalize_text(framework_value)
+            if normalized_framework_value:
+                framework_rows.append((scf_id, normalized_framework_value))
+
+    return framework_rows

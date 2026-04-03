@@ -51,3 +51,5 @@ class Operation:
 class ListOperation:
     threats = "threats"
     controls = "controls"
+    services = "services"
+    feature_classes = "feature-classes"

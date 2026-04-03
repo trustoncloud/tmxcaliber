@@ -1,7 +1,9 @@
 import pytest
 import unittest
+import sys
 from tmxcaliber.cli import (
     _get_version,
+    get_params,
     validate,
     map,
     scan_controls,
@@ -9,6 +11,8 @@ from tmxcaliber.cli import (
     get_drawio_binary_path,
     output_result,
     get_metadata,
+    get_service_rows,
+    get_feature_class_rows,
     METADATA_MISSING,
     validate_and_get_framework,
     MISSING_OUTPUT_ERROR,
@@ -16,9 +20,7 @@ from tmxcaliber.cli import (
 import json
 import platform
 import argparse
-import pandas as pd
 from argparse import Namespace
-from pandas.testing import assert_frame_equal
 
 import csv
 from tmxcaliber.lib.threatmodel_data import ThreatModelData
@@ -141,12 +143,11 @@ def test_validate_requires_output_with_output_removed():
 
 
 def test_map(mock_json):
-    framework2co = pd.DataFrame(
-        {
-            "SCF": ["SCF1", "SCF1", "SCF2"],
-            "Framework": ["FrameworkControl1", "FrameworkControl2", ""],
-        }
-    )
+    framework2co = [
+        ("SCF1", "FrameworkControl1"),
+        ("SCF1", "FrameworkControl2"),
+        ("SCF2", ""),
+    ]
     threatmodel_data = ThreatModelData(mock_json)
     metadata = {"FrameworkControl1": {"additional_info": "info"}}
     result = map(
@@ -367,6 +368,66 @@ def test_get_drawio_binary_path_not_found(monkeypatch):
         get_drawio_binary_path()
 
 
+def test_get_params_list_services_defaults(tmp_path, monkeypatch):
+    source = tmp_path / "services"
+    source.mkdir()
+
+    monkeypatch.setattr(sys, "argv", ["prog", "list", "services", str(source)])
+
+    params = get_params()
+
+    assert params.operation == "list"
+    assert params.list_type == "services"
+    assert params.format == "csv"
+
+
+def test_get_params_list_services_accepts_json_format(tmp_path, monkeypatch):
+    source = tmp_path / "services"
+    source.mkdir()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["prog", "list", "services", str(source), "--format", "json"],
+    )
+
+    params = get_params()
+
+    assert params.operation == "list"
+    assert params.list_type == "services"
+    assert params.format == "json"
+
+
+def test_get_params_list_feature_classes_defaults(tmp_path, monkeypatch):
+    source = tmp_path / "service.json"
+    source.write_text(json.dumps({"feature_classes": {}}), encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["prog", "list", "feature-classes", str(source)])
+
+    params = get_params()
+
+    assert params.operation == "list"
+    assert params.list_type == "feature-classes"
+    assert params.format == "csv"
+
+
+def test_get_params_list_feature_classes_accepts_json_format(tmp_path, monkeypatch):
+    source = tmp_path / "service.json"
+    source.write_text(json.dumps({"feature_classes": {}}), encoding="utf-8")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["prog", "list", "feature-classes", str(source), "--format", "json"],
+    )
+
+    params = get_params()
+
+    assert params.operation == "list"
+    assert params.list_type == "feature-classes"
+    assert params.format == "json"
+
+
 def test_output_json_result():
     output_param = "output.json"
     result = {"key": "value"}
@@ -492,79 +553,485 @@ def test_get_metadata_with_complex_csv():
     }, "Dictionary data does not match expected values"
 
 
-# Sample CSV content with multiple lines and missing entries
-valid_multiline_csv = (
-    "scf1;scf2,framework1;framework2\nscf4,framework8;framework2\nscf3,framework3"
-)
-missing_entries_csv = "scf1;scf2,\n,framework1;framework2\nscf3,framework3"
+def test_validate_and_get_framework_success_multiline(tmp_path):
+    csv_path = tmp_path / "framework.csv"
+    csv_path.write_text(
+        "scf1;scf2,framework1;framework2\n"
+        "scf4;scf2,framework8;framework2\n"
+        "scf3,framework3\n",
+        encoding="utf-8",
+    )
+
+    result = validate_and_get_framework(str(csv_path), "Framework")
+
+    assert result == [
+        ("scf1", "framework1"),
+        ("scf1", "framework2"),
+        ("scf2", "framework1"),
+        ("scf2", "framework2"),
+        ("scf4", "framework8"),
+        ("scf4", "framework2"),
+        ("scf2", "framework8"),
+        ("scf3", "framework3"),
+    ]
 
 
-def test_validate_and_get_framework_success_multiline():
-    # Mock reading from a CSV with valid, multiline data
-    with patch(
-        "pandas.read_csv",
-        return_value=pd.DataFrame(
-            [
-                ["scf1;scf2", "framework1;framework2"],
-                ["scf4;scf2", "framework8;framework2"],
-                ["scf3", "framework3"],
-            ],
-            columns=[0, 1],
-        ),
-    ):
-        result = validate_and_get_framework("dummy_path.csv", "Framework")
-        expected = pd.DataFrame(
-            [
-                ["scf1", "framework1"],
-                ["scf1", "framework2"],
-                ["scf2", "framework1"],
-                ["scf2", "framework2"],
-                ["scf4", "framework8"],
-                ["scf4", "framework2"],
-                ["scf2", "framework8"],
-                ["scf3", "framework3"],
-            ],
-            columns=["SCF", "Framework"],
-        )
-        # Resetting index to compare DataFrames accurately
-        result = result.reset_index(drop=True)
-        expected = expected.reset_index(drop=True)
-        assert_frame_equal(result, expected)
+def test_validate_and_get_framework_missing_entries(tmp_path):
+    csv_path = tmp_path / "framework.csv"
+    csv_path.write_text(
+        "scf1;scf2,\n" ",framework1;framework2\n" ",framework4\n" "scf3,framework3\n",
+        encoding="utf-8",
+    )
+
+    result = validate_and_get_framework(str(csv_path), "Framework")
+
+    assert result == [("scf3", "framework3")]
 
 
-def test_validate_and_get_framework_missing_entries():
-    # Mock reading from a CSV where one side of the semicolon is missing
-    with patch(
-        "pandas.read_csv",
-        return_value=pd.DataFrame(
-            [
-                ["scf1;scf2", pd.NA],
-                [float("nan"), "framework1;framework2"],
-                [None, "framework4"],
-                ["scf3", "framework3"],
-            ],
-            columns=[0, 1],
-        ),
-    ):
-        result = validate_and_get_framework("dummy_path.csv", "Framework")
-        expected = pd.DataFrame([["scf3", "framework3"]], columns=["SCF", "Framework"])
-        assert_frame_equal(result, expected)
+def test_validate_and_get_framework_dedupes_and_skips_none_like_values(tmp_path):
+    csv_path = tmp_path / "framework.csv"
+    csv_path.write_text(
+        "scf1;None,framework1;framework2\n"
+        "scf1,framework1\n"
+        "null,framework9\n"
+        "scf2,n/a\n",
+        encoding="utf-8",
+    )
+
+    result = validate_and_get_framework(str(csv_path), "Framework")
+
+    assert result == [
+        ("scf1", "framework1"),
+        ("scf1", "framework2"),
+    ]
 
 
-# Additional test cases from previous example
-def test_validate_and_get_framework_failure_column_mismatch():
-    # Mock reading from a CSV with invalid data
-    with patch(
-        "pandas.read_csv", return_value=pd.DataFrame([["only_one_column"]], columns=[0])
-    ):
-        with pytest.raises(ValueError) as exc_info:
-            validate_and_get_framework("dummy_path.csv", "Framework")
-        assert "should have exactly 2 columns" in str(exc_info.value)
+def test_validate_and_get_framework_failure_column_mismatch(tmp_path):
+    csv_path = tmp_path / "framework.csv"
+    csv_path.write_text("only_one_column\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_and_get_framework(str(csv_path), "Framework")
+
+    assert "should have exactly 2 columns" in str(exc_info.value)
 
 
 def test_validate_and_get_framework_file_not_found():
-    # Simulate file not found by throwing FileNotFoundError
-    with patch("pandas.read_csv", side_effect=FileNotFoundError("File not found")):
-        with pytest.raises(FileNotFoundError) as exc_info:
-            validate_and_get_framework("nonexistent_path.csv", "Framework")
-        assert "File not found" in str(exc_info.value)
+    with pytest.raises(FileNotFoundError) as exc_info:
+        validate_and_get_framework("nonexistent_path.csv", "Framework")
+
+    assert "No such file or directory" in str(exc_info.value)
+
+
+def test_get_service_rows_recursive_directory_dedupes_and_skips_blank_names(tmp_path):
+    top_level = tmp_path / "b.json"
+    nested_dir = tmp_path / "nested"
+    nested_dir.mkdir()
+    nested = nested_dir / "a.json"
+    ignored = tmp_path / "ignored.json"
+
+    top_level.write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "service_name": "Primary Service",
+                    "other_covered_services": [
+                        "Covered One",
+                        "Covered One",
+                        "",
+                        "  Covered Two  ",
+                        "Primary Service",
+                        None,
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    nested.write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "service_name": "   ",
+                    "other_covered_services": ["Nested Covered", "", "Nested Covered"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    ignored.write_text(json.dumps({"metadata": {"service_name": ""}}), encoding="utf-8")
+
+    rows = get_service_rows(str(tmp_path))
+
+    assert rows == [
+        {"name": "Primary Service", "file": str(top_level.resolve())},
+        {"name": "Covered One", "file": str(top_level.resolve())},
+        {"name": "Covered Two", "file": str(top_level.resolve())},
+        {"name": "Nested Covered", "file": str(nested.resolve())},
+    ]
+
+
+def test_get_service_rows_single_file(tmp_path):
+    source = tmp_path / "service.json"
+    source.write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "service_name": "Single Service",
+                    "other_covered_services": [],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = get_service_rows(str(source))
+
+    assert rows == [{"name": "Single Service", "file": str(source.resolve())}]
+
+
+def test_get_feature_class_rows_returns_id_name_description(tmp_path):
+    source = tmp_path / "service.json"
+    source.write_text(
+        json.dumps(
+            {
+                "feature_classes": {
+                    "Svc.FC1": {"name": "Primary FC", "description": "First feature"},
+                    "Svc.FC2": {
+                        "name": "Secondary FC",
+                        "description": "Second feature",
+                        "ignored": "value",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = get_feature_class_rows(str(source))
+
+    assert rows == [
+        {"id": "Svc.FC1", "name": "Primary FC", "description": "First feature"},
+        {"id": "Svc.FC2", "name": "Secondary FC", "description": "Second feature"},
+    ]
+
+
+def test_get_feature_class_rows_uses_blank_defaults_for_missing_values(tmp_path):
+    source = tmp_path / "service.json"
+    source.write_text(
+        json.dumps(
+            {
+                "feature_classes": {
+                    "Svc.FC1": {"name": "Primary FC"},
+                    "Svc.FC2": {"description": "Only description"},
+                    "Svc.FC3": "invalid",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = get_feature_class_rows(str(source))
+
+    assert rows == [
+        {"id": "Svc.FC1", "name": "Primary FC", "description": ""},
+        {"id": "Svc.FC2", "name": "", "description": "Only description"},
+        {"id": "Svc.FC3", "name": "", "description": ""},
+    ]
+
+
+def test_main_list_controls_aws_data_perimeter_e2e(tmp_path, monkeypatch, capsys):
+    from tmxcaliber import cli as cli_module
+    from tmxcaliber.lib.threatmodel_data import ThreatModelData
+
+    ThreatModelData.threatmodel_data_list = []
+
+    tm1 = {
+        "metadata": {"release": "1710000000", "name": "TM1"},
+        "controls": {
+            "Svc.C2": {"objective": "Svc.CO1", "retired": False},
+            "Svc.C10": {"objective": "Svc.CO1", "retired": False},
+        },
+        "control_objectives": {"Svc.CO1": {"description": "Objective 1"}},
+        "scorecard": {"aws_data_perimeter": {"Perimeter": ["Svc.C10", "Svc.C2"]}},
+        "threats": {},
+        "actions": {},
+        "feature_classes": {},
+    }
+    tm2 = {
+        "metadata": {"release": "1710000001", "name": "TM2"},
+        "controls": {"Svc.C1": {"objective": "Svc.CO2", "retired": False}},
+        "control_objectives": {"Svc.CO2": {"description": "Objective 2"}},
+        "scorecard": {"aws_data_perimeter": {"NA": ["Svc.C1"], "Other": ["Svc.C1"]}},
+        "threats": {},
+        "actions": {},
+        "feature_classes": {},
+    }
+
+    (tmp_path / "tm1.json").write_text(json.dumps(tm1), encoding="utf-8")
+    (tmp_path / "tm2.json").write_text(json.dumps(tm2), encoding="utf-8")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["prog", "list", "controls", str(tmp_path), "--type", "AWS_DATA_PERIMETER"],
+    )
+
+    cli_module.main()
+    out = capsys.readouterr().out.strip().splitlines()
+
+    assert out[0] == "objective,objective_description,id,retired"
+
+    # Output is emitted TM-by-TM (directory load order), with numeric ordering within each TM.
+    assert out[1:] == [
+        "Svc.CO1,Objective 1,Svc.C2,False",
+        "Svc.CO1,Objective 1,Svc.C10,False",
+        "Svc.CO2,Objective 2,Svc.C1,False",
+    ]
+
+
+def test_main_list_services_csv_e2e(tmp_path, monkeypatch, capsys):
+    from tmxcaliber import cli as cli_module
+
+    nested_dir = tmp_path / "nested"
+    nested_dir.mkdir()
+
+    first = tmp_path / "a.json"
+    second = nested_dir / "b.json"
+
+    first.write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "service_name": "Alpha Service",
+                    "other_covered_services": ["Alpha Addon"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    second.write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "service_name": "Beta Service",
+                    "other_covered_services": [],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(sys, "argv", ["prog", "list", "services", str(tmp_path)])
+
+    cli_module.main()
+    out = capsys.readouterr().out.strip().splitlines()
+
+    assert out == [
+        "name,file",
+        f"Alpha Service,{first.resolve()}",
+        f"Alpha Addon,{first.resolve()}",
+        f"Beta Service,{second.resolve()}",
+    ]
+
+
+def test_main_list_services_json_e2e_preserves_duplicate_names_across_files(
+    tmp_path, monkeypatch, capsys
+):
+    from tmxcaliber import cli as cli_module
+
+    first = tmp_path / "a.json"
+    second = tmp_path / "b.json"
+
+    first.write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "service_name": "Shared Service",
+                    "other_covered_services": ["Addon One"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    second.write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "service_name": "Shared Service",
+                    "other_covered_services": [],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["prog", "list", "services", str(tmp_path), "--format", "json"],
+    )
+
+    cli_module.main()
+    out = json.loads(capsys.readouterr().out)
+
+    assert out == [
+        {"name": "Shared Service", "file": str(first.resolve())},
+        {"name": "Addon One", "file": str(first.resolve())},
+        {"name": "Shared Service", "file": str(second.resolve())},
+    ]
+
+
+def test_main_list_feature_classes_csv_e2e(tmp_path, monkeypatch, capsys):
+    from tmxcaliber import cli as cli_module
+
+    source = tmp_path / "service.json"
+    source.write_text(
+        json.dumps(
+            {
+                "feature_classes": {
+                    "Svc.FC1": {"name": "Primary FC", "description": "First feature"},
+                    "Svc.FC2": {
+                        "name": "Secondary FC",
+                        "description": "Second feature",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(sys, "argv", ["prog", "list", "feature-classes", str(source)])
+
+    cli_module.main()
+    out = capsys.readouterr().out.strip().splitlines()
+
+    assert out == [
+        "id,name,description",
+        "Svc.FC1,Primary FC,First feature",
+        "Svc.FC2,Secondary FC,Second feature",
+    ]
+
+
+def test_main_list_feature_classes_json_e2e(tmp_path, monkeypatch, capsys):
+    from tmxcaliber import cli as cli_module
+
+    source = tmp_path / "service.json"
+    source.write_text(
+        json.dumps(
+            {
+                "feature_classes": {
+                    "Svc.FC1": {"name": "Primary FC", "description": "First feature"},
+                    "Svc.FC2": {"name": "Secondary FC"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["prog", "list", "feature-classes", str(source), "--format", "json"],
+    )
+
+    cli_module.main()
+    out = json.loads(capsys.readouterr().out)
+
+    assert out == [
+        {"id": "Svc.FC1", "name": "Primary FC", "description": "First feature"},
+        {"id": "Svc.FC2", "name": "Secondary FC", "description": ""},
+    ]
+
+
+def test_main_filter_output_removed_writes_two_files(tmp_path, monkeypatch):
+    from tmxcaliber import cli as cli_module
+    from tmxcaliber.lib.threatmodel_data import ThreatModelData
+
+    ThreatModelData.threatmodel_data_list = []
+
+    source = tmp_path / "source.json"
+    out = tmp_path / "out.json"
+
+    tm = {
+        "metadata": {"release": "1710000000", "name": "TM"},
+        "feature_classes": {
+            "Svc.FC1": {"class_relationship": []},
+            "Svc.FC2": {"class_relationship": [{"type": "parent", "class": "Svc.FC1"}]},
+            "Svc.FC3": {"class_relationship": []},
+        },
+        "threats": {
+            "Svc.T1": {
+                "feature_class": "Svc.FC2",
+                "cvss_severity": "High",
+                "name": "Threat1",
+                "access": {"AND": ["perm.read"]},
+            },
+            "Svc.T2": {
+                "feature_class": "Svc.FC3",
+                "cvss_severity": "Low",
+                "name": "Threat2",
+                "access": {"AND": ["perm.write"]},
+            },
+        },
+        "control_objectives": {
+            "Svc.CO1": {"description": "CO1"},
+            "Svc.CO2": {"description": "CO2"},
+        },
+        "controls": {
+            "Svc.C1": {
+                "feature_class": ["Svc.FC2", "Svc.FC3"],
+                "objective": "Svc.CO1",
+                "coso": "Prevent",
+                "description": "C1",
+                "weighted_priority": "High",
+                "assured_by": "",
+                "mitigate": [{"threat": "Svc.T1"}, {"threat": "Svc.T2"}],
+            },
+            "Svc.C2": {
+                "feature_class": ["Svc.FC3"],
+                "objective": "Svc.CO2",
+                "coso": "Prevent",
+                "description": "C2",
+                "weighted_priority": "Low",
+                "assured_by": "",
+                "mitigate": [{"threat": "Svc.T2"}],
+            },
+        },
+        "actions": {
+            "Svc.A1": {"feature_class": "Svc.FC2"},
+            "Svc.A2": {"feature_class": "Svc.FC3"},
+        },
+    }
+
+    source.write_text(json.dumps(tm), encoding="utf-8")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prog",
+            "filter",
+            "--output",
+            str(out),
+            "--output-removed",
+            "--severity",
+            "high",
+            str(source),
+        ],
+    )
+
+    cli_module.main()
+
+    assert out.exists()
+    out_json = json.loads(out.read_text(encoding="utf-8"))
+    assert "threats" in out_json
+    assert list(out_json["threats"].keys()) == ["Svc.T1"]
+
+    removed_path = tmp_path / "out_removed.json"
+    assert removed_path.exists()
+    removed_json = json.loads(removed_path.read_text(encoding="utf-8"))
+
+    # At minimum, the removed output should include removed threats/controls.
+    assert "threats" in removed_json
+    assert "Svc.T2" in removed_json["threats"] or "Svc.T2" in str(removed_json)

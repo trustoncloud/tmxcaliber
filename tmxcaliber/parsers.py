@@ -145,9 +145,53 @@ def add_list_parser(subparsers):
         add_output_argument(control_list_parser)
         add_exclude_flag(control_list_parser)
         add_ids_filter_argument(control_list_parser)
+        control_list_parser.add_argument(
+            "--type",
+            type=str,
+            choices=["ALL", "AWS_DATA_PERIMETER"],
+            default="ALL",
+            help=(
+                "Select the controls list type.\n"
+                "1) ALL: all controls (default)\n"
+                "2) AWS_DATA_PERIMETER: only control IDs referenced by scorecard.aws_data_perimeter "
+                "(excluding NA categories)."
+            ),
+        )
+
+    def add_list_services_parser(list_subparsers):
+        service_list_parser = list_subparsers.add_parser(
+            ListOperation.services,
+            help="List service names and their ThreatModel JSON file.",
+            formatter_class=RawTextHelpFormatter,
+        )
+        add_source_json_or_dir_argument(service_list_parser)
+        add_output_argument(service_list_parser)
+        add_format_argument(
+            service_list_parser,
+            choices=["csv", "json"],
+            default="csv",
+            help="format to output (default to CSV).",
+        )
+
+    def add_list_feature_classes_parser(list_subparsers):
+        feature_class_list_parser = list_subparsers.add_parser(
+            ListOperation.feature_classes,
+            help="List feature classes of one ThreatModel JSON file.",
+            formatter_class=RawTextHelpFormatter,
+        )
+        add_source_argument(feature_class_list_parser)
+        add_output_argument(feature_class_list_parser)
+        add_format_argument(
+            feature_class_list_parser,
+            choices=["csv", "json"],
+            default="csv",
+            help="format to output (default to CSV).",
+        )
 
     add_list_threats_parser(list_subparsers)
     add_list_controls_parser(list_subparsers)
+    add_list_services_parser(list_subparsers)
+    add_list_feature_classes_parser(list_subparsers)
 
 
 def add_map_parser(subparsers):
@@ -261,7 +305,7 @@ def add_exclude_flag(*parsers: ArgumentParser):
         parser.add_argument(
             "--exclude",
             action="store_true",
-            help="Enable exclusion mode. Items specified will be excluded from the output.",
+            help="Enable exclusion mode. Items specified in --ids will be excluded from the output.",
         )
 
 
