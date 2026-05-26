@@ -1,5 +1,3 @@
-import pytest
-
 from tmxcaliber.lib.threatmodel_data import ThreatModelData, get_permissions
 
 

@@ -23,19 +23,20 @@ class Filter:
             x.lower().strip() for x in (ids or "").split(IDS_INPUT_SEPARATOR) if x
         ]
 
-        self.feature_classes = []
-        self.control_objectives = []
-        self.controls = []
-        self.threats = []
+        self.feature_classes: list[str] = []
+        self.control_objectives: list[str] = []
+        self.controls: list[str] = []
+        self.threats: list[str] = []
 
         self.__validate()
 
-    def __validate(self):
+    def __validate(self) -> None:
         for value in self.ids:
             match = re.match(IDS_FORMAT_REGEX, value)
             if match is None:
                 raise ValueError(
-                    f"Invalid ID format: {value}. Expected format is 'somestring.(FC|T|C|CO)somenumber'"
+                    f"Invalid ID format: {value}. Expected format is "
+                    "'somestring.(FC|T|C|CO)somenumber'"
                 )
             # Categorize the ID based on the regex groups
             if ".fc" in value:

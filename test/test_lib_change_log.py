@@ -1,13 +1,13 @@
 import pytest
 from deepdiff import DeepDiff
-from deepdiff.model import PrettyOrderedSet
+
 from tmxcaliber.lib.change_log import (
-    clean_diff_id,
     Change,
     ChangeLog,
+    clean_diff_id,
     generate_change_log,
-    manual_diff,
     get_changes_from_deepdiff,
+    manual_diff,
 )
 
 

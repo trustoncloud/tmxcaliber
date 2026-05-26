@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from importlib.resources import files
-from typing import Any, Iterable, Literal, Tuple
+from typing import Any, Literal
 
 _SchemaKind = Literal["threatmodel", "overwatch"]
 
 __all__ = [
-    "validate_threatmodel_schema",
-    "validate_overwatch_schema",
     "SchemaValidationError",
     "SchemaValidationUnavailable",
+    "validate_overwatch_schema",
+    "validate_threatmodel_schema",
 ]
 
 
@@ -76,12 +77,12 @@ def _parse_compact_date_from_filename(name: str) -> int | None:
         return None
 
 
-def _iter_schema_candidates(kind: _SchemaKind) -> Iterable[Tuple[int, str]]:
+def _iter_schema_candidates(kind: _SchemaKind) -> Iterable[tuple[int, str]]:
     """
     Iterate over (yyyymmdd_as_int, resource_name) for JSON schema files located under
     tmxcaliber/schema/{kind} whose filename starts with YYYYMMDD.
     """
-    pkg_root = files("tmxcaliber").joinpath("schema", kind)
+    pkg_root = files("tmxcaliber").joinpath("schema").joinpath(kind)
     for entry in pkg_root.iterdir():
         name = entry.name
         if not name.lower().endswith(".json"):
@@ -100,7 +101,8 @@ def _select_latest_schema_resource(kind: _SchemaKind) -> str:
     candidates = sorted(_iter_schema_candidates(kind), key=lambda t: t[0])
     if not candidates:
         raise FileNotFoundError(
-            f"No JSON schema files found for '{kind}' under 'tmxcaliber/schema/{kind}'. "
+            f"No JSON schema files found for '{kind}' under "
+            f"'tmxcaliber/schema/{kind}'. "
             "Expected files named like 'YYYYMMDD.json'."
         )
     return candidates[-1][1]
@@ -108,10 +110,15 @@ def _select_latest_schema_resource(kind: _SchemaKind) -> str:
 
 def _load_schema(kind: _SchemaKind) -> dict[str, Any]:
     resource_name = _select_latest_schema_resource(kind)
-    with files("tmxcaliber").joinpath("schema", kind, resource_name).open(
-        "r", encoding="utf-8"
-    ) as fh:
-        return json.load(fh)
+    with (
+        files("tmxcaliber")
+        .joinpath("schema")
+        .joinpath(kind)
+        .joinpath(resource_name)
+        .open("r", encoding="utf-8") as fh
+    ):
+        data: dict[str, Any] = json.load(fh)
+        return data
 
 
 def _resolve_json_pointer(doc: Any, pointer: str) -> Any:
@@ -137,7 +144,7 @@ def _resolve_json_pointer(doc: Any, pointer: str) -> Any:
     return cur
 
 
-def _path_to_pointer(path_iterable) -> str | None:
+def _path_to_pointer(path_iterable: Iterable[object] | None) -> str | None:
     """
     Convert a jsonschema path iterable to a JSON Pointer string (e.g. "#/a/0/b").
     Returns None if the path is empty.
@@ -153,15 +160,15 @@ def _path_to_pointer(path_iterable) -> str | None:
     return "#/" + "/".join(segments)
 
 
-def _ensure_jsonschema():
+def _ensure_jsonschema() -> Any:
     try:
-        import jsonschema  # type: ignore
+        import jsonschema
 
         return jsonschema
     except Exception as exc:
         raise SchemaValidationUnavailable(
-            "Schema validation is unavailable because 'jsonschema' is not installed. "
-            "Install it to enable validation."
+            "Schema validation is unavailable because 'jsonschema' is not "
+            "installed. Install it to enable validation."
         ) from exc
 
 
@@ -193,16 +200,20 @@ def validate_threatmodel_schema(
     instance_pointer: str | None = None,
 ) -> None:
     """
-    Validate instance against the latest ThreatModel schema, or a subschema if schema_pointer is provided.
+    Validate instance against the latest ThreatModel schema, or a subschema if
+    ``schema_pointer`` is provided.
 
     Parameters:
     - instance: JSON-like object to validate.
-    - schema_pointer: Optional JSON Pointer into the root schema (e.g. '#/$defs/Threat' or '#/properties/threats/items').
-    - instance_pointer: Optional JSON Pointer into the instance (e.g. '#/threats/0').
+    - schema_pointer: Optional JSON Pointer into the root schema (e.g.
+      ``'#/$defs/Threat'`` or ``'#/properties/threats/items'``).
+    - instance_pointer: Optional JSON Pointer into the instance (e.g.
+      ``'#/threats/0'``).
 
     Raises:
     - SchemaValidationError on validation failure.
-    - SchemaValidationUnavailable if required validation dependencies are missing.
+    - SchemaValidationUnavailable if required validation dependencies are
+      missing.
     - KeyError/ValueError if the provided pointers cannot be resolved.
     """
     if not schema_pointer:
@@ -211,9 +222,9 @@ def validate_threatmodel_schema(
 
     jsonschema = _ensure_jsonschema()
     try:
+        from jsonschema.validators import validator_for
         from referencing import Registry, Resource
         from referencing.jsonschema import DRAFT202012
-        from jsonschema.validators import validator_for
     except Exception as exc:
         raise SchemaValidationUnavailable(
             "Subschema validation is unavailable because required dependencies "
@@ -241,10 +252,10 @@ def validate_threatmodel_schema(
     resource = Resource.from_contents(root_schema, default_specification=DRAFT202012)
     registry = Registry().with_resources([(base_uri, resource)])
 
-    subschema = {"$ref": f"{base_uri}{schema_pointer}"}
+    subschema: dict[str, Any] = {"$ref": f"{base_uri}{schema_pointer}"}
     validator = Validator(subschema, registry=registry)
     try:
-        validator.validate(target_instance)
+        validator.validate(target_instance)  # type: ignore[arg-type]
     except jsonschema.ValidationError as e:
         instance_ptr = _path_to_pointer(getattr(e, "absolute_path", ()))
         schema_ptr = _path_to_pointer(getattr(e, "absolute_schema_path", ()))
@@ -259,10 +270,12 @@ def validate_threatmodel_schema(
 
 def validate_overwatch_schema(instance: object) -> None:
     """
-    Validate instance against the latest Overwatch schema (based on YYYYMMDD in filename).
+    Validate instance against the latest Overwatch schema (based on the
+    ``YYYYMMDD`` in the filename).
 
     Raises:
     - SchemaValidationError on validation failure.
-    - SchemaValidationUnavailable if required validation dependencies are missing.
+    - SchemaValidationUnavailable if required validation dependencies are
+      missing.
     """
     _validate(instance, "overwatch")

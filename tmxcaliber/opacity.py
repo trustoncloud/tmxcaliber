@@ -1,33 +1,45 @@
-import re
-import os
-import sys
-import copy
-import zlib
 import base64
+import copy
+import os
+import re
 import subprocess
-from pathlib import Path
-from urllib.parse import unquote
+import sys
+import zlib
 from collections import defaultdict
+from pathlib import Path
+from typing import Any
+from urllib.parse import unquote
 
 from bs4 import BeautifulSoup as bsoup
+from bs4.element import Tag
 
 OPACITY_PERCENT = 10
 BS4_BACKEND = "xml"
 
 
-def decompress(original_soup, bs4_backend="xml"):
-    """
-    tries to decompress contents in `diagram` tag if it's compressed;
-    replaces contents of `diagram` with decoded/decompressed data inplace
+def _get_str_attr(tag: Tag, attr: str, default: str = "") -> str:
+    """Return a single string attribute from a BS4 Tag, falling back to default."""
+    value = tag.get(attr, default)
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and value and isinstance(value[0], str):
+        return ",".join(v for v in value if isinstance(v, str))
+    return default
 
-    :param original_soup BS4: BS4 object of the source file/markup
-    :param bs4_backend str: backend of BS4
+
+def decompress(original_soup: bsoup, bs4_backend: str = "xml") -> None:
+    """
+    Try to decompress contents in `diagram` tag if it's compressed; replaces
+    contents of `diagram` with decoded/decompressed data in place.
+
+    :param original_soup: BS4 object of the source file/markup
+    :param bs4_backend: backend of BS4
     """
     diagram_tag = original_soup.select_one("diagram")
     if diagram_tag:
         decoded_string = base64.b64decode(diagram_tag.text.strip())
 
-        decompressed_string = str()
+        decompressed_string = ""
         is_decompressed = False
         try:
             decompressed_string = unquote(
@@ -44,12 +56,12 @@ def decompress(original_soup, bs4_backend="xml"):
             diagram_tag.append(bsoup(decompressed_string, bs4_backend))
 
 
-def make_validation(soup):
+def make_validation(soup: bsoup) -> None:
     """
-    makes validation over formats of `feature_class` & `threat` values;
-    raises an error if it doesn't pass
+    Make validation over formats of `feature_class` and `threat` values; raises
+    an error if it doesn't pass.
 
-    :param soup BS4: default BS4 object of source file
+    :param soup: default BS4 object of source file
     """
     object_tags = soup.select("object")
 
@@ -61,10 +73,10 @@ def make_validation(soup):
     #   or FCx_all (where x,y are numbers)
     FCx_Ty_re = re.compile(r"^FC\d+_T\d+$")
     FCx_all_re = re.compile(r"^(FC\d+_)*all$")
-    error_list = []
+    error_list: list[str] = []
 
     for tag in object_tags:
-        threat = tag.get("threat")
+        threat = _get_str_attr(tag, "threat")
         if not threat:
             continue
         threat_list = threat.strip().split(",")
@@ -82,7 +94,7 @@ def make_validation(soup):
     #   or all (where x,y are numbers)
     FCx_re = re.compile(r"^((,?FC\d+)|(,?all))+$")
     for tag in object_tags:
-        feature_class = tag.get("feature_class")
+        feature_class = _get_str_attr(tag, "feature_class")
         if not feature_class:
             continue
         feature_class = feature_class.strip()
@@ -95,15 +107,15 @@ def make_validation(soup):
         sys.exit(1)
 
 
-def FCx_do_hide(curr_fc_value, object_tag):
+def FCx_do_hide(curr_fc_value: str, object_tag: Tag) -> bool:
     """
-    detects: should tag to be hided or not; returns bool
+    Detect whether the tag should be hidden; returns bool.
 
-    :param curr_fc_value str: FCx value
-    :param object_tag BS4: object tag of XML file
+    :param curr_fc_value: FCx value
+    :param object_tag: object tag of XML file
     """
-    feature_class = object_tag.get("feature_class", "").strip().split(",")
-    threat_list = object_tag.get("threat", "").strip().split(",")
+    feature_class = _get_str_attr(object_tag, "feature_class").strip().split(",")
+    threat_list = _get_str_attr(object_tag, "threat").strip().split(",")
 
     if curr_fc_value in feature_class:
         return False
@@ -115,55 +127,57 @@ def FCx_do_hide(curr_fc_value, object_tag):
         if threat == "all":
             return False
         threat_fc_value = threat.split("_")[0]
-        fc_all = "%s_all" % threat_fc_value
+        fc_all = f"{threat_fc_value}_all"
         if curr_fc_value == threat_fc_value or fc_all == threat:
             return False
 
     return True
 
 
-def FCx_Ty_do_hide(curr_t_value, object_tag):
+def FCx_Ty_do_hide(curr_t_value: str, object_tag: Tag) -> bool:
     """
-    detects: should tag be hidden or not; returns bool
-    (almost the same as FCx_do_hide function; take a look at it)
+    Detect whether the tag should be hidden (almost the same as FCx_do_hide).
 
-    :param curr_t_value str: Ty value
-    :param object_tag BS4: object tag of XML file
+    :param curr_t_value: Ty value
+    :param object_tag: object tag of XML file
     """
     # must be hidden if there's no `threat` attr at all
-    threat = object_tag.get("threat")
+    threat_attr = _get_str_attr(object_tag, "threat")
 
-    if not threat:
+    if not threat_attr:
         return True
 
-    threat = threat.strip().split(",")
+    threats = threat_attr.strip().split(",")
     curr_fc_value = curr_t_value.split("_")[0]
-    key2 = "%s_all" % curr_fc_value
+    key2 = f"{curr_fc_value}_all"
 
-    if curr_t_value not in threat and "all" not in threat and key2 not in threat:
-        return True
-
-    return False
+    return curr_t_value not in threats and "all" not in threats and key2 not in threats
 
 
-def make_tags_gray(tags):
+def make_tags_gray(tags: list[Tag]) -> None:
     """
-    adds textOpacity/opacity to tags to make them gray (inplace)
+    Add textOpacity/opacity to tags to make them gray (in place).
 
-    :param tags list: list of BS4 objects (tags) to hide
+    :param tags: list of BS4 objects (tags) to hide
     """
     for tag in tags:
-        if not tag.get("style"):
+        existing_style = _get_str_attr(tag, "style")
+        if not existing_style:
             continue
-        tag["style"] += ";textOpacity={0};opacity={0};".format(OPACITY_PERCENT)
+        tag["style"] = (
+            f"{existing_style};textOpacity={OPACITY_PERCENT};opacity={OPACITY_PERCENT};"
+        )
 
 
-def generate_main_dfd_file(original_soup, dest_dir, prefix_service):
+def generate_main_dfd_file(
+    original_soup: bsoup, dest_dir: Path, prefix_service: str
+) -> None:
     """
-    generates the main DFD XML file
+    Generate the main DFD XML file.
 
-    :param original_soup BS4 object: default BS4 object of original file
-    :param dest_dir Path: location to save the files to
+    :param original_soup: default BS4 object of original file
+    :param dest_dir: location to save the files to
+    :param prefix_service: filename prefix
     """
     output_filename_tpl = prefix_service + "_DFD.xml"
     output_filename = (dest_dir / Path(output_filename_tpl)).absolute()
@@ -172,21 +186,27 @@ def generate_main_dfd_file(original_soup, dest_dir, prefix_service):
         print(f"Created {output_filename}")
 
 
-def generate_FCx_files(original_soup, fcx_tx_values, dest_dir, prefix_service):
+def generate_FCx_files(
+    original_soup: bsoup,
+    fcx_tx_values: dict[str, set[str]],
+    dest_dir: Path,
+    prefix_service: str,
+) -> None:
     """
-    generates new XML files based on an original one; makes gray
-    objects/mxcells that haven't FCx value and saves new file into dest_dir
+    Generate new XML files based on an original one; makes gray objects/mxcells
+    that haven't FCx value and saves new file into dest_dir.
 
-    :param original_soup BS4 object: default BS4 object of original file
-    :param fcx_tx_values dict: dict of FCx/Tx values
-    :param dest_dir Path: location to save the files to
+    :param original_soup: default BS4 object of original file
+    :param fcx_tx_values: dict of FCx/Tx values
+    :param dest_dir: location to save the files to
+    :param prefix_service: filename prefix
     """
     output_filename_tpl = prefix_service + "_{fc_value}.xml"
 
-    fc_value_list = []
-    for fc_value in fcx_tx_values.get("FC", []):
+    fc_value_list: list[str] = []
+    for fc_value in fcx_tx_values.get("FC", set()):
         fc_value_list.append(fc_value)
-    for t_value in fcx_tx_values.get("T", []):
+    for t_value in fcx_tx_values.get("T", set()):
         curr_fc_value = t_value.split("_")[0]
         if curr_fc_value not in fc_value_list and curr_fc_value != "all":
             fc_value_list.append(curr_fc_value)
@@ -196,7 +216,7 @@ def generate_FCx_files(original_soup, fcx_tx_values, dest_dir, prefix_service):
 
         # mx cells tags to be hided:
         #   we must include root > mxCell tags here (w/o any condition)
-        mxcell_tags_to_hide = soup.select("root > mxCell")
+        mxcell_tags_to_hide: list[Tag] = list(soup.select("root > mxCell"))
 
         object_tags = soup.select("root > object")
         for object_tag in object_tags:
@@ -216,13 +236,20 @@ def generate_FCx_files(original_soup, fcx_tx_values, dest_dir, prefix_service):
             print(f"Created {output_filename}")
 
 
-def generate_FCx_Ty_files(original_soup, fcx_tx_values, dest_dir, prefix_service):
+def generate_FCx_Ty_files(
+    original_soup: bsoup,
+    fcx_tx_values: dict[str, set[str]],
+    dest_dir: Path,
+    prefix_service: str,
+) -> None:
     """
-    generates new XML files based on an original one; makes gray
-    objects/mxcells that haven't FCx_Ty values and saves new file into dest_dir
+    Generate new XML files based on an original one; makes gray objects/mxcells
+    that haven't FCx_Ty values and saves new file into dest_dir.
 
-    :param original_soup BS4: BS4 object of original file
-    :param dest_dir Path: directory to save the output files to
+    :param original_soup: BS4 object of original file
+    :param fcx_tx_values: dict of FCx/Tx values
+    :param dest_dir: directory to save the output files to
+    :param prefix_service: filename prefix
     """
     # the new files will be generated based on these ones
     output_filename_tpl = prefix_service + "_{t_value}.xml"
@@ -233,7 +260,7 @@ def generate_FCx_Ty_files(original_soup, fcx_tx_values, dest_dir, prefix_service
 
         # mx cells tags to be hided:
         #   we must include root > mxCell tags here (w/o any condition)
-        mxcell_tags_to_hide = soup.select("root > mxCell")
+        mxcell_tags_to_hide: list[Tag] = list(soup.select("root > mxCell"))
 
         object_tags = soup.select("root > object")
         for object_tag in object_tags:
@@ -253,33 +280,30 @@ def generate_FCx_Ty_files(original_soup, fcx_tx_values, dest_dir, prefix_service
             print(f"Created {output_filename}")
 
 
-def get_all_FCx_Tx_values(source_soup):
+def get_all_FCx_Tx_values(source_soup: bsoup) -> dict[str, set[str]]:
     """
-    returns all possible FCx & Tx values defined in source XML file
-    (source_soupobject)
+    Return all possible FCx and Tx values defined in source XML file.
 
-    :param source_soup BS4: default BS4 object of source XML file
+    :param source_soup: default BS4 object of source XML file
     """
     object_tags = source_soup.select("object")
 
-    values = list()
+    values: list[str] = []
     for tag in object_tags:
-        splitted = list()
+        splitted: list[str] = []
 
-        threat = tag.get("threat")
+        threat = _get_str_attr(tag, "threat")
         if threat:
-            splitted = list(map(str.strip, threat.split(",")))
+            splitted = [s.strip() for s in threat.split(",")]
 
-        feature_class = tag.get("feature_class")
+        feature_class = _get_str_attr(tag, "feature_class")
         if feature_class:
-            splitted += list(map(str.strip, feature_class.split(",")))
+            splitted += [s.strip() for s in feature_class.split(",")]
 
-        for chunk in splitted:
-            chunk = chunk if isinstance(chunk, list) else [chunk]
-            values.extend(chunk)
+        values.extend(splitted)
 
     # now construct dict we actually need
-    ret_dict = defaultdict(set)
+    ret_dict: defaultdict[str, set[str]] = defaultdict(set)
     for v in values:
         if "_" in v:
             update_key = "T"
@@ -294,12 +318,18 @@ def get_all_FCx_Tx_values(source_soup):
     #     'FC': {'FC1', 'FC2', ...}
     #     'T': {'FC1_T1', 'FC3_T2', ...}
     # }
-    return ret_dict
+    return dict(ret_dict)
 
 
-def generate_xml(data, service_prefix, threat_dir, fc_dir, validate=False):
+def generate_xml(
+    data: str | bytes,
+    service_prefix: str,
+    threat_dir: str | Path,
+    fc_dir: str | Path,
+    validate: bool = False,
+) -> None:
     """
-    generate threat and feature class focused XML files
+    Generate threat and feature class focused XML files.
 
     :param data: XML data for DFD
     :param service_prefix: prefix to add to generated XML filenames
@@ -307,11 +337,10 @@ def generate_xml(data, service_prefix, threat_dir, fc_dir, validate=False):
     :param fc_dir: output dirpath to store feature class focused XML files
     :param validate: boolean to validate data
     """
-
-    threat_dir = Path(threat_dir)
-    fc_dir = Path(fc_dir)
-    threat_dir.mkdir(exist_ok=True)
-    fc_dir.mkdir(exist_ok=True)
+    threat_path = Path(threat_dir)
+    fc_path = Path(fc_dir)
+    threat_path.mkdir(exist_ok=True)
+    fc_path.mkdir(exist_ok=True)
 
     # decompress it firstly (INPLACE!) (at least try)
     # if it's compressed (contents of diagram tag)
@@ -326,24 +355,26 @@ def generate_xml(data, service_prefix, threat_dir, fc_dir, validate=False):
     fcx_tx_values = get_all_FCx_Tx_values(bsobj)
 
     # generate the main DFD file
-    generate_main_dfd_file(bsobj, fc_dir, service_prefix)
+    generate_main_dfd_file(bsobj, fc_path, service_prefix)
 
     # generate new ...FCx.xml files based on FCx values found
-    generate_FCx_files(bsobj, fcx_tx_values, fc_dir, service_prefix)
+    generate_FCx_files(bsobj, fcx_tx_values, fc_path, service_prefix)
 
     # generate new ...FCx_Ty.xml files based on FCx/Tx values found
-    generate_FCx_Ty_files(bsobj, fcx_tx_values, threat_dir, service_prefix)
+    generate_FCx_Ty_files(bsobj, fcx_tx_values, threat_path, service_prefix)
 
 
-def generate_pngs(binary_path, input_dir, output_dir, width):
+def generate_pngs(
+    binary_path: str, input_dir: str, output_dir: str, width: int
+) -> None:
     output_dir = f"{output_dir.rstrip(os.path.sep)}{os.path.sep}"
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir)
 
-    command = [
+    command: list[str] = [
         *f"{binary_path} -x --width {width} -f png".split(" "),
         *f"-o {output_dir} {input_dir} --no-sandbox".split(" "),
     ]
     print(f"Calling: {' '.join(command)}")
-    result = subprocess.run(command)
+    result: subprocess.CompletedProcess[Any] = subprocess.run(command, check=False)
     result.check_returncode()

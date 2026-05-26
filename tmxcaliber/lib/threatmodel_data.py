@@ -1,27 +1,24 @@
-import io
-import csv
-import json
 import copy
+import csv
+import io
+import json
 import logging
-from typing import Optional, List
+from typing import Any, ClassVar
+
 from .feature_class_hierarchy import FeatureClassHierarchy
-from .tools import sort_by_id, sort_dict_by_id, apply_json_filter
+from .tools import apply_json_filter, sort_by_id, sort_dict_by_id
+
+JsonDict = dict[str, Any]
 
 
 class ThreatModelDataList:
-
-    def __init__(self, threatmodel_data_list):
+    def __init__(self, threatmodel_data_list: list["ThreatModelData"]) -> None:
         self.threatmodel_data_list = threatmodel_data_list
 
-    def get_csv(self):
+    def get_csv(self) -> io.StringIO:
         output = io.StringIO()
-        fieldnames = ["id"] + list(
-            self.threatmodel_data_list[0]
-            .get_json()["threats"][
-                next(iter(self.threatmodel_data_list[0].get_json()["threats"]))
-            ]
-            .keys()
-        )
+        first_threats = self.threatmodel_data_list[0].get_json()["threats"]
+        fieldnames = ["id", *first_threats[next(iter(first_threats))]]
         writer = csv.DictWriter(output, fieldnames=fieldnames)
         writer.writeheader()
         for threatmodel_data in self.threatmodel_data_list:
@@ -32,11 +29,13 @@ class ThreatModelDataList:
         return output
 
 
-def get_permissions(access: dict | None, add_optional: bool = True) -> list[str]:
+def get_permissions(access: JsonDict | None, add_optional: bool = True) -> list[str]:
     """
-    Extract a unique, lower-cased list of permissions from a ThreatModel `access` block.
+    Extract a unique, lower-cased list of permissions from a ThreatModel
+    ``access`` block.
 
-    If add_optional is False, permissions under the OPTIONAL operator are ignored.
+    If ``add_optional`` is False, permissions under the OPTIONAL operator are
+    ignored.
     """
     if not isinstance(access, dict):
         return []
@@ -60,7 +59,7 @@ def get_permissions(access: dict | None, add_optional: bool = True) -> list[str]
     return sorted({x.lower() for x in permissions})
 
 
-def upgrade_to_latest_template_version(tm_json):
+def upgrade_to_latest_template_version(tm_json: JsonDict) -> JsonDict:
     for co in tm_json.get("control_objectives", {}):
         co_data = tm_json["control_objectives"][co]
         if co_data.get("scf") and isinstance(co_data["scf"], str):
@@ -72,21 +71,19 @@ def upgrade_to_latest_template_version(tm_json):
             tm_json["feature_classes"][fc]["class_relationship"] = []
 
     # Due to older version calling release time "timestamp"
-    if tm_json.get("metadata"):
-        if tm_json["metadata"].get("timestamp"):
-            tm_json["metadata"]["release"] = tm_json["metadata"]["timestamp"]
+    if tm_json.get("metadata") and tm_json["metadata"].get("timestamp"):
+        tm_json["metadata"]["release"] = tm_json["metadata"]["timestamp"]
     return tm_json
 
 
 class ThreatModelData:
+    threatmodel_data_list: ClassVar[list["ThreatModelData"]] = []
 
-    threatmodel_data_list = []
-
-    def __init__(self, threatmodel_json: dict, *, add_to_list: bool = True):
+    def __init__(self, threatmodel_json: JsonDict, *, add_to_list: bool = True) -> None:
         upgraded_json = upgrade_to_latest_template_version(threatmodel_json)
-        self.threatmodel_json_original = copy.deepcopy(upgraded_json)
-        self.threatmodel_json = upgraded_json
-        self.metadata = self.threatmodel_json.get("metadata")
+        self.threatmodel_json_original: JsonDict = copy.deepcopy(upgraded_json)
+        self.threatmodel_json: JsonDict = upgraded_json
+        self.metadata: JsonDict | None = self.threatmodel_json.get("metadata")
         if self.metadata:
             self.release = self.metadata.get("release")
         self.threats = sort_dict_by_id(self.threatmodel_json.get("threats", {}))
@@ -105,13 +102,13 @@ class ThreatModelData:
             ThreatModelData.threatmodel_data_list.append(self)
 
     def get_feature_classes_not_fully_related(
-        self, feature_class_ids_to_filter: list
-    ) -> list:
+        self, feature_class_ids_to_filter: list[str]
+    ) -> list[str]:
         feature_class_hierarchy = FeatureClassHierarchy(self.original_feature_classes)
 
         for feature_class_id_to_filter in feature_class_ids_to_filter:
             actual_feature_class_id_to_filter = None
-            for fc in self.feature_classes.keys():
+            for fc in self.feature_classes:
                 if fc.lower() == feature_class_id_to_filter.lower():
                     actual_feature_class_id_to_filter = fc
                     break
@@ -121,7 +118,10 @@ class ThreatModelData:
                 or actual_feature_class_id_to_filter not in self.feature_classes
             ):
                 logging.warning(
-                    f"[WARM] The provided FC id ({feature_class_id_to_filter}) is not present in {self.release}. Make sure to write the full ID, (e.g., Route53.FC1)"
+                    "[WARM] The provided FC id (%s) is not present in %s. "
+                    "Make sure to write the full ID, (e.g., Route53.FC1)",
+                    feature_class_id_to_filter,
+                    self.release,
                 )
 
         feature_class_hierarchy.remove_feature_classes_and_orphan_descendants(
@@ -129,12 +129,12 @@ class ThreatModelData:
         )
         return list(set(feature_class_hierarchy.graph.nodes()))
 
-    def get_ancestors_feature_classes(self, feature_class_id):
+    def get_ancestors_feature_classes(self, feature_class_id: str) -> list[str]:
         feature_class_hierarchy = FeatureClassHierarchy(self.original_feature_classes)
         return list(set(feature_class_hierarchy.get_ancestors(feature_class_id)))
 
-    def get_controls_for_current_threats(self) -> dict:
-        controls: dict = {}
+    def get_controls_for_current_threats(self) -> JsonDict:
+        controls: JsonDict = {}
         threat_ids = set(self.threats.keys())
         for control_id, control in self.controls.items():
             feature_classes = control.get("feature_class", [])
@@ -143,7 +143,7 @@ class ThreatModelData:
 
             # Check if the control's feature class is in the list of feature classes
             if any(fc in feature_classes for fc in self.feature_classes):
-                # Check if any mitigation in the control is related to the threats we have
+                # Check if any mitigation in the control is related to current threats
                 mitigate = control.get("mitigate", [])
                 if not isinstance(mitigate, list):
                     mitigate = []
@@ -155,7 +155,7 @@ class ThreatModelData:
                 ):
                     controls[control_id] = control
 
-        for control_id, control in controls.copy().items():
+        for control in controls.copy().values():
             assured_by = control.get("assured_by") or ""
             if not isinstance(assured_by, str):
                 assured_by = ""
@@ -171,9 +171,10 @@ class ThreatModelData:
 
         return sort_dict_by_id(controls)
 
-    def get_upstream_dependent_controls(self, control_id) -> dict:
-
-        def get_all_dependencies(controls, control_id, seen=None):
+    def get_upstream_dependent_controls(self, control_id: str) -> JsonDict:
+        def get_all_dependencies(
+            controls: JsonDict, control_id: str, seen: set[str] | None = None
+        ) -> set[str]:
             if seen is None:
                 seen = set()
 
@@ -183,23 +184,22 @@ class ThreatModelData:
             # Check if depends_on contains multiple control IDs separated by commas
             if depends_on:
                 depends_on_ids = depends_on.split(",")
-                for depends_on_id in depends_on_ids:
-                    depends_on_id = depends_on_id.strip()  # Clean up any whitespace
+                for depends_on_id_raw in depends_on_ids:
+                    depends_on_id = depends_on_id_raw.strip()
                     if depends_on_id and depends_on_id not in seen:
                         seen.add(depends_on_id)
                         get_all_dependencies(controls, depends_on_id, seen)
 
             return seen
 
-        controls = {}
+        controls: JsonDict = {}
         for control_dependency_id in get_all_dependencies(self.controls, control_id):
             controls[control_dependency_id] = self.controls[control_dependency_id]
         return controls
 
-    def get_downstream_dependent_controls(self, control_ids: list) -> dict:
-
-        def build_reverse_dependencies(controls):
-            reverse_deps = {}
+    def get_downstream_dependent_controls(self, control_ids: list[str]) -> set[str]:
+        def build_reverse_dependencies(controls: JsonDict) -> dict[str, list[str]]:
+            reverse_deps: dict[str, list[str]] = {}
             for ctrl_id, ctrl_data in controls.items():
                 depends_on = ctrl_data.get("depends_on")
                 if depends_on:
@@ -213,8 +213,11 @@ class ThreatModelData:
             return reverse_deps
 
         def find_all_dependents(
-            reverse_deps, initial_controls: list, all_controls, seen=None
-        ):
+            reverse_deps: dict[str, list[str]],
+            initial_controls: list[str],
+            all_controls: JsonDict,
+            seen: set[str] | None = None,
+        ) -> set[str]:
             if seen is None:
                 seen = set()
 
@@ -226,17 +229,17 @@ class ThreatModelData:
                 if current_control in reverse_deps:
                     for dependent in reverse_deps[current_control]:
                         if dependent not in seen:
-                            # Check if all dependencies of 'dependent' are in 'seen' or are among the initial controls
+                            # Check whether all dependencies of 'dependent' are
+                            # already in 'seen' or among the initial controls.
                             real_control_id = None
                             for control_id in all_controls:
                                 if control_id.lower() == dependent:
                                     real_control_id = control_id
                                     break
+                            if real_control_id is None:
+                                continue
                             dependent_data = all_controls[real_control_id]
-                            if (
-                                "depends_on" in dependent_data
-                                and dependent_data["depends_on"]
-                            ):
+                            if dependent_data.get("depends_on"):
                                 dependent_dependencies = [
                                     dep.strip()
                                     for dep in dependent_data["depends_on"]
@@ -257,16 +260,13 @@ class ThreatModelData:
             return seen
 
         reverse_dependencies = build_reverse_dependencies(self.controls)
-        all_dependents = find_all_dependents(
-            reverse_dependencies, control_ids, self.controls
-        )
-        return all_dependents
+        return find_all_dependents(reverse_dependencies, control_ids, self.controls)
 
-    def get_removed_output(self) -> dict:
+    def get_removed_output(self) -> JsonDict:
         return apply_json_filter(self.threatmodel_json_original, self.get_json())
 
-    def get_json(self) -> dict:
-        json_data = {}
+    def get_json(self) -> JsonDict:
+        json_data: JsonDict = {}
         # Iterate over the keys of the original threatmodel_json
         for key, value in self.threatmodel_json.items():
             if key == "threats":
@@ -284,7 +284,7 @@ class ThreatModelData:
         return json_data
 
     @classmethod
-    def get_csv_of_threats(cls):
+    def get_csv_of_threats(cls) -> list[list[Any]]:
         if not cls.threatmodel_data_list:
             return []
 
@@ -299,8 +299,8 @@ class ThreatModelData:
         if not first_threats:
             return []
 
-        fieldnames = ["id"] + list(first_threats[next(iter(first_threats))].keys())
-        csv_matrix = []
+        fieldnames = ["id", *first_threats[next(iter(first_threats))]]
+        csv_matrix: list[list[Any]] = []
         csv_matrix.append(fieldnames)
         for threatmodel_data in cls.threatmodel_data_list:
             threats = threatmodel_data.threats
@@ -317,8 +317,8 @@ class ThreatModelData:
         cls,
         threatmodel_data_list: list["ThreatModelData"],
         *,
-        controls_by_tm: list[dict],
-    ) -> list[list[str]]:
+        controls_by_tm: list[JsonDict],
+    ) -> list[list[Any]]:
         if not threatmodel_data_list or not controls_by_tm:
             return []
 
@@ -340,7 +340,7 @@ class ThreatModelData:
 
         all_fieldnames = [
             field
-            for field in first_controls[next(iter(first_controls))].keys()
+            for field in first_controls[next(iter(first_controls))]
             if field not in ("id", "objective", "objective_description", "retired")
         ]
 
@@ -348,10 +348,12 @@ class ThreatModelData:
         ordered_fieldnames += all_fieldnames
         ordered_fieldnames.append("retired")
 
-        csv_matrix: list[list[str]] = []
+        csv_matrix: list[list[Any]] = []
         csv_matrix.append(ordered_fieldnames)
 
-        for threatmodel_data, controls in zip(threatmodel_data_list, controls_by_tm):
+        for threatmodel_data, controls in zip(
+            threatmodel_data_list, controls_by_tm, strict=False
+        ):
             control_objectives = threatmodel_data.get_json().get(
                 "control_objectives", {}
             )
@@ -377,8 +379,8 @@ class ThreatModelData:
 
     @classmethod
     def get_csv_of_controls(
-        cls, control_filter: Optional[List[str]] = None, exclude: bool = False
-    ):
+        cls, control_filter: list[str] | None = None, exclude: bool = False
+    ) -> list[list[Any]]:
         if not cls.threatmodel_data_list:
             return []
 
@@ -389,13 +391,13 @@ class ThreatModelData:
         ):
             return []
 
-        controls_by_tm: list[dict] = []
+        controls_by_tm: list[JsonDict] = []
         if control_filter is not None:
             filtered_set = {control_id.lower() for control_id in control_filter}
 
             for threatmodel_data in cls.threatmodel_data_list:
                 tm_controls = threatmodel_data.get_json()["controls"]
-                subset: dict = {}
+                subset: JsonDict = {}
                 for control_id, control_data in tm_controls.items():
                     in_filter = control_id.lower() in filtered_set
                     if (exclude and not in_filter) or ((not exclude) and in_filter):
@@ -413,12 +415,12 @@ class ThreatModelData:
 
     @classmethod
     def get_csv_of_aws_data_perimeter_controls(
-        cls, control_filter: Optional[List[str]] = None, exclude: bool = False
-    ):
+        cls, control_filter: list[str] | None = None, exclude: bool = False
+    ) -> list[list[Any]]:
         if not cls.threatmodel_data_list:
             return []
 
-        control_ids = set()
+        control_ids: set[str] = set()
         for threatmodel_data in cls.threatmodel_data_list:
             scorecard = threatmodel_data.get_json().get("scorecard") or {}
             aws_data_perimeter = scorecard.get("aws_data_perimeter") or {}
@@ -453,10 +455,10 @@ class ThreatModelData:
 
         ids_lower = {control_id.lower() for control_id in ids_list}
 
-        controls_by_tm: list[dict] = []
+        controls_by_tm: list[JsonDict] = []
         for threatmodel_data in cls.threatmodel_data_list:
             tm_controls = threatmodel_data.get_json().get("controls", {})
-            subset: dict = {}
+            subset: JsonDict = {}
             for control_id, control_data in tm_controls.items():
                 if control_id.lower() in ids_lower:
                     subset[control_id] = control_data
@@ -474,12 +476,12 @@ class ThreatModelData:
 
 
 def get_classified_cvssed_control_ids_by_co(
-    control_id_by_cvss_severity: "dict[str, list]",
+    control_id_by_cvss_severity: dict[str, list[str]],
     control_obj_id: str,
-    control_data: dict,
-) -> "dict[str, list]":
+    control_data: JsonDict,
+) -> dict[str, list[str]]:
     severity_range = ("Very High", "High", "Medium", "Low", "Very Low")
-    control_id_list = {}
+    control_id_list: dict[str, list[str]] = {}
 
     for idx, severity in enumerate(severity_range):
         if control_id_by_cvss_severity:

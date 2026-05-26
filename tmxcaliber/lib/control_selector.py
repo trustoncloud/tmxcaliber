@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from .filter import Filter
 from .threatmodel_data import ThreatModelData
 from .tools import sort_by_id
 
 
-def _get_controls_dict(tm: ThreatModelData) -> dict:
+def _get_controls_dict(tm: ThreatModelData) -> dict[str, Any]:
     data = tm.get_json().get("controls", {})
     return data if isinstance(data, dict) else {}
 
 
-def _get_scorecard_dict(tm: ThreatModelData) -> dict:
+def _get_scorecard_dict(tm: ThreatModelData) -> dict[str, Any]:
     data = tm.get_json().get("scorecard", {})
     return data if isinstance(data, dict) else {}
 
@@ -38,7 +39,7 @@ def get_all_control_ids(models: list[ThreatModelData]) -> dict[str, str]:
     """
     out: dict[str, str] = {}
     for tm in models:
-        for control_id in _get_controls_dict(tm).keys():
+        for control_id in _get_controls_dict(tm):
             lower = control_id.lower()
             if lower and lower not in out:
                 out[lower] = control_id
@@ -81,11 +82,9 @@ def expand_ids_to_control_ids_lower(
     2) any controls whose objective matches a provided control objective id
        (filter_obj.control_objectives), union across models.
     """
-    requested: set[str] = set(x.lower() for x in (filter_obj.controls or []))
+    requested: set[str] = {x.lower() for x in (filter_obj.controls or [])}
 
-    requested_co: set[str] = set(
-        x.lower() for x in (filter_obj.control_objectives or [])
-    )
+    requested_co: set[str] = {x.lower() for x in (filter_obj.control_objectives or [])}
     if not requested_co:
         return requested
 
@@ -135,7 +134,7 @@ def resolve_control_ids(
         if exclude and not ids_were_provided:
             # ALL \ PERIMETER
             final_lower = set(all_map.keys()) - perimeter_lower
-            canonical = [all_map[l] for l in final_lower if l in all_map]
+            canonical = [all_map[key] for key in final_lower if key in all_map]
             return sort_by_id(canonical)
 
         requested_lower = expand_ids_to_control_ids_lower(models, filter_obj)
@@ -151,8 +150,11 @@ def resolve_control_ids(
                 # PERIMETER ∩ IDS
                 final_lower &= requested_lower
 
-        canonical = [perimeter_map.get(l) or all_map.get(l) for l in final_lower]
-        canonical = [c for c in canonical if isinstance(c, str)]
+        canonical = [
+            c
+            for c in (perimeter_map.get(key) or all_map.get(key) for key in final_lower)
+            if isinstance(c, str)
+        ]
         return sort_by_id(canonical)
 
     # list_type == "ALL" (default)
@@ -167,5 +169,5 @@ def resolve_control_ids(
             # ALL ∩ IDS
             final_lower &= requested_lower
 
-    canonical = [all_map[l] for l in final_lower if l in all_map]
+    canonical = [all_map[key] for key in final_lower if key in all_map]
     return sort_by_id(canonical)

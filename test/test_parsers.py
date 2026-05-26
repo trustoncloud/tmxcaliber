@@ -1,5 +1,6 @@
 import pytest
-from tmxcaliber.parsers import is_file, is_file_or_dir, ArgumentTypeError
+
+from tmxcaliber.parsers import ArgumentTypeError, is_file, is_file_or_dir
 
 
 @pytest.fixture
@@ -40,7 +41,7 @@ def test_invalid_file(mock_filesystem):
     path = mock_filesystem["invalid_file"]
     with pytest.raises(
         ArgumentTypeError,
-        match="The file .* is not valid, only json or xml can be given.",
+        match=r"The file .* is not valid, only json or xml can be given\.",
     ):
         is_file_or_dir(path)
 
@@ -52,7 +53,7 @@ def test_valid_directory(mock_filesystem):
 
 def test_non_existent_path(mock_filesystem):
     path = mock_filesystem["non_existent_path"]
-    with pytest.raises(ArgumentTypeError, match="The path .* does not exist."):
+    with pytest.raises(ArgumentTypeError, match=r"The path .* does not exist\."):
         is_file_or_dir(path)
 
 
@@ -94,18 +95,18 @@ def test_is_file_with_invalid_file(mock_filesystem_paths):
     path = mock_filesystem_paths["invalid_file"]
     with pytest.raises(
         ArgumentTypeError,
-        match="The file .* is not valid, only json or XML can be given.",
+        match=r"The file .* is not valid, only json or XML can be given\.",
     ):
         is_file(path)
 
 
 def test_is_file_with_non_file(mock_filesystem_paths):
     path = mock_filesystem_paths["non_file"]
-    with pytest.raises(ArgumentTypeError, match="The path .* is not a file."):
+    with pytest.raises(ArgumentTypeError, match=r"The path .* is not a file\."):
         is_file(path)
 
 
 def test_is_file_with_non_existent_path(mock_filesystem_paths):
     path = mock_filesystem_paths["non_existent_path"]
-    with pytest.raises(ArgumentTypeError, match="The path .* does not exist."):
+    with pytest.raises(ArgumentTypeError, match=r"The path .* does not exist\."):
         is_file(path)

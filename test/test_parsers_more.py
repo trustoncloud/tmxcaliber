@@ -38,6 +38,6 @@ def test_is_file_or_dir_rejects_paths_that_are_neither_files_nor_directories(
 
     with pytest.raises(
         ArgumentTypeError,
-        match="The path mystery-path is neither a file nor a directory.",
+        match=r"The path mystery-path is neither a file nor a directory\.",
     ):
         is_file_or_dir("mystery-path")

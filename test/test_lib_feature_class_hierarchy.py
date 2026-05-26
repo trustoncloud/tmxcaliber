@@ -1,8 +1,8 @@
-import pytest
-from unittest.mock import patch
-from tmxcaliber.lib.feature_class_hierarchy import FeatureClassHierarchy
-from tmxcaliber.lib.errors import FeatureClassCycleError
 import networkx as nx
+import pytest
+
+from tmxcaliber.lib.errors import FeatureClassCycleError
+from tmxcaliber.lib.feature_class_hierarchy import FeatureClassHierarchy
 
 feature_classes_with_cycle = {
     "Someservice.FC1": {
@@ -159,12 +159,13 @@ def execute_remove_test(hierarchy, nodes_to_remove, expected_removed_nodes):
     expected_remaining_nodes = set(hierarchy.graph.nodes()) - expected_removed_nodes
     hierarchy.remove_feature_classes_and_orphan_descendants(nodes_to_remove)
     actual_remaining_nodes = set(hierarchy.graph.nodes())
-    assert expected_removed_nodes.isdisjoint(
-        actual_remaining_nodes
-    ), "Removed nodes test failed: Some nodes that should be removed are still present."
-    assert (
-        expected_remaining_nodes == actual_remaining_nodes
-    ), "Remaining nodes test failed: The nodes that should remain do not match."
+    assert expected_removed_nodes.isdisjoint(actual_remaining_nodes), (
+        "Removed nodes test failed: Some nodes that should be removed are "
+        "still present."
+    )
+    assert expected_remaining_nodes == actual_remaining_nodes, (
+        "Remaining nodes test failed: The nodes that should remain do not match."
+    )
 
 
 def test_remove_root_relations(hierarchy_complex):
