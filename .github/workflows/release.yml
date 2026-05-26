@@ -20,33 +20,35 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v6
 
-    - name: Set up Python
-      uses: actions/setup-python@v6
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
       with:
-        python-version: 3.11
+        python-version: "3.11"
 
-    - name: Install dependencies
-      run: |
-        pip install -r requirements.txt
-        pip install .
+    - name: Install project and dev dependencies
+      run: uv sync --frozen --extra dev
 
     - name: Ensure release version is incremented
       env:
         GITHUB_REPOSITORY: ${{ github.repository }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: python .github/scripts/check_release_version.py
+      run: uv run python .github/scripts/check_release_version.py
       continue-on-error: false
 
     - name: Run pytest test suite with coverage
       run: |
-        python ./test/run_tests.py
-        coverage run ./test/run_tests.py
-        coverage report -m
+        uv run coverage run ./test/run_tests.py
+        uv run coverage report -m
       continue-on-error: false
 
-    - name: Run Black
-      run: black --check .
-      continue-on-error: false
+    - name: Run Ruff format check
+      run: uv run ruff format --check .
+
+    - name: Run Ruff lint
+      run: uv run ruff check .
+
+    - name: Run mypy
+      run: uv run mypy
 
   create_release:
     name: Create GitHub Release
@@ -57,10 +59,10 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v6
 
-    - name: Extract version from setup.py
+    - name: Extract version from pyproject.toml
       id: get_version
       run: |
-        VERSION=$(python setup.py --version)
+        VERSION=$(python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
         echo "VERSION=$VERSION" >> $GITHUB_ENV
 
     - name: Set up date for release
@@ -77,7 +79,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         gh auth setup-git
-  
+
     - name: Create GitHub Release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

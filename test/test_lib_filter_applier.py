@@ -94,7 +94,6 @@ def create_connected_threatmodel() -> ThreatModelData:
 
 
 class TestFilterApplier:
-
     def test_fc_filter(self):
         threatmodel_data = create_connected_threatmodel()
         filter_to_apply = Filter(ids="Someservice.FC10,someservice.Fc8")

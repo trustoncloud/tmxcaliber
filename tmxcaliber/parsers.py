@@ -1,19 +1,36 @@
-from argparse import ArgumentParser, ArgumentTypeError, RawTextHelpFormatter
+from __future__ import annotations
+
 import csv
 import os
-from .params import Operation, ListOperation, GUARDDUTY_PATTERN_NAME, XML_DIR, IMG_DIR
-from .lib.scf import get_supported_scf
+from argparse import (
+    ArgumentParser,
+    ArgumentTypeError,
+    RawTextHelpFormatter,
+    _SubParsersAction,
+)
+from typing import TYPE_CHECKING
+
 from .lib.filter import (
-    IDS_INPUT_SEPARATOR,
     EVENTS_INPUT_SEPARATOR,
+    IDS_INPUT_SEPARATOR,
     PERMISSIONS_INPUT_SEPARATOR,
 )
+from .lib.scf import get_supported_scf
+from .params import GUARDDUTY_PATTERN_NAME, IMG_DIR, XML_DIR, ListOperation, Operation
+
+if TYPE_CHECKING:
+    SubParsers = _SubParsersAction[ArgumentParser]
+else:
+    SubParsers = _SubParsersAction
 
 
-def add_add_mapping_parser(subparsers):
+def add_add_mapping_parser(subparsers: SubParsers) -> None:
     add_mapping_parser = subparsers.add_parser(
         Operation.add_mapping,
-        help="add a supported framework in the Secure Control Framework (https://securecontrolsframework.com) into the ThreatModel JSON data.",
+        help=(
+            "add a supported framework in the Secure Control Framework "
+            "(https://securecontrolsframework.com) into the ThreatModel JSON data."
+        ),
         formatter_class=RawTextHelpFormatter,
     )
     add_scf_argument(add_mapping_parser)
@@ -23,7 +40,7 @@ def add_add_mapping_parser(subparsers):
     add_output_argument(add_mapping_parser)
 
 
-def add_changelog_parser(subparsers):
+def add_changelog_parser(subparsers: SubParsers) -> None:
     changelog_parser = subparsers.add_parser(
         Operation.create_change_log,
         help="create the change log between 2 ThreatModel data.",
@@ -42,7 +59,7 @@ def add_changelog_parser(subparsers):
     add_exclude_flag(changelog_parser)
 
 
-def add_filter_parser(subparsers):
+def add_filter_parser(subparsers: SubParsers) -> None:
     filter_parser = subparsers.add_parser(
         Operation.filter,
         help="filter down the ThreatModel data.",
@@ -52,7 +69,10 @@ def add_filter_parser(subparsers):
     filter_parser.add_argument(
         "--output-removed",
         action="store_true",
-        help="flag to output all the removed information into another file. Require --output.",
+        help=(
+            "flag to output all the removed information into another file. "
+            "Require --output."
+        ),
     )
     filter_parser.add_argument(
         "--permissions",
@@ -77,7 +97,7 @@ def add_filter_parser(subparsers):
     add_exclude_flag(filter_parser)
 
 
-def add_gen_parser(subparsers):
+def add_gen_parser(subparsers: SubParsers) -> None:
     gen_parser = subparsers.add_parser(
         Operation.generate,
         help="generate threat specific PNGs from XML data.",
@@ -113,7 +133,7 @@ def add_gen_parser(subparsers):
     add_source_argument(gen_parser)
 
 
-def add_list_parser(subparsers):
+def add_list_parser(subparsers: SubParsers) -> None:
     list_parser = subparsers.add_parser(
         Operation.list,
         help="List data of one or more ThreatModels.",
@@ -123,7 +143,7 @@ def add_list_parser(subparsers):
         title="list_type", dest="list_type", required=True
     )
 
-    def add_list_threats_parser(list_subparsers):
+    def add_list_threats_parser(list_subparsers: SubParsers) -> None:
         threat_list_parser = list_subparsers.add_parser(
             ListOperation.threats,
             help="List threat data of one or more ThreatModels.",
@@ -135,7 +155,7 @@ def add_list_parser(subparsers):
         add_severity_filter_argument(threat_list_parser)
         add_ids_filter_argument(threat_list_parser)
 
-    def add_list_controls_parser(list_subparsers):
+    def add_list_controls_parser(list_subparsers: SubParsers) -> None:
         control_list_parser = list_subparsers.add_parser(
             ListOperation.controls,
             help="List control data of one or more ThreatModels.",
@@ -153,12 +173,12 @@ def add_list_parser(subparsers):
             help=(
                 "Select the controls list type.\n"
                 "1) ALL: all controls (default)\n"
-                "2) AWS_DATA_PERIMETER: only control IDs referenced by scorecard.aws_data_perimeter "
-                "(excluding NA categories)."
+                "2) AWS_DATA_PERIMETER: only control IDs referenced by "
+                "scorecard.aws_data_perimeter (excluding NA categories)."
             ),
         )
 
-    def add_list_services_parser(list_subparsers):
+    def add_list_services_parser(list_subparsers: SubParsers) -> None:
         service_list_parser = list_subparsers.add_parser(
             ListOperation.services,
             help="List service names and their ThreatModel JSON file.",
@@ -173,7 +193,7 @@ def add_list_parser(subparsers):
             help="format to output (default to CSV).",
         )
 
-    def add_list_feature_classes_parser(list_subparsers):
+    def add_list_feature_classes_parser(list_subparsers: SubParsers) -> None:
         feature_class_list_parser = list_subparsers.add_parser(
             ListOperation.feature_classes,
             help="List feature classes of one ThreatModel JSON file.",
@@ -194,10 +214,13 @@ def add_list_parser(subparsers):
     add_list_feature_classes_parser(list_subparsers)
 
 
-def add_map_parser(subparsers):
+def add_map_parser(subparsers: SubParsers) -> None:
     map_parser = subparsers.add_parser(
         Operation.map,
-        help="map ThreatModel data to a supported framework in the Secure Control Framework (https://securecontrolsframework.com).",
+        help=(
+            "map ThreatModel data to a supported framework in the Secure Control "
+            "Framework (https://securecontrolsframework.com)."
+        ),
         formatter_class=RawTextHelpFormatter,
     )
     add_scf_argument(map_parser)
@@ -214,7 +237,7 @@ def add_map_parser(subparsers):
     add_source_argument(map_parser)
 
 
-def add_scan_parser(subparsers):
+def add_scan_parser(subparsers: SubParsers) -> None:
     scan_parser = subparsers.add_parser(
         Operation.scan,
         help="scan the ThreatModel data for a given pattern.",
@@ -233,9 +256,9 @@ def add_scan_parser(subparsers):
     add_output_argument(scan_parser)
 
 
-def valid_csv_path(file_path):
+def valid_csv_path(file_path: str) -> str:
     try:
-        with open(file_path, mode="r", newline="", encoding="utf-8") as file:
+        with open(file_path, newline="", encoding="utf-8") as file:
             reader = csv.reader(file)
             first_row = next(reader, None)  # Read the first row
             if first_row is None:
@@ -252,7 +275,8 @@ def valid_csv_path(file_path):
                 row_length = len(row)
                 if row_length != first_row_count:
                     raise ValueError(
-                        f"Row {i} does not match first row column count. Found {row_length} columns, expected {first_row_count}."
+                        f"Row {i} does not match first row column count. "
+                        f"Found {row_length} columns, expected {first_row_count}."
                     )
 
                 # Optionally add to a set to check for varied lengths
@@ -262,12 +286,14 @@ def valid_csv_path(file_path):
             if len(row_lengths) > 1:
                 raise ValueError("Inconsistent number of columns across rows.")
 
-    except FileNotFoundError:
-        raise ArgumentTypeError("The specified file does not exist.")
-    except csv.Error as e:
-        raise ArgumentTypeError(f"CSV parsing error: {e}")
-    except Exception as e:
-        raise ArgumentTypeError(f"An error occurred while validating the CSV file: {e}")
+    except FileNotFoundError as exc:
+        raise ArgumentTypeError("The specified file does not exist.") from exc
+    except csv.Error as exc:
+        raise ArgumentTypeError(f"CSV parsing error: {exc}") from exc
+    except Exception as exc:
+        raise ArgumentTypeError(
+            f"An error occurred while validating the CSV file: {exc}"
+        ) from exc
 
     return file_path
 
@@ -300,16 +326,21 @@ def is_file_or_dir(path: str) -> str:
     return path
 
 
-def add_exclude_flag(*parsers: ArgumentParser):
+def add_exclude_flag(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "--exclude",
             action="store_true",
-            help="Enable exclusion mode. Items specified in --ids will be excluded from the output.",
+            help=(
+                "Enable exclusion mode. Items specified in --ids will be "
+                "excluded from the output."
+            ),
         )
 
 
-def add_format_argument(*parsers: ArgumentParser, choices, default, help):
+def add_format_argument(
+    *parsers: ArgumentParser, choices: list[str], default: str, help: str
+) -> None:
     for parser in parsers:
         parser.add_argument(
             "--format",
@@ -320,7 +351,7 @@ def add_format_argument(*parsers: ArgumentParser, choices, default, help):
         )
 
 
-def add_framework_argument(*parsers: ArgumentParser):
+def add_framework_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "--framework-name",
@@ -328,7 +359,8 @@ def add_framework_argument(*parsers: ArgumentParser):
             required=True,
             help=(
                 "framework name to map to. Options are:\n"
-                "1) the exact name present in the Secure Control Framework header (replace carriage returns by spaces), or\n"
+                "1) the exact name present in the Secure Control Framework "
+                "header (replace carriage returns by spaces), or\n"
                 "2) your own framework name\n\n"
             ),
         )
@@ -337,7 +369,8 @@ def add_framework_argument(*parsers: ArgumentParser):
             "--framework-map",
             type=valid_csv_path,
             help=(
-                "path to a CSV file to your own framework map to SCF. No header row.\n"
+                "path to a CSV file to your own framework map to SCF. "
+                "No header row.\n"
                 "only if you use your own framework.\n\n"
             ),
         )
@@ -346,45 +379,50 @@ def add_framework_argument(*parsers: ArgumentParser):
             "--framework-metadata",
             type=valid_csv_path,
             help=(
-                "path to a CSV file to add metadata into your mapping. Header row is used for titles.\n"
+                "path to a CSV file to add metadata into your mapping. "
+                "Header row is used for titles.\n"
                 "only if you use your own framework.\n\n"
             ),
         )
 
 
-def add_ids_filter_argument(*parsers: ArgumentParser):
+def add_ids_filter_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "--ids",
             type=str,
             help=(
-                "filter data by IDs (can be feature classes, threats, controls, or control objectives). "
+                "filter data by IDs (can be feature classes, threats, controls, "
+                "or control objectives). "
                 f"Separate by `{IDS_INPUT_SEPARATOR}`, if several.\n\n"
             ),
         )
 
 
-def add_metadata_argument(*parsers: ArgumentParser):
+def add_metadata_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "--metadata",
             type=valid_csv_path,
             help=(
-                "path to a CSV file to add metadata into your mapping. Header row is used for titles.\n\n"
+                "path to a CSV file to add metadata into your mapping. "
+                "Header row is used for titles.\n\n"
             ),
         )
 
 
-def add_output_argument(*parsers: ArgumentParser):
+def add_output_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "--output",
             type=str,
-            help="output file to write the results. If not provided, prints to stdout.",
+            help=(
+                "output file to write the results. If not provided, prints to stdout."
+            ),
         )
 
 
-def add_scf_argument(*parsers: ArgumentParser):
+def add_scf_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "--scf",
@@ -395,26 +433,32 @@ def add_scf_argument(*parsers: ArgumentParser):
         )
 
 
-def add_severity_filter_argument(*parsers: ArgumentParser):
+def add_severity_filter_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "--severity",
             type=str,
             choices=["very high", "high", "medium", "low", "very low"],
-            help="filter data by threat for severity equal or above the selected value.\n\n",
+            help=(
+                "filter data by threat for severity equal or above the "
+                "selected value.\n\n"
+            ),
         )
 
 
-def add_source_argument(*parsers: ArgumentParser):
+def add_source_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "source",
             type=is_file,
-            help="path to the ThreatModel JSON file. We support XML file for internal purposes on some operations.",
+            help=(
+                "path to the ThreatModel JSON file. We support XML file for "
+                "internal purposes on some operations."
+            ),
         )
 
 
-def add_source_new_argument(*parsers: ArgumentParser):
+def add_source_new_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "new_source",
@@ -423,7 +467,7 @@ def add_source_new_argument(*parsers: ArgumentParser):
         )
 
 
-def add_source_old_argument(*parsers: ArgumentParser):
+def add_source_old_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "old_source",
@@ -432,10 +476,13 @@ def add_source_old_argument(*parsers: ArgumentParser):
         )
 
 
-def add_source_json_or_dir_argument(*parsers: ArgumentParser):
+def add_source_json_or_dir_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "source",
             type=is_file_or_dir,
-            help="Path to the ThreatModel JSON file or directory containing ThreatModel JSON files.",
+            help=(
+                "Path to the ThreatModel JSON file or directory containing "
+                "ThreatModel JSON files."
+            ),
         )

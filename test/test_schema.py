@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 from pathlib import Path
-from typing import Callable
+from types import SimpleNamespace
 
 import pytest
 
@@ -159,7 +158,8 @@ def test_overwatch_no_schema_files_raises(
 def test_unavailable_jsonschema_bubbles(
     schema_env: SimpleNamespace, monkeypatch
 ) -> None:
-    # Ensure there is at least one overwatch schema (won't be read because we short-circuit)
+    # Ensure there is at least one overwatch schema (won't be read because
+    # we short-circuit)
     schema_env.write(
         "overwatch",
         "20240101",

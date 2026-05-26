@@ -1,12 +1,16 @@
 import json
+from typing import Any
+
 from deepdiff import DeepDiff
-from deepdiff.model import PrettyOrderedSet
+from deepdiff.helper import SetOrdered
+
 from .tools import (
     convert_epoch_to_utc,
-    sort_dict_list_by_id,
     extract_letters_and_number,
+    sort_dict_list_by_id,
 )
-from typing import List
+
+JsonDict = dict[str, Any]
 
 TOP_KEYS = [
     "controls",
@@ -19,22 +23,27 @@ TOP_KEYS = [
 
 
 class Change:
-    def __init__(self, change_type, category=None, identifier=None):
+    def __init__(
+        self,
+        change_type: str,
+        category: str | None = None,
+        identifier: str | None = None,
+    ) -> None:
         self.change_type = change_type
         self.category = category
         self.identifier = identifier
-        self.sub_changes: List[Change] = []
-        self.field_change = {}
-        self.additional_info = {}
+        self.sub_changes: list[Change] = []
+        self.field_change: dict[str, Any] = {}
+        self.additional_info: dict[str, Any] = {}
 
-    def add_sub_change(self, Change):
-        self.sub_changes.append(Change)
+    def add_sub_change(self, change: "Change") -> None:
+        self.sub_changes.append(change)
 
-    def is_there_change(self):
-        return self.sub_changes or self.field_change
+    def is_there_change(self) -> bool:
+        return bool(self.sub_changes or self.field_change)
 
-    def get_json(self):
-        change_json = {"change_type": self.change_type}
+    def get_json(self) -> JsonDict:
+        change_json: JsonDict = {"change_type": self.change_type}
         if self.category:
             change_json["category"] = self.category
         if self.identifier:
@@ -50,8 +59,8 @@ class Change:
             change_json["additional_info"] = self.additional_info
         return change_json
 
-    def get_short_md(self):
-        short_mds = []
+    def get_short_md(self) -> str:
+        short_mds: list[str] = []
         if not self.sub_changes:
             short_md = f"{self.change_type.capitalize()} {self.identifier}"
             if self.category == "feature_classes" and self.additional_info.get("name"):
@@ -70,7 +79,7 @@ class Change:
             short_mds.append(short_md)
         return custom_md_join(short_mds)
 
-    def get_long_md(self):
+    def get_long_md(self) -> str:
         if not self.sub_changes:
             if self.category == "threats" and self.additional_info.get("name"):
                 return self.get_short_md() + f" `{self.additional_info['name']}`"
@@ -81,6 +90,7 @@ class Change:
             if self.category == "controls" and self.additional_info.get("description"):
                 return self.get_short_md() + f" `{self.additional_info['description']}`"
             return self.get_short_md()
+        long_md = ""
         for change in self.sub_changes:
             long_md = (
                 f"{self.change_type.capitalize()} {self.identifier}.{change.identifier}"
@@ -95,13 +105,10 @@ class Change:
         return long_md
 
 
-def custom_md_join(mds):
+def custom_md_join(mds: list[str]) -> str:
     if not mds:
         return ""
-    if len(mds) > 0 and not mds[0].startswith("- "):
-        result = ["- " + mds[0]]
-    else:
-        result = [mds[0]]
+    result = ["- " + mds[0]] if not mds[0].startswith("- ") else [mds[0]]
     for item in mds[1:]:
         if item.startswith("- "):
             result.append(item)
@@ -110,7 +117,7 @@ def custom_md_join(mds):
     return "\n".join(result)
 
 
-def safe_get(d, keys):
+def safe_get(d: Any, keys: list[str]) -> Any:
     for key in keys:
         if isinstance(d, dict):
             d = d.get(key, {})
@@ -119,8 +126,8 @@ def safe_get(d, keys):
     return d
 
 
-def manual_diff(old_json, new_json) -> List[Change]:
-    change_log = []
+def manual_diff(old_json: JsonDict, new_json: JsonDict) -> list[Change]:
+    change_log: list[Change] = []
 
     for key in TOP_KEYS:
         items1 = old_json.get(key, {})
@@ -157,34 +164,33 @@ def manual_diff(old_json, new_json) -> List[Change]:
 
 
 class ChangeLog:
-
-    def __init__(self, old_epoch: int, new_epoch: int):
-        self.changes: List[Change] = []
+    def __init__(self, old_epoch: int, new_epoch: int) -> None:
+        self.changes: list[Change] = []
         self.old_epoch = old_epoch
         self.new_epoch = new_epoch
 
-    def add_change(self, change: Change):
+    def add_change(self, change: Change) -> None:
         if not isinstance(change, Change):
             raise ValueError("Only Changes object should be added in the ChangeLog")
         self.changes.append(change)
 
-    def add_changes(self, changes: List[Change]):
+    def add_changes(self, changes: list[Change]) -> None:
         for change in changes:
             self.add_change(change)
 
     def empty(self) -> bool:
         return self.changes == []
 
-    def get_sorted_changes(self) -> List[Change]:
+    def get_sorted_changes(self) -> list[Change]:
         return sorted(
             self.changes,
             key=lambda change: (
                 change.change_type,
-                extract_letters_and_number(change.identifier),
+                extract_letters_and_number(change.identifier or ""),
             ),
         )
 
-    def get_json(self) -> dict:
+    def get_json(self) -> JsonDict:
         return {
             "release": {
                 "old_epoch": str(self.old_epoch),
@@ -215,11 +221,13 @@ class ChangeLog:
         )
 
 
-def map_mitigate_by_threat(mitigate_list):
+def map_mitigate_by_threat(
+    mitigate_list: list[JsonDict],
+) -> dict[str, JsonDict]:
     return {mitigate["threat"]: mitigate for mitigate in mitigate_list}
 
 
-def clean_diff_id(key):
+def clean_diff_id(key: Any) -> Any:
     if isinstance(key, int):
         return key
     if "root['" in key:
@@ -245,13 +253,16 @@ CHANGES_TO_IGNORE = [
 
 
 def get_changes_from_deepdiff(
-    deepdiff, key=None, category=None, identifier=None
-) -> List[Change]:
-    changes = []
+    deepdiff: Any,
+    key: str | None = None,
+    category: str | None = None,
+    identifier: str | None = None,
+) -> list[Change]:
+    changes: list[Change] = []
     for change_type, fields in deepdiff.items():
         if change_type in ["dictionary_item_added", "iterable_item_added"]:
             if isinstance(fields, dict):
-                for field, value in fields.items():
+                for field in fields:
                     changes.append(
                         Change(
                             change_type="added",
@@ -259,7 +270,7 @@ def get_changes_from_deepdiff(
                             identifier=clean_diff_id(field),
                         )
                     )
-            if isinstance(fields, PrettyOrderedSet):
+            if isinstance(fields, SetOrdered):
                 for field in fields:
                     changes.append(
                         Change(
@@ -270,7 +281,7 @@ def get_changes_from_deepdiff(
                     )
         elif change_type in ["dictionary_item_removed", "iterable_item_removed"]:
             if isinstance(fields, dict):
-                for field, value in fields.items():
+                for field in fields:
                     changes.append(
                         Change(
                             change_type="removed",
@@ -278,7 +289,7 @@ def get_changes_from_deepdiff(
                             identifier=clean_diff_id(field),
                         )
                     )
-            if isinstance(fields, PrettyOrderedSet):
+            if isinstance(fields, SetOrdered):
                 for field in fields:
                     changes.append(
                         Change(
@@ -311,8 +322,10 @@ def get_changes_from_deepdiff(
     return changes
 
 
-def diff_mitigate(mitigate1, mitigate2) -> List[Change]:
-    changes = []
+def diff_mitigate(
+    mitigate1: dict[str, JsonDict], mitigate2: dict[str, JsonDict]
+) -> list[Change]:
+    changes: list[Change] = []
 
     # Find added and removed threats
     threats1 = set(mitigate1.keys())
@@ -345,8 +358,8 @@ def diff_mitigate(mitigate1, mitigate2) -> List[Change]:
     return changes
 
 
-def diff_scf(scf_list1, scf_list2) -> List[Change]:
-    changes = []
+def diff_scf(scf_list1: list[str], scf_list2: list[str]) -> list[Change]:
+    changes: list[Change] = []
 
     # Find added and removed scfs
     scfs1 = set(scf_list1)
@@ -362,7 +375,7 @@ def diff_scf(scf_list1, scf_list2) -> List[Change]:
     return changes
 
 
-def generate_change_log(old_json, new_json) -> ChangeLog:
+def generate_change_log(old_json: JsonDict, new_json: JsonDict) -> ChangeLog:
     # Perform manual diff on top-level keys and identifiers
     old_json = json.loads(json.dumps(old_json))
     new_json = json.loads(json.dumps(new_json))
@@ -393,7 +406,10 @@ def generate_change_log(old_json, new_json) -> ChangeLog:
             continue
         if key in old_json and key in new_json:
             diff = DeepDiff(
-                old_json[key], new_json[key], ignore_order=True, report_repetition=True
+                old_json[key],
+                new_json[key],
+                ignore_order=True,
+                report_repetition=True,
             )
             changes = get_changes_from_deepdiff(diff, key=key, category=key)
             change_log.add_changes(changes)
@@ -440,14 +456,19 @@ def generate_change_log(old_json, new_json) -> ChangeLog:
                 item1.pop("scf", None)
                 item2.pop("scf", None)
 
-            if key == "threats" and "access" in item1 and "access" in item2:
-                if item1["access"] != item2["access"]:
-                    access_change = Change(change_type="modified", identifier="access")
-                    access_change.field_change = {
-                        "old_value": item1["access"],
-                        "new_value": item2["access"],
-                    }
-                    item_change.add_sub_change(access_change)
+            if (
+                key == "threats"
+                and "access" in item1
+                and "access" in item2
+                and item1["access"] != item2["access"]
+            ):
+                access_change = Change(change_type="modified", identifier="access")
+                access_change.field_change = {
+                    "old_value": item1["access"],
+                    "new_value": item2["access"],
+                }
+                item_change.add_sub_change(access_change)
+            if key == "threats":
                 # Remove access from the items to perform deep diff on other fields
                 item1.pop("access", None)
                 item2.pop("access", None)

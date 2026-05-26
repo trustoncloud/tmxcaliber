@@ -1,33 +1,32 @@
-import pytest
-import unittest
-import sys
-from tmxcaliber.cli import (
-    _get_version,
-    get_params,
-    validate,
-    map,
-    scan_controls,
-    get_input_data,
-    get_drawio_binary_path,
-    output_result,
-    get_metadata,
-    get_service_rows,
-    get_feature_class_rows,
-    METADATA_MISSING,
-    validate_and_get_framework,
-    MISSING_OUTPUT_ERROR,
-)
+import argparse
+import csv
 import json
 import platform
-import argparse
+import sys
+import unittest
 from argparse import Namespace
-
-import csv
-from tmxcaliber.lib.threatmodel_data import ThreatModelData
-from tmxcaliber.lib.errors import BinaryNotFound
+from unittest.mock import MagicMock, call, mock_open, patch
 
 import pytest
-from unittest.mock import mock_open, patch, MagicMock, call
+
+from tmxcaliber.cli import (
+    METADATA_MISSING,
+    MISSING_OUTPUT_ERROR,
+    _get_version,
+    get_drawio_binary_path,
+    get_feature_class_rows,
+    get_input_data,
+    get_metadata,
+    get_params,
+    get_service_rows,
+    map,
+    output_result,
+    scan_controls,
+    validate,
+    validate_and_get_framework,
+)
+from tmxcaliber.lib.errors import BinaryNotFound
+from tmxcaliber.lib.threatmodel_data import ThreatModelData
 
 
 @pytest.fixture
@@ -75,9 +74,10 @@ def mock_argv(mocker):
         "--permissions",
         "read",
         "--ids",
-        "someservice.co123,someservice.C134,someservice.co456,someservice.C123,someservice.fc123,someservice.fc456,someservice.t123,someservice.t223",
+        "someservice.co123,someservice.C134,someservice.co456,someservice.C123,"
+        "someservice.fc123,someservice.fc456,someservice.t123,someservice.t223",
     ]
-    mocker.patch("sys.argv", ["test_program"] + args)
+    mocker.patch("sys.argv", ["test_program", *args])
 
 
 def test_validate(mock_argv):
@@ -132,11 +132,13 @@ def test_validate_requires_output_with_output_removed():
         return_value=args
     )  # Mock parse_args to return the mocked args
 
-    # Test that the parser.error is called with the correct message when conditions are met
+    # Test that the parser.error is called with the correct message when
+    # conditions are met
     with pytest.raises(SystemExit):  # parser.error calls sys.exit
         validate(parser)
 
-    # You should also check that the error message is correct. For this, you might need to further mock parser.error
+    # Also check that the error message is correct. For this, you might need
+    # to further mock parser.error
     parser.error = MagicMock()
     validate(parser)
     parser.error.assert_called_once_with(MISSING_OUTPUT_ERROR)
@@ -203,12 +205,12 @@ def test_get_input_data_valid_sources(mock_json_file, mock_json):
         operation="create_change_log",
     )
 
-    with patch("builtins.open", mock_open(read_data=mock_json_file)), patch(
-        "os.path.isfile", return_value=True
-    ), patch("os.path.isdir", return_value=False), patch(
-        "os.path.exists", return_value=True
+    with (
+        patch("builtins.open", mock_open(read_data=mock_json_file)),
+        patch("os.path.isfile", return_value=True),
+        patch("os.path.isdir", return_value=False),
+        patch("os.path.exists", return_value=True),
     ):
-
         result = get_input_data(args)
 
         assert isinstance(result, dict)
@@ -229,13 +231,14 @@ def test_get_input_data_invalid_json_new_source(mock_invalid_json):
         operation="create_change_log",
     )
 
-    with patch("builtins.open", mock_open(read_data=mock_invalid_json)), patch(
-        "os.path.isfile", return_value=True
-    ), patch("os.path.isdir", return_value=False), patch(
-        "os.path.exists", return_value=True
+    with (
+        patch("builtins.open", mock_open(read_data=mock_invalid_json)),
+        patch("os.path.isfile", return_value=True),
+        patch("os.path.isdir", return_value=False),
+        patch("os.path.exists", return_value=True),
+        pytest.raises(SystemExit),
     ):
-        with pytest.raises(SystemExit):
-            get_input_data(args)
+        get_input_data(args)
 
 
 def test_get_input_data_invalid_json_old_source(mock_invalid_json):
@@ -245,13 +248,14 @@ def test_get_input_data_invalid_json_old_source(mock_invalid_json):
         operation="create_change_log",
     )
 
-    with patch("builtins.open", mock_open(read_data=mock_invalid_json)), patch(
-        "os.path.isfile", return_value=True
-    ), patch("os.path.isdir", return_value=False), patch(
-        "os.path.exists", return_value=True
+    with (
+        patch("builtins.open", mock_open(read_data=mock_invalid_json)),
+        patch("os.path.isfile", return_value=True),
+        patch("os.path.isdir", return_value=False),
+        patch("os.path.exists", return_value=True),
+        pytest.raises(SystemExit),
     ):
-        with pytest.raises(SystemExit):
-            get_input_data(args)
+        get_input_data(args)
 
 
 def test_get_input_data_nonexistent_new_source():
@@ -261,9 +265,8 @@ def test_get_input_data_nonexistent_new_source():
         operation="create_change_log",
     )
 
-    with patch("os.path.exists", return_value=False):
-        with pytest.raises(SystemExit):
-            get_input_data(args)
+    with patch("os.path.exists", return_value=False), pytest.raises(SystemExit):
+        get_input_data(args)
 
 
 def test_get_input_data_nonexistent_old_source():
@@ -273,20 +276,19 @@ def test_get_input_data_nonexistent_old_source():
         operation="create_change_log",
     )
 
-    with patch("os.path.exists", return_value=False):
-        with pytest.raises(SystemExit):
-            get_input_data(args)
+    with patch("os.path.exists", return_value=False), pytest.raises(SystemExit):
+        get_input_data(args)
 
 
 def test_get_input_data_valid_json_source(mock_json_file, mock_json):
     args = Namespace(source="validpath.json", operation="list")
 
-    with patch("builtins.open", mock_open(read_data=mock_json_file)), patch(
-        "os.path.isfile", return_value=True
-    ), patch("os.path.isdir", return_value=False), patch(
-        "os.path.exists", return_value=True
+    with (
+        patch("builtins.open", mock_open(read_data=mock_json_file)),
+        patch("os.path.isfile", return_value=True),
+        patch("os.path.isdir", return_value=False),
+        patch("os.path.exists", return_value=True),
     ):
-
         result = get_input_data(args)
 
         assert isinstance(result, list)
@@ -298,32 +300,32 @@ def test_get_input_data_valid_json_source(mock_json_file, mock_json):
 def test_get_input_data_invalid_json_source(mock_invalid_json):
     args = Namespace(source="invalidpath.json", operation="list")
 
-    with patch("builtins.open", mock_open(read_data=mock_invalid_json)), patch(
-        "os.path.isfile", return_value=True
-    ), patch("os.path.isdir", return_value=False), patch(
-        "os.path.exists", return_value=True
+    with (
+        patch("builtins.open", mock_open(read_data=mock_invalid_json)),
+        patch("os.path.isfile", return_value=True),
+        patch("os.path.isdir", return_value=False),
+        patch("os.path.exists", return_value=True),
+        pytest.raises(SystemExit),
     ):
-        with pytest.raises(SystemExit):
-            get_input_data(args)
+        get_input_data(args)
 
 
 def test_get_input_data_nonexistent_file_source():
     args = Namespace(source="nonexistent.json", operation="list")
 
-    with patch("os.path.exists", return_value=False):
-        with pytest.raises(SystemExit):
-            get_input_data(args)
+    with patch("os.path.exists", return_value=False), pytest.raises(SystemExit):
+        get_input_data(args)
 
 
 def test_get_input_data_valid_json(mock_json_file, mock_json):
     args = Namespace(source="validpath.json", operation="list")
 
-    with patch("builtins.open", mock_open(read_data=mock_json_file)), patch(
-        "os.path.isfile", return_value=True
-    ), patch("os.path.isdir", return_value=False), patch(
-        "os.path.exists", return_value=True
+    with (
+        patch("builtins.open", mock_open(read_data=mock_json_file)),
+        patch("os.path.isfile", return_value=True),
+        patch("os.path.isdir", return_value=False),
+        patch("os.path.exists", return_value=True),
     ):
-
         result = get_input_data(args)
 
         assert isinstance(result, list)
@@ -446,12 +448,15 @@ def test_output_csv_result():
     result = [["header1", "header2"], ["data1", "data2"]]
     result_type = "csv_list"
     m = mock_open()
-    with patch("builtins.open", m):
-        with patch("csv.writer", MagicMock()) as mock_csv_writer:
-            output_result(output_param, result, result_type)
+    with (
+        patch("builtins.open", m),
+        patch("csv.writer", MagicMock()) as mock_csv_writer,
+    ):
+        output_result(output_param, result, result_type)
     # Verify the file was opened with the correct parameters
     m.assert_called_once_with(output_param, mode="w", newline="", encoding="utf-8")
-    # Now also check the csv.writer was called correctly, including the additional parameters
+    # Now also check the csv.writer was called correctly, including the
+    # additional parameters
     handle = m()
     mock_csv_writer.assert_called_once_with(
         handle, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
@@ -494,7 +499,9 @@ def test_get_metadata_with_complex_csv():
             {
                 "id": "MY_CONTROL_1",
                 "any title 1": "My control 1",
-                "any title_2, including support for commas": "Description 1, including support for commas",
+                "any title_2, including support for commas": (
+                    "Description 1, including support for commas"
+                ),
             },
             {
                 "id": "MY_CONTROL_2",
@@ -520,9 +527,11 @@ def test_get_metadata_with_complex_csv():
     )
 
     # Patch the open function and csv.DictReader in the module where they are used
-    with patch("builtins.open", mock_open(read_data=csv_content)) as mocked_file:
-        with patch("csv.DictReader", return_value=mock_csv_reader):
-            fields, result = get_metadata("dummy_path.csv")
+    with (
+        patch("builtins.open", mock_open(read_data=csv_content)),
+        patch("csv.DictReader", return_value=mock_csv_reader),
+    ):
+        fields, result = get_metadata("dummy_path.csv")
 
     # Assertions to verify the output
     assert fields == [
@@ -532,7 +541,9 @@ def test_get_metadata_with_complex_csv():
     assert result == {
         "MY_CONTROL_1": {
             "any title 1": "My control 1",
-            "any title_2, including support for commas": "Description 1, including support for commas",
+            "any title_2, including support for commas": (
+                "Description 1, including support for commas"
+            ),
         },
         "MY_CONTROL_2": {
             "any title 1": "My control 2",
@@ -579,7 +590,7 @@ def test_validate_and_get_framework_success_multiline(tmp_path):
 def test_validate_and_get_framework_missing_entries(tmp_path):
     csv_path = tmp_path / "framework.csv"
     csv_path.write_text(
-        "scf1;scf2,\n" ",framework1;framework2\n" ",framework4\n" "scf3,framework3\n",
+        "scf1;scf2,\n,framework1;framework2\n,framework4\nscf3,framework3\n",
         encoding="utf-8",
     )
 
@@ -591,10 +602,7 @@ def test_validate_and_get_framework_missing_entries(tmp_path):
 def test_validate_and_get_framework_dedupes_and_skips_none_like_values(tmp_path):
     csv_path = tmp_path / "framework.csv"
     csv_path.write_text(
-        "scf1;None,framework1;framework2\n"
-        "scf1,framework1\n"
-        "null,framework9\n"
-        "scf2,n/a\n",
+        "scf1;None,framework1;framework2\nscf1,framework1\nnull,framework9\nscf2,n/a\n",
         encoding="utf-8",
     )
 
@@ -782,7 +790,8 @@ def test_main_list_controls_aws_data_perimeter_e2e(tmp_path, monkeypatch, capsys
 
     assert out[0] == "objective,objective_description,id,retired"
 
-    # Output is emitted TM-by-TM (directory load order), with numeric ordering within each TM.
+    # Output is emitted TM-by-TM (directory load order), with numeric ordering
+    # within each TM.
     assert out[1:] == [
         "Svc.CO1,Objective 1,Svc.C2,False",
         "Svc.CO1,Objective 1,Svc.C10,False",

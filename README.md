@@ -14,27 +14,30 @@
 
 ## Quickstart
 
-`tmxcaliber` supports Python `3.8+`.
+`tmxcaliber` supports Python `3.10+`.
 
 ```sh
 git clone https://github.com/trustoncloud/tmxcaliber.git
 cd tmxcaliber
-python -m venv .venv
 ```
 
-Activate the environment:
+The recommended workflow uses [uv](https://docs.astral.sh/uv/) to create the
+environment and install dependencies from the committed `uv.lock`:
 
 ```sh
+uv sync
+uv run tmxcaliber -h
+```
+
+If you prefer a manual virtual environment with `pip`:
+
+```sh
+python -m venv .venv
 # PowerShell
 .venv\Scripts\Activate.ps1
-
 # bash / zsh
 source .venv/bin/activate
-```
 
-Install and verify:
-
-```sh
 pip install .
 tmxcaliber -h
 ```
@@ -56,8 +59,7 @@ This is the recommended setup for most users and contributors:
 ```sh
 git clone https://github.com/trustoncloud/tmxcaliber.git
 cd tmxcaliber
-python -m venv .venv
-pip install .
+uv sync
 ```
 
 ### Install a tagged release
@@ -303,18 +305,26 @@ tmxcaliber create-change-log -h
 
 ## Development
 
-Set up a local development environment:
+Set up a local development environment with dev dependencies (Ruff, mypy,
+pytest, coverage, pre-commit, and type stubs):
 
 ```sh
-python -m venv .venv
-pip install -r requirements.txt
-pip install -e .
+uv sync --extra dev
+uv run pre-commit install
 ```
 
 Run the test suite:
 
 ```sh
-pytest -q test
+uv run pytest -q test
+```
+
+Lint, format, and type-check:
+
+```sh
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy
 ```
 
 ## Contributing

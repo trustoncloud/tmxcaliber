@@ -199,7 +199,7 @@ def test_get_csv_of_controls_empty_shapes_return_empty_matrices():
     )
 
 
-def test_get_csv_of_aws_data_perimeter_controls_handles_invalid_scorecards_and_filters():
+def test_get_csv_aws_data_perimeter_controls_handles_invalid_scorecards_and_filters():
     reset_threatmodel_data_list()
     create_threatmodel(scorecard={"aws_data_perimeter": "invalid"})
     assert ThreatModelData.get_csv_of_aws_data_perimeter_controls() == [["id"]]

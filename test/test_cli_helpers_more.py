@@ -210,7 +210,7 @@ def test_output_result_supports_markdown_file_and_stdout(tmp_path, capsys):
 def test_get_metadata_duplicate_rows_keep_first_values(tmp_path):
     metadata_csv = tmp_path / "metadata.csv"
     metadata_csv.write_text(
-        "id,owner,priority\n" "Control1,Team A,High\n" "Control1,Team B,Low\n",
+        "id,owner,priority\nControl1,Team A,High\nControl1,Team B,Low\n",
         encoding="utf-8",
     )
 
@@ -334,7 +334,8 @@ def test_main_list_threats_with_ids_uses_later_matching_model_in_directory(
     assert output == [
         "id,name,feature_class,access",
         'Vpc.T73,Threat 73,Vpc.FC1,"{""AND"": [""ec2:DescribeVpcs""]}"',
-        'Vpc.T74,Threat 74,Vpc.FC1,"{""AND"": [""ec2:ModifyVpcBlockPublicAccessOptions""]}"',
+        "Vpc.T74,Threat 74,Vpc.FC1,"
+        '"{""AND"": [""ec2:ModifyVpcBlockPublicAccessOptions""]}"',
     ]
 
 
