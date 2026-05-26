@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tmxcaliber"
-version = "0.3.11"
+version = "0.3.12"
 description = "CLI utility to filter down one or more TrustOnCloud ThreatModels and get more refined information."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,7 +38,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8,<9",
+    "pytest>=9,<10",
     "pytest-mock>=3.14,<4",
     "coverage>=7,<8",
     "ruff>=0.6,<1",
