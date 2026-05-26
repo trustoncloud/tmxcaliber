@@ -1,0 +1,98 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tmxcaliber"
+version = "0.3.11"
+description = "CLI utility to filter down one or more TrustOnCloud ThreatModels and get more refined information."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "TrustOnCloud", email = "dev@trustoncloud.com" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "beautifulsoup4>=4,<5",
+    "lxml>=5,<7",
+    "colorama>=0.4.6,<1",
+    "openpyxl>=3,<4",
+    "tqdm>=4,<5",
+    "networkx>=3,<4",
+    "deepdiff>=8,<9",
+    "jsonschema>=4.25,<5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "pytest-mock>=3.14,<4",
+    "coverage>=7,<8",
+    "ruff>=0.6,<1",
+    "mypy>=1.11,<2",
+    "pre-commit>=4,<5",
+    "types-beautifulsoup4",
+    "lxml-stubs",
+    "types-openpyxl",
+    "types-tqdm",
+    "types-jsonschema",
+    "types-colorama",
+]
+
+[project.scripts]
+tmxcaliber = "tmxcaliber.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/trustoncloud/tmxcaliber"
+Repository = "https://github.com/trustoncloud/tmxcaliber"
+Issues = "https://github.com/trustoncloud/tmxcaliber/issues"
+
+[tool.setuptools.packages.find]
+include = ["tmxcaliber*"]
+exclude = ["test*"]
+
+[tool.setuptools.package-data]
+tmxcaliber = ["schema/*.json", "schema/*/*.json"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM", "RUF"]
+ignore = []
+
+[tool.ruff.format]
+# Defaults: Black-compatible formatting.
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["tmxcaliber"]
+
+[[tool.mypy.overrides]]
+module = ["networkx.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+
+[tool.coverage.run]
+source = ["tmxcaliber"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
