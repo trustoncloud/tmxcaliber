@@ -375,9 +375,7 @@ def diff_scf(scf_list1: list[str], scf_list2: list[str]) -> list[Change]:
     return changes
 
 
-def rolled_out_keys(
-    items_old: JsonDict, items_new: JsonDict
-) -> set[str]:
+def rolled_out_keys(items_old: JsonDict, items_new: JsonDict) -> set[str]:
     """Keys the new document introduced across a whole category.
 
     A key absent from **every** item on the old side and present on the new one is a
