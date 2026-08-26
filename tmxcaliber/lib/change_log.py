@@ -375,6 +375,43 @@ def diff_scf(scf_list1: list[str], scf_list2: list[str]) -> list[Change]:
     return changes
 
 
+def rolled_out_keys(items_old: JsonDict, items_new: JsonDict) -> set[str]:
+    """Keys the new document introduced across a whole category.
+
+    A key absent from **every** item on the old side and present on the new one is a
+    change to the export schema, not to the threat model's content. Announcing it would
+    report one code change as a change to every control of every ThreatModel, and the
+    customer-facing half of the OverWatch publish gate would then demand a TM Change Set
+    per control for a rollout nobody can file: the field catalog that offers those
+    captures diffs DRAFT against READY_FOR_RELEASE, both re-exported by the same build,
+    so a schema addition is identical on both sides and produces no row to click.
+
+    That is exactly what the control ``owner`` column did on 2026-08-21.
+
+    A key present on *some* old items is a real change and is reported as one, so a
+    genuine edit is never hidden by this. The rule is also self-limiting per document:
+    once a published JSON carries the key, the next comparison is an ordinary value
+    diff. It stays here permanently because a customer not delivered for months still
+    holds the older shape.
+
+    Args:
+        items_old: The category's items in the previous document.
+        items_new: The category's items in the current document.
+
+    Returns:
+        Keys present in the new document's items and in none of the old document's.
+    """
+    old_keys: set[str] = set()
+    for item in items_old.values():
+        if isinstance(item, dict):
+            old_keys |= set(item.keys())
+    new_keys: set[str] = set()
+    for item in items_new.values():
+        if isinstance(item, dict):
+            new_keys |= set(item.keys())
+    return new_keys - old_keys
+
+
 def generate_change_log(old_json: JsonDict, new_json: JsonDict) -> ChangeLog:
     # Perform manual diff on top-level keys and identifiers
     old_json = json.loads(json.dumps(old_json))
@@ -418,6 +455,10 @@ def generate_change_log(old_json: JsonDict, new_json: JsonDict) -> ChangeLog:
     for key in TOP_KEYS:
         items1 = old_json.get(key, {})
         items2 = new_json.get(key, {})
+        # Dropped before diffing, the same way mitigate and feature_class are below: a
+        # key this export introduced across the whole category is a schema rollout
+        # rather than content. See rolled_out_keys.
+        introduced = rolled_out_keys(items1, items2)
         common_items = set(items1.keys()).intersection(set(items2.keys()))
         for item in common_items:
             item_change = Change(change_type="modified", category=key, identifier=item)
@@ -472,6 +513,9 @@ def generate_change_log(old_json: JsonDict, new_json: JsonDict) -> ChangeLog:
                 # Remove access from the items to perform deep diff on other fields
                 item1.pop("access", None)
                 item2.pop("access", None)
+
+            for introduced_key in introduced:
+                item2.pop(introduced_key, None)
 
             diff = DeepDiff(item1, item2, ignore_order=True, report_repetition=True)
             if diff:

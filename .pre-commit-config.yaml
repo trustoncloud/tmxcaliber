@@ -8,21 +8,47 @@ repos:
       - id: check-toml
       - id: check-added-large-files
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.13
+  - repo: local
     hooks:
-      - id: ruff-format
       - id: ruff
-        args: [--fix]
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.13.0
-    hooks:
+        name: ruff (--fix, auto-stage)
+        entry: python
+        args:
+          - -c
+          - |-
+            import subprocess, sys
+            result = subprocess.run(["ruff", "check", "--fix", *sys.argv[1:]])
+            subprocess.run(["git", "add", "--", *sys.argv[1:]], check=True)
+            sys.exit(result.returncode)
+        language: python
+        additional_dependencies: [ruff]
+        types_or: [python, pyi]
+        require_serial: true
+      - id: ruff-format
+        name: ruff format (auto-stage)
+        entry: python
+        args:
+          - -c
+          - |-
+            import subprocess, sys
+            result = subprocess.run(["ruff", "format", *sys.argv[1:]])
+            subprocess.run(["git", "add", "--", *sys.argv[1:]], check=True)
+            sys.exit(result.returncode)
+        language: python
+        additional_dependencies: [ruff]
+        types_or: [python, pyi]
+        require_serial: true
       - id: mypy
+        name: mypy
+        entry: mypy
+        language: python
         additional_dependencies:
+          - mypy
           - types-beautifulsoup4
           - lxml-stubs
           - types-openpyxl
           - types-tqdm
           - types-jsonschema
           - types-colorama
+        types_or: [python, pyi]
+        require_serial: true
