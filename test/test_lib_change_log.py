@@ -1,13 +1,19 @@
+"""Tests for the element-grain change log.
+
+``manual_diff``, ``get_changes_from_deepdiff`` and ``clean_diff_id`` were
+removed along with their tests when ``generate_change_log`` became a projection
+of :mod:`tmxcaliber.lib.tm_diff`. They were the old hand-rolled walk, and
+keeping a second, separately-tested implementation of "what changed" is exactly
+the drift the unification exists to end. Detection is now tested in
+``test/test_tm_diff.py``.
+"""
+
 import pytest
-from deepdiff import DeepDiff
 
 from tmxcaliber.lib.change_log import (
     Change,
     ChangeLog,
-    clean_diff_id,
     generate_change_log,
-    get_changes_from_deepdiff,
-    manual_diff,
 )
 
 
@@ -83,38 +89,6 @@ def test_generate_change_log(sample_data):
     change_log = generate_change_log(old_json, new_json)
     assert isinstance(change_log, ChangeLog)
     assert len(change_log.changes) > 0
-
-
-def test_manual_diff(sample_data):
-    old_json, new_json = sample_data
-    changes = manual_diff(old_json, new_json)
-    assert len(changes) == 4  # Added and removed items at identifier level
-
-
-def test_get_changes_from_deepdiff():
-    old_dict = {"a": 1, "b": 2}
-    new_dict = {"a": 1, "b": 3, "c": 4}
-    diff = DeepDiff(old_dict, new_dict, ignore_order=True)
-    changes = get_changes_from_deepdiff(diff)
-    assert len(changes) == 2  # One modified, one added
-
-
-def test_clean_diff_id():
-    assert clean_diff_id("root['controls']['Service.C1']") == "controls.Service.C1"
-    assert clean_diff_id("root['threats']['Service.T1']") == "threats.Service.T1"
-    assert clean_diff_id("root['metadata']['release']") == "metadata.release"
-    assert (
-        clean_diff_id(
-            "root['feature_classes']['Service.FC2']['class_relationship'][0]['class']"
-        )
-        == "feature_classes.Service.FC2.class_relationship[0].class"
-    )
-    assert clean_diff_id(123) == 123
-    assert clean_diff_id("some_random_string") == "some_random_string"
-    changelog = ChangeLog(1625155200, 1627750800)
-    change = Change(change_type="added", category="controls", identifier="Service.C1")
-    changelog.add_change(change)
-    assert change in changelog.changes
 
 
 def test_changelog_get_sorted_changes():
