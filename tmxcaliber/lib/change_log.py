@@ -1,9 +1,11 @@
 import json
 from typing import Any
 
-from deepdiff import DeepDiff
-from deepdiff.helper import SetOrdered
-
+from .tm_diff import (
+    AtomicChange,
+    blocking_changes,
+    diff_threatmodels,
+)
 from .tools import (
     convert_epoch_to_utc,
     extract_letters_and_number,
@@ -11,15 +13,6 @@ from .tools import (
 )
 
 JsonDict = dict[str, Any]
-
-TOP_KEYS = [
-    "controls",
-    "threats",
-    "control_objectives",
-    "actions",
-    "feature_classes",
-    "scorecard",
-]
 
 
 class Change:
@@ -117,52 +110,6 @@ def custom_md_join(mds: list[str]) -> str:
     return "\n".join(result)
 
 
-def safe_get(d: Any, keys: list[str]) -> Any:
-    for key in keys:
-        if isinstance(d, dict):
-            d = d.get(key, {})
-        else:
-            return {}
-    return d
-
-
-def manual_diff(old_json: JsonDict, new_json: JsonDict) -> list[Change]:
-    change_log: list[Change] = []
-
-    for key in TOP_KEYS:
-        items1 = old_json.get(key, {})
-        items2 = new_json.get(key, {})
-
-        # Manual diff for added and removed items at the identifier level
-        added_items = set(items2.keys()) - set(items1.keys())
-        removed_items = set(items1.keys()) - set(items2.keys())
-
-        for item in added_items:
-            change = Change(change_type="added", category=key, identifier=item)
-            if key == "feature_classes":
-                change.additional_info = {"name": items2[item]["name"]}
-            if key == "threats":
-                change.additional_info = {
-                    "name": items2[item]["name"],
-                    "cvss_severity": items2[item]["cvss_severity"],
-                }
-            elif key == "control_objectives":
-                change.additional_info = {"description": items2[item]["description"]}
-            elif key == "controls":
-                change.additional_info = {
-                    "description": items2[item]["description"].replace('"', '\\"'),
-                    "weighted_priority": items2[item]["weighted_priority"],
-                }
-            change_log.append(change)
-
-        for item in removed_items:
-            change_log.append(
-                Change(change_type="removed", category=key, identifier=item)
-            )
-
-    return change_log
-
-
 class ChangeLog:
     def __init__(self, old_epoch: int, new_epoch: int) -> None:
         self.changes: list[Change] = []
@@ -221,309 +168,116 @@ class ChangeLog:
         )
 
 
-def map_mitigate_by_threat(
-    mitigate_list: list[JsonDict],
-) -> dict[str, JsonDict]:
-    return {mitigate["threat"]: mitigate for mitigate in mitigate_list}
+def _added_element_info(category: str, element: JsonDict) -> dict[str, Any]:
+    """Headline context the markdown renderer shows for a newly added element."""
+    if category == "feature_classes":
+        return {"name": element.get("name")}
+    if category == "threats":
+        return {
+            "name": element.get("name"),
+            "cvss_severity": element.get("cvss_severity"),
+        }
+    if category == "control_objectives":
+        return {"description": element.get("description")}
+    if category == "controls":
+        return {
+            "description": str(element.get("description", "")).replace('"', '\\"'),
+            "weighted_priority": element.get("weighted_priority"),
+        }
+    return {}
 
 
-def clean_diff_id(key: Any) -> Any:
-    if isinstance(key, int):
-        return key
-    if "root['" in key:
-        return key.replace("root['", "").replace("']", "").replace("['", ".")
-    return key
+def to_element_change_log(
+    changes: list[AtomicChange], old_epoch: int, new_epoch: int
+) -> ChangeLog:
+    """Fold the canonical change set into the element-grain change log.
 
-
-CHANGES_TO_IGNORE = [
-    "feature_classes.order",
-    "threats.cvss_score",
-    "controls.weighted_priority",
-    "controls.weighted_priority_score",
-    "controls.mitigate.priority_overall",
-    "controls.mitigate.max_dependency",
-    "controls.mitigate.priority",
-    "scorecard.number_of_events.score",
-    "scorecard.number_of_actions.score",
-    "scorecard.event_coverage.score",
-    "scorecard.api_without_event.score",
-    "metadata.watermark",
-    "metadata.release",
-]
-
-
-def get_changes_from_deepdiff(
-    deepdiff: Any,
-    key: str | None = None,
-    category: str | None = None,
-    identifier: str | None = None,
-) -> list[Change]:
-    changes: list[Change] = []
-    for change_type, fields in deepdiff.items():
-        if change_type in ["dictionary_item_added", "iterable_item_added"]:
-            if isinstance(fields, dict):
-                for field in fields:
-                    changes.append(
-                        Change(
-                            change_type="added",
-                            category=category,
-                            identifier=clean_diff_id(field),
-                        )
-                    )
-            if isinstance(fields, SetOrdered):
-                for field in fields:
-                    changes.append(
-                        Change(
-                            change_type="added",
-                            category=category,
-                            identifier=clean_diff_id(field),
-                        )
-                    )
-        elif change_type in ["dictionary_item_removed", "iterable_item_removed"]:
-            if isinstance(fields, dict):
-                for field in fields:
-                    changes.append(
-                        Change(
-                            change_type="removed",
-                            category=category,
-                            identifier=clean_diff_id(field),
-                        )
-                    )
-            if isinstance(fields, SetOrdered):
-                for field in fields:
-                    changes.append(
-                        Change(
-                            change_type="removed",
-                            category=category,
-                            identifier=clean_diff_id(field),
-                        )
-                    )
-        elif change_type in ["values_changed", "type_changes"]:
-            for field, value in fields.items():
-                if key and f"{key}.{clean_diff_id(field)}" in CHANGES_TO_IGNORE:
-                    continue
-                if (
-                    key
-                    and identifier
-                    and f"{key}.{identifier}.{clean_diff_id(field)}"
-                    in CHANGES_TO_IGNORE
-                ):
-                    continue
-                change = Change(
-                    change_type="modified",
-                    category=category,
-                    identifier=clean_diff_id(field),
-                )
-                change.field_change = {
-                    "old_value": value.get("old_value"),
-                    "new_value": value.get("new_value"),
-                }
-                changes.append(change)
-    return changes
-
-
-def diff_mitigate(
-    mitigate1: dict[str, JsonDict], mitigate2: dict[str, JsonDict]
-) -> list[Change]:
-    changes: list[Change] = []
-
-    # Find added and removed threats
-    threats1 = set(mitigate1.keys())
-    threats2 = set(mitigate2.keys())
-    added_threats = threats2 - threats1
-    removed_threats = threats1 - threats2
-
-    for threat in added_threats:
-        changes.append(Change(change_type="added", identifier=threat))
-
-    for threat in removed_threats:
-        changes.append(Change(change_type="removed", identifier=threat))
-
-    # Find modified threats
-    common_threats = threats1.intersection(threats2)
-    for threat in common_threats:
-        diff = DeepDiff(
-            mitigate1[threat],
-            mitigate2[threat],
-            ignore_order=True,
-            report_repetition=True,
-        )
-        if diff:
-            change_logs = get_changes_from_deepdiff(diff, key="controls.mitigate")
-            change = Change(change_type="modified", identifier=threat)
-            for change_log in change_logs:
-                change.add_sub_change(change_log)
-            changes.append(change)
-
-    return changes
-
-
-def diff_scf(scf_list1: list[str], scf_list2: list[str]) -> list[Change]:
-    changes: list[Change] = []
-
-    # Find added and removed scfs
-    scfs1 = set(scf_list1)
-    scfs2 = set(scf_list2)
-    added_scfs = scfs2 - scfs1
-    removed_scfs = scfs1 - scfs2
-
-    for scf in added_scfs:
-        changes.append(Change(change_type="added", identifier=scf))
-
-    for scf in removed_scfs:
-        changes.append(Change(change_type="removed", identifier=scf))
-    return changes
-
-
-def rolled_out_keys(items_old: JsonDict, items_new: JsonDict) -> set[str]:
-    """Keys the new document introduced across a whole category.
-
-    A key absent from **every** item on the old side and present on the new one is a
-    change to the export schema, not to the threat model's content. Announcing it would
-    report one code change as a change to every control of every ThreatModel, and the
-    customer-facing half of the OverWatch publish gate would then demand a TM Change Set
-    per control for a rollout nobody can file: the field catalog that offers those
-    captures diffs DRAFT against READY_FOR_RELEASE, both re-exported by the same build,
-    so a schema addition is identical on both sides and produces no row to click.
-
-    That is exactly what the control ``owner`` column did on 2026-08-21.
-
-    A key present on *some* old items is a real change and is reported as one, so a
-    genuine edit is never hidden by this. The rule is also self-limiting per document:
-    once a published JSON carries the key, the next comparison is an ordinary value
-    diff. It stays here permanently because a customer not delivered for months still
-    holds the older shape.
+    A pure fold, never a second diff. This is the projection the customer-facing
+    markdown change log and the OverWatch publish gate read: one entry per
+    element, with one sub-change per changed field.
 
     Args:
-        items_old: The category's items in the previous document.
-        items_new: The category's items in the current document.
+        changes: The canonical set, already filtered by
+            :func:`~tmxcaliber.lib.tm_diff.blocking_changes`.
+        old_epoch: Release epoch of the previous export.
+        new_epoch: Release epoch of the current export.
 
     Returns:
-        Keys present in the new document's items and in none of the old document's.
+        The element-grain :class:`ChangeLog`.
     """
-    old_keys: set[str] = set()
-    for item in items_old.values():
-        if isinstance(item, dict):
-            old_keys |= set(item.keys())
-    new_keys: set[str] = set()
-    for item in items_new.values():
-        if isinstance(item, dict):
-            new_keys |= set(item.keys())
-    return new_keys - old_keys
+    change_log = ChangeLog(old_epoch, new_epoch)
+
+    whole_element: dict[tuple[str, str], AtomicChange] = {}
+    fields_by_element: dict[tuple[str, str], list[AtomicChange]] = {}
+    order: list[tuple[str, str]] = []
+    for change in changes:
+        key = (change.category, change.identifier)
+        if key not in fields_by_element:
+            fields_by_element[key] = []
+            order.append(key)
+        if change.field == "":
+            whole_element[key] = change
+        else:
+            fields_by_element[key].append(change)
+
+    for key in order:
+        category, identifier = key
+        element_change = whole_element.get(key)
+        if element_change is not None:
+            entry = Change(
+                change_type=element_change.change_type,
+                category=category,
+                identifier=identifier,
+            )
+            if element_change.change_type == "added":
+                entry.additional_info = _added_element_info(
+                    category, element_change.additional_info.get("element") or {}
+                )
+            change_log.add_change(entry)
+            continue
+
+        entry = Change(change_type="modified", category=category, identifier=identifier)
+        for field_change in fields_by_element[key]:
+            sub_change = Change(
+                change_type=field_change.change_type,
+                identifier=field_change.field,
+            )
+            sub_change.field_change = {
+                "old_value": field_change.old_value,
+                "new_value": field_change.new_value,
+            }
+            entry.add_sub_change(sub_change)
+        if entry.is_there_change():
+            change_log.add_change(entry)
+
+    return change_log
 
 
 def generate_change_log(old_json: JsonDict, new_json: JsonDict) -> ChangeLog:
-    # Perform manual diff on top-level keys and identifiers
+    """Diff two ThreatModel exports into the element-grain change log.
+
+    This is the **blocking** side of the OverWatch publish gate, and the source
+    of the markdown change log attached to every ThreatModel delivery. It is a
+    projection of :func:`~tmxcaliber.lib.tm_diff.diff_threatmodels`, the single
+    canonical differ, and no longer walks the document itself.
+
+    Sharing that differ with the filing side (``tm_qa.tm_field_diffs``, which is
+    the catalog Tower offers) is the point. The two used to disagree in four
+    places -- ``scf``, ``mitigate``, ``dfd.body`` and ``threats.*.access`` -- and
+    every disagreement is a publish that blocks with nothing available to file.
+    See :mod:`tmxcaliber.lib.tm_diff`.
+
+    Args:
+        old_json: The previously published export (the "from" side).
+        new_json: The current export (the "to" side).
+
+    Returns:
+        The element-grain :class:`ChangeLog`.
+    """
     old_json = json.loads(json.dumps(old_json))
     new_json = json.loads(json.dumps(new_json))
-
-    change_log = ChangeLog(
-        int(old_json["metadata"]["release"]), int(new_json["metadata"]["release"])
+    return to_element_change_log(
+        blocking_changes(diff_threatmodels(old_json, new_json)),
+        int(old_json["metadata"]["release"]),
+        int(new_json["metadata"]["release"]),
     )
-    change_log.add_changes(manual_diff(old_json, new_json))
-
-    # Identify remaining keys to perform deep diff
-    remaining_keys = set(old_json.keys()).union(set(new_json.keys())) - set(TOP_KEYS)
-
-    # Perform deep diff on remaining structure
-    for key in remaining_keys:
-        if key == "dfd":
-            if key not in old_json and key in new_json:
-                change_log.add_change(
-                    Change("added", category="dfd", identifier="body")
-                )
-            elif (
-                old_json.get("dfd")
-                and new_json.get("dfd")
-                and old_json["dfd"] != new_json["dfd"]
-            ):
-                change_log.add_change(
-                    Change("modified", category="dfd", identifier="body")
-                )
-            continue
-        if key in old_json and key in new_json:
-            diff = DeepDiff(
-                old_json[key],
-                new_json[key],
-                ignore_order=True,
-                report_repetition=True,
-            )
-            changes = get_changes_from_deepdiff(diff, key=key, category=key)
-            change_log.add_changes(changes)
-
-    # Perform diff on explored keys at the next level
-    for key in TOP_KEYS:
-        items1 = old_json.get(key, {})
-        items2 = new_json.get(key, {})
-        # Dropped before diffing, the same way mitigate and feature_class are below: a
-        # key this export introduced across the whole category is a schema rollout
-        # rather than content. See rolled_out_keys.
-        introduced = rolled_out_keys(items1, items2)
-        common_items = set(items1.keys()).intersection(set(items2.keys()))
-        for item in common_items:
-            item_change = Change(change_type="modified", category=key, identifier=item)
-            item1 = items1[item]
-            item2 = items2[item]
-
-            if key == "controls":
-                # Handle mitigate separately
-                mitigate1 = map_mitigate_by_threat(item1.get("mitigate", []))
-                mitigate2 = map_mitigate_by_threat(item2.get("mitigate", []))
-                sub_mitigate_changes = diff_mitigate(mitigate1, mitigate2)
-                if sub_mitigate_changes:
-                    mitigate_change = Change(
-                        change_type="modified", identifier="mitigate"
-                    )
-                    item_change.add_sub_change(mitigate_change)
-                    for sub_mitigate_change in sub_mitigate_changes:
-                        mitigate_change.add_sub_change(sub_mitigate_change)
-                item1.pop("mitigate", None)
-                item2.pop("mitigate", None)
-
-            if key == "controls":
-                # Remove feature_class as only informational based on the threats
-                item1.pop("feature_class", None)
-                item2.pop("feature_class", None)
-
-            if key == "control_objectives":
-                scf1 = item1.get("scf", [])
-                scf2 = item2.get("scf", [])
-                sub_scf_changes = diff_scf(scf1, scf2)
-                if sub_scf_changes:
-                    scf_change = Change(change_type="modified", identifier="scf")
-                    item_change.add_sub_change(scf_change)
-                    for sub_scf_change in sub_scf_changes:
-                        scf_change.add_sub_change(sub_scf_change)
-                item1.pop("scf", None)
-                item2.pop("scf", None)
-
-            if (
-                key == "threats"
-                and "access" in item1
-                and "access" in item2
-                and item1["access"] != item2["access"]
-            ):
-                access_change = Change(change_type="modified", identifier="access")
-                access_change.field_change = {
-                    "old_value": item1["access"],
-                    "new_value": item2["access"],
-                }
-                item_change.add_sub_change(access_change)
-            if key == "threats":
-                # Remove access from the items to perform deep diff on other fields
-                item1.pop("access", None)
-                item2.pop("access", None)
-
-            for introduced_key in introduced:
-                item2.pop(introduced_key, None)
-
-            diff = DeepDiff(item1, item2, ignore_order=True, report_repetition=True)
-            if diff:
-                sub_changes = get_changes_from_deepdiff(diff, key=key, identifier=item)
-                for sub_change in sub_changes:
-                    item_change.add_sub_change(sub_change)
-
-            if item_change.is_there_change():
-                change_log.add_change(item_change)
-
-    return change_log
