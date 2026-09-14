@@ -1,4 +1,4 @@
-name: Pytest and release tag
+name: Test, publish to PyPI and release
 
 on:
   push:
@@ -8,13 +8,18 @@ on:
     branches:
       - main
 
+# Least privilege by default. Each job widens only what it needs, and the job
+# that holds a publishing credential installs nothing. See the comment on
+# publish_pypi below.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
     name: Run Pytest
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
     - name: Checkout repository
@@ -50,38 +55,105 @@ jobs:
     - name: Run mypy
       run: uv run mypy
 
-  create_release:
-    name: Create GitHub Release
+  build:
+    name: Build distributions
     runs-on: ubuntu-latest
     needs: test
-    if: github.event_name == 'push' && contains(github.ref, 'refs/heads/main')
+    # Runs on pull requests too, so a packaging break is caught at review time
+    # rather than at release time. Only the publish and release jobs are gated
+    # on main.
+    permissions:
+      contents: read
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
 
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        python-version: "3.11"
+
+    - name: Build sdist and wheel
+      run: uv build --out-dir dist
+
+    - name: Validate distribution metadata
+      run: uvx twine check dist/*
+
+    # SHA-pinned, like every action in the chain that carries the artifact to
+    # PyPI. A tag is mutable, and this artifact is what gets published.
+    - name: Upload distributions
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: dist
+        path: dist/
+        if-no-files-found: error
+
+  publish_pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: pypi
+      url: https://pypi.org/p/tmxcaliber
+    # id-token: write is the PyPI publishing identity under Trusted Publishing.
+    # This job therefore downloads a prebuilt artifact and runs nothing else: no
+    # uv sync, no pip install, no build backend. Keeping third-party install
+    # scripts out of a credential-bearing job is the same split app's CI makes
+    # for its bot tokens; see specs/app/PROCESS.md, "CI/CD Pipeline".
+    permissions:
+      id-token: write
+
+    steps:
+    - name: Download distributions
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: dist
+        path: dist/
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+      with:
+        # A re-run after a partial failure must not fail on a version PyPI
+        # already accepted. PyPI never allows overwriting a version, so this
+        # only ever skips an identical upload.
+        skip-existing: true
+
+  create_release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: publish_pypi
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Runs after the PyPI upload, so a GitHub Release means the version reached
+    # PyPI. check_release_version.py reads these releases to decide whether the
+    # version was bumped, which keeps that gate honest.
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Download distributions
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: dist
+        path: dist/
+
     - name: Extract version from pyproject.toml
-      id: get_version
       run: |
         VERSION=$(python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
         echo "VERSION=$VERSION" >> $GITHUB_ENV
 
     - name: Set up date for release
-      id: date
       run: echo "RELEASE_DATE=$(date +'%Y%m%d%H%M%S')" >> $GITHUB_ENV
-
-    - name: Install GitHub CLI
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gh
-
-    - name: Authenticate GitHub CLI
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        gh auth setup-git
 
     - name: Create GitHub Release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        gh release create ${{ env.VERSION }}-${{ env.RELEASE_DATE }} --title "Release ${{ env.VERSION }}-${{ env.RELEASE_DATE }}" --notes "Release created automatically"
+        gh release create "${VERSION}-${RELEASE_DATE}" \
+          --title "Release ${VERSION}-${RELEASE_DATE}" \
+          --notes "Published to PyPI as tmxcaliber ${VERSION}: https://pypi.org/project/tmxcaliber/${VERSION}/" \
+          dist/*

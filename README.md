@@ -17,14 +17,59 @@
 `tmxcaliber` supports Python `3.10+`.
 
 ```sh
-git clone https://github.com/trustoncloud/tmxcaliber.git
-cd tmxcaliber
+pip install tmxcaliber
+tmxcaliber -h
 ```
 
-The recommended workflow uses [uv](https://docs.astral.sh/uv/) to create the
-environment and install dependencies from the committed `uv.lock`:
+Or run it without installing anything, using [uv](https://docs.astral.sh/uv/):
 
 ```sh
+uvx tmxcaliber -h
+```
+
+First commands to try:
+
+```sh
+tmxcaliber list threats path/to/threatmodel.json
+tmxcaliber filter path/to/threatmodel.json --severity high --output filtered.json
+tmxcaliber map path/to/threatmodel.json --scf 2025.3.1 --framework-name "NIST CSF v2.0"
+```
+
+## Installation
+
+### Install from PyPI
+
+The recommended way to get the CLI:
+
+```sh
+pip install tmxcaliber
+```
+
+Or run it without installing anything, with [uv](https://docs.astral.sh/uv/):
+
+```sh
+uvx tmxcaliber -h
+```
+
+Pin a specific version the usual way:
+
+```sh
+pip install "tmxcaliber==<version>"
+```
+
+Every merge to `main` publishes a new version to PyPI automatically, so the
+latest released code is always there. The Git tags remain the release history
+and carry the same sdist and wheel as attachments.
+
+### Install from source
+
+For contributors, or to work against unreleased changes. This uses
+[uv](https://docs.astral.sh/uv/) to build the environment from the committed
+`uv.lock`:
+
+```sh
+git clone https://github.com/trustoncloud/tmxcaliber.git
+cd tmxcaliber
 uv sync
 uv run tmxcaliber -h
 ```
@@ -40,34 +85,6 @@ source .venv/bin/activate
 
 pip install .
 tmxcaliber -h
-```
-
-First commands to try:
-
-```sh
-tmxcaliber list threats path/to/threatmodel.json
-tmxcaliber filter path/to/threatmodel.json --severity high --output filtered.json
-tmxcaliber map path/to/threatmodel.json --scf 2025.3.1 --framework-name "NIST CSF v2.0"
-```
-
-## Installation
-
-### Install from source
-
-This is the recommended setup for most users and contributors:
-
-```sh
-git clone https://github.com/trustoncloud/tmxcaliber.git
-cd tmxcaliber
-uv sync
-```
-
-### Install a tagged release
-
-To install a specific release directly from Git:
-
-```sh
-pip install "git+https://github.com/trustoncloud/tmxcaliber.git@{VERSION_TAG}"
 ```
 
 ### Docker
