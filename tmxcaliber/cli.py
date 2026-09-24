@@ -25,7 +25,7 @@ from .lib.threatmodel_data import (
     ThreatModelData,
     get_classified_cvssed_control_ids_by_co,
 )
-from .lib.tools import sort_by_id
+from .lib.tools import drop_retired_stubs, sort_by_id
 from .opacity import generate_pngs, generate_xml
 from .params import (
     GUARDDUTY_FINDINGS,
@@ -391,7 +391,7 @@ def get_feature_class_rows(source: str) -> list[dict[str, str]]:
         return []
 
     feature_class_rows: list[dict[str, str]] = []
-    for feature_class_id, feature_class in feature_classes.items():
+    for feature_class_id, feature_class in drop_retired_stubs(feature_classes).items():
         name = ""
         description = ""
         if isinstance(feature_class, dict):

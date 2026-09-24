@@ -78,6 +78,94 @@ def sort_list_by_id(list_of_lists: list[list[Any]], index: int) -> list[list[Any
     )
 
 
+#: The ThreatModel sections whose entities carry a ``retired`` flag. The shape
+#: of that flag (a boolean on a live entity, or a ``{"retired": true}`` stub
+#: keyed by id) is owned by the ThreatModel schema under
+#: ``tmxcaliber/schema/threatmodel``.
+RETIRABLE_SECTIONS: tuple[str, ...] = (
+    "feature_classes",
+    "threats",
+    "control_objectives",
+    "controls",
+    "actions",
+)
+
+
+def is_retired(value: object) -> bool:
+    """Read a ``retired`` value in any form a ThreatModel document has used.
+
+    Current documents carry a JSON boolean. Older ones carry the Sheet cell's
+    text, ``"true"`` or ``"false"``, and feature classes and actions may lack
+    the key entirely. Every one of those forms must read the same way, so an
+    export that only changed the type is never a change.
+
+    Args:
+        value: The entity's ``retired`` value, or ``None`` when absent.
+
+    Returns:
+        The boolean itself for a bool; for a string, ``True`` only when it
+        reads ``true`` once trimmed, in any case; ``False`` for anything
+        else, so an absent flag reads as live.
+
+    Examples:
+        >>> is_retired(True)
+        True
+        >>> is_retired(" TRUE ")
+        True
+        >>> is_retired("false")
+        False
+        >>> is_retired(None)
+        False
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return False
+
+
+def is_retired_stub(entry: object) -> bool:
+    """Whether a section entry is a retired stub rather than an entity.
+
+    The released dataset keeps a retired entity's id as ``{"retired": true}``
+    and nothing else. Readers treat a stub exactly like an id the document
+    dropped.
+
+    Args:
+        entry: One value of a section dict, keyed by entity id.
+
+    Returns:
+        ``True`` when ``entry`` is a dict whose only key is ``retired`` and
+        that flag reads as retired (see :func:`is_retired`).
+
+    Examples:
+        >>> is_retired_stub({"retired": True})
+        True
+        >>> is_retired_stub({"retired": False})
+        False
+        >>> is_retired_stub({"retired": True, "name": "n"})
+        False
+    """
+    return (
+        isinstance(entry, dict)
+        and set(entry) == {"retired"}
+        and is_retired(entry["retired"])
+    )
+
+
+def drop_retired_stubs(section: dict[str, T]) -> dict[str, T]:
+    """A section's entries without its retired stubs.
+
+    Args:
+        section: One of :data:`RETIRABLE_SECTIONS`, keyed by entity id.
+
+    Returns:
+        A new dict with every entry that is not a stub, in the original order.
+        The input is not modified.
+    """
+    return {key: entry for key, entry in section.items() if not is_retired_stub(entry)}
+
+
 def convert_epoch_to_utc(seconds_epoch: int) -> str:
     utc_datetime = datetime.fromtimestamp(seconds_epoch, tz=timezone.utc)
     return utc_datetime.strftime("%Y-%m-%d-%H-%M-%S")
