@@ -16,6 +16,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from tmxcaliber.lib.tools import is_retired
+
 #: Placeholder subpermission tokens that stand in for a not-yet-pinned
 #: permission. Ordered, because :data:`_GENERIC` joins it into a regex
 #: alternation embedded in every entry of :data:`PERMISSION_REGEX`.
@@ -182,7 +184,7 @@ def validate_permissions(
     perm_regex = PERMISSION_REGEX.get(provider)
     results: list[PermViolation] = []
     for threat in threats:
-        if threat.get("retired") == "true":
+        if is_retired(threat.get("retired")):
             continue
         access_raw = threat.get("access")
         if not access_raw:
