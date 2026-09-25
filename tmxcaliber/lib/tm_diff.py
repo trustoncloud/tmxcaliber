@@ -52,6 +52,7 @@ from deepdiff import DeepDiff
 
 from tmxcaliber.lib.dfd_diff import DfdDecodeError, diff_dfd_bodies
 from tmxcaliber.lib.permission_json import extract_leaf_permissions
+from tmxcaliber.lib.tools import RETIRABLE_SECTIONS, drop_retired_stubs, is_retired
 
 JsonDict = dict[str, Any]
 
@@ -253,8 +254,9 @@ def compare_dfd_body(old: Any, new: Any) -> tuple[Any, Any] | None:
     return dfd_diff.summary_old(), dfd_diff.summary_new()
 
 
-#: Comparators keyed by ``(category, field)``. A category of ``*`` applies the
-#: comparator to that field name in every category.
+#: Comparators keyed by ``(category, field)`` and looked up exactly, so a field
+#: shared by several categories is registered once per category. Entries
+#: defined further down this module register themselves beside their function.
 COMPARATORS: dict[tuple[str, str], Comparator] = {
     ("control_objectives", "scf"): compare_scf,
     ("threats", "access"): compare_access,
@@ -309,6 +311,41 @@ def compare_mitigate(old: Any, new: Any) -> tuple[Any, Any] | None:
 
 
 COMPARATORS[("controls", "mitigate")] = compare_mitigate
+
+
+def compare_retired(old: Any, new: Any) -> tuple[Any, Any] | None:
+    """Compare two ``retired`` flags by meaning, whatever type each one has.
+
+    The flag has been written three ways: the Sheet text ``"true"`` or
+    ``"false"`` (every JSON already in a customer's GitHub repo), a JSON
+    boolean (current exports), and, on feature classes and actions, no key at
+    all. A raw comparison would report ``"false"`` to ``false`` on every live
+    threat, control objective and control, and the OverWatch publish gate would
+    block every delivery on a change with nothing to file. An absent flag reads
+    as live, so a feature class or action gaining ``"retired": false`` is not
+    a change either.
+
+    A genuine flip is reported as lowercase ``"true"``/``"false"`` strings,
+    which is the text the change log showed while the field was a string.
+
+    Args:
+        old: The previous ``retired`` value, or ``None`` when absent.
+        new: The current ``retired`` value, or ``None`` when absent.
+
+    Returns:
+        ``None`` when both read the same under
+        :func:`~tmxcaliber.lib.tools.is_retired`, otherwise the
+        ``(old, new)`` pair as lowercase strings.
+    """
+    old_retired, new_retired = is_retired(old), is_retired(new)
+    if old_retired == new_retired:
+        return None
+    return str(old_retired).lower(), str(new_retired).lower()
+
+
+COMPARATORS.update(
+    {(section, "retired"): compare_retired for section in RETIRABLE_SECTIONS}
+)
 
 
 def rolled_out_keys(items_old: JsonDict, items_new: JsonDict) -> set[str]:
@@ -430,6 +467,11 @@ def diff_threatmodels(old_json: JsonDict, new_json: JsonDict) -> list[AtomicChan
     the TM QA field-diff catalog are projections of its output, so neither can
     see a change the other cannot.
 
+    A retired stub (see :func:`~tmxcaliber.lib.tools.is_retired_stub`) is
+    dropped from both sides before diffing, so it reads exactly like an id the
+    document left out: a live entity that became a stub is ``removed``, and a
+    stub on both sides is no change.
+
     Args:
         old_json: The previous export (the "from" side).
         new_json: The current export (the "to" side).
@@ -445,6 +487,9 @@ def diff_threatmodels(old_json: JsonDict, new_json: JsonDict) -> list[AtomicChan
         new_items = new_json.get(category, {}) or {}
         if not isinstance(old_items, dict) or not isinstance(new_items, dict):
             continue
+        if category in RETIRABLE_SECTIONS:
+            old_items = drop_retired_stubs(old_items)
+            new_items = drop_retired_stubs(new_items)
         introduced = rolled_out_keys(old_items, new_items)
 
         for identifier in sorted(set(new_items) - set(old_items)):

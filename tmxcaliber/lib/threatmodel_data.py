@@ -6,7 +6,14 @@ import logging
 from typing import Any, ClassVar
 
 from .feature_class_hierarchy import FeatureClassHierarchy
-from .tools import apply_json_filter, sort_by_id, sort_dict_by_id
+from .tools import (
+    RETIRABLE_SECTIONS,
+    apply_json_filter,
+    is_retired,
+    is_retired_stub,
+    sort_by_id,
+    sort_dict_by_id,
+)
 
 JsonDict = dict[str, Any]
 
@@ -59,7 +66,44 @@ def get_permissions(access: JsonDict | None, add_optional: bool = True) -> list[
     return sorted({x.lower() for x in permissions})
 
 
+def _normalize_retired(tm_json: JsonDict) -> None:
+    """Drop retired stubs and coerce string ``retired`` flags, in place.
+
+    The released dataset keeps a retired id as a ``{"retired": true}`` stub,
+    and documents older than the boolean flag carry ``"true"``/``"false"``.
+    Every reader after the load expects live, fully populated entities, so a stub
+    is removed as if the document had dropped the id, and a string flag becomes
+    the boolean it spells.
+
+    Args:
+        tm_json: The ThreatModel document, modified in place.
+    """
+    for section in RETIRABLE_SECTIONS:
+        entries = tm_json.get(section)
+        if not isinstance(entries, dict):
+            continue
+        for stub_id in [
+            key for key, entry in entries.items() if is_retired_stub(entry)
+        ]:
+            del entries[stub_id]
+        for entry in entries.values():
+            if isinstance(entry, dict) and isinstance(entry.get("retired"), str):
+                entry["retired"] = is_retired(entry["retired"])
+
+
 def upgrade_to_latest_template_version(tm_json: JsonDict) -> JsonDict:
+    """Bring a ThreatModel document of any vintage to the shape readers expect.
+
+    This is the single load path for :class:`ThreatModelData`.
+
+    Args:
+        tm_json: The ThreatModel document, modified in place.
+
+    Returns:
+        The same ``tm_json`` object, for chaining.
+    """
+    _normalize_retired(tm_json)
+
     for co in tm_json.get("control_objectives", {}):
         co_data = tm_json["control_objectives"][co]
         if co_data.get("scf") and isinstance(co_data["scf"], str):
@@ -67,7 +111,7 @@ def upgrade_to_latest_template_version(tm_json: JsonDict) -> JsonDict:
 
     # Due to a mistake on the ThreatModels
     for fc in tm_json.get("feature_classes", {}):
-        if tm_json["feature_classes"][fc]["class_relationship"] == {}:
+        if tm_json["feature_classes"][fc].get("class_relationship") == {}:
             tm_json["feature_classes"][fc]["class_relationship"] = []
 
     # Due to older version calling release time "timestamp"
