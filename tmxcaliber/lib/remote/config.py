@@ -17,6 +17,7 @@ import configparser
 import os
 import pathlib
 import re
+import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
@@ -206,8 +207,42 @@ def load_settings(
             code="bad_credential",
         )
 
+    base_url = (url or DEFAULT_BASE_URL).rstrip("/")
+    _refuse_cleartext(base_url)
+
     return Settings(
         credentials=Credentials(api_key=key, source=source),
-        base_url=(url or DEFAULT_BASE_URL).rstrip("/"),
+        base_url=base_url,
         timeout=timeout,
+    )
+
+
+#: Hosts a plain-HTTP endpoint is tolerated on.
+#:
+#: Only the loopback interface, where the connection never leaves the
+#: machine. Everything else must be HTTPS, because the key travels in a
+#: request header and a mistyped or untrusted endpoint would otherwise read
+#: it off the wire.
+LOOPBACK: Final[frozenset[str]] = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def _refuse_cleartext(base_url: str) -> None:
+    """Refuse an endpoint that would carry the credential in the clear.
+
+    Args:
+        base_url: The resolved API root.
+
+    Raises:
+        ConfigurationError: If the endpoint is neither HTTPS nor loopback.
+    """
+    parsed = urllib.parse.urlsplit(base_url)
+    if parsed.scheme == "https":
+        return
+    if parsed.scheme == "http" and parsed.hostname in LOOPBACK:
+        return
+    raise ConfigurationError(
+        f"{base_url} is not an https endpoint. The API key travels in a "
+        "request header, so only https, or http on localhost for local "
+        "development, is accepted.",
+        code="insecure_endpoint",
     )
