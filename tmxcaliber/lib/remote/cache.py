@@ -10,6 +10,13 @@ dependency path of other repositories and deserves its own change.
 The documents here are licensed artifacts carrying a per-tenant attribution,
 so the cache lives under the user's own home at mode 0700 rather than in a
 world-readable temporary directory.
+
+**Entries are partitioned by credential, and that is a correctness
+requirement rather than tidiness.** Entitlement is decided by the server
+per key, so a cache keyed only by model would let a second key read a
+document the first one fetched, with no request and therefore no
+entitlement check. The key id, which is the public half of the credential,
+names the partition.
 """
 
 from __future__ import annotations
@@ -27,9 +34,15 @@ from .ref import TmRef
 
 #: How long an assembled document is reused when no release was pinned.
 #:
-#: A pinned release is immutable, so it never expires. Only the meaning of
-#: "latest" can change underneath a caller.
+#: Only the meaning of "latest" can change underneath a caller.
 DEFAULT_MAX_AGE = 24 * 60 * 60.0
+
+#: How long a pinned release is reused.
+#:
+#: The bytes are immutable, so this is not about staleness. It bounds how
+#: long a credential that has since been revoked can still read a document
+#: out of a cache it populated while it was valid.
+PINNED_MAX_AGE = 7 * 24 * 60 * 60.0
 
 
 def cache_root(env: Mapping[str, str] | None = None) -> pathlib.Path:
@@ -49,24 +62,34 @@ def cache_root(env: Mapping[str, str] | None = None) -> pathlib.Path:
 
 
 def cached_path(
-    ref: TmRef, release: str, base_url: str, env: Mapping[str, str] | None = None
+    ref: TmRef,
+    release: str,
+    base_url: str,
+    key_id: str,
+    env: Mapping[str, str] | None = None,
 ) -> pathlib.Path:
     """Work out where one document is cached.
 
-    The base URL is part of the key, so a staging endpoint and production
-    can never serve each other's documents out of one cache.
+    Both the endpoint and the credential are part of the key. The endpoint
+    so a staging and a production document never serve each other; the
+    credential because entitlement is decided per key, and a shared entry
+    would hand one tenant a document another tenant was entitled to.
 
     Args:
         ref: The ThreatModel.
         release: The resolved release key, never empty.
         base_url: The API this document came from.
+        key_id: The public half of the credential that fetched it.
         env: The environment to read.
 
     Returns:
         The file path.
     """
     endpoint = hashlib.sha256(base_url.encode("utf-8")).hexdigest()[:12]
-    return cache_root(env) / endpoint / ref.tm_id / f"{release}.json"
+    # Hashed rather than written out: the id is not a secret, but there is
+    # no reason to leave any part of a credential in a filesystem path.
+    whose = hashlib.sha256(key_id.encode("utf-8")).hexdigest()[:12]
+    return cache_root(env) / endpoint / whose / ref.tm_id / f"{release}.json"
 
 
 def read(

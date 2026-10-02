@@ -121,6 +121,8 @@ class StubClient:
         self.detail = dict(DETAIL if detail is None else detail)
         self.calls: list[tuple[str, dict[str, str]]] = []
 
+    key: str = "KEYONE"
+
     @property
     def base_url(self) -> str:
         """The endpoint, for cache keying.
@@ -129,6 +131,15 @@ class StubClient:
             A stable fake.
         """
         return "https://api.example.test"
+
+    @property
+    def key_id(self) -> str:
+        """Which credential this stub speaks as.
+
+        Returns:
+            The fake key id.
+        """
+        return self.key
 
     def get(self, path: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
         """Answer a single-resource call.

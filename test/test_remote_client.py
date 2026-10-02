@@ -14,7 +14,13 @@ from typing import Any
 import pytest
 
 from tmxcaliber.lib.remote import errors
-from tmxcaliber.lib.remote.client import MAX_ATTEMPTS, MAX_RETRY_AFTER, TocClient
+from tmxcaliber.lib.remote.client import (
+    MAX_ATTEMPTS,
+    MAX_RETRY_AFTER,
+    SameOriginRedirectHandler,
+    TocClient,
+    default_opener,
+)
 from tmxcaliber.lib.remote.config import Credentials, Settings
 
 KEY = "toc-tak1-" + "A" * 16 + "-" + "B" * 52
@@ -320,3 +326,74 @@ def test_empty_parameters_are_not_sent() -> None:
 
     assert "release=r1" in opener.requests[0].full_url
     assert "provider" not in opener.requests[0].full_url
+
+
+def test_a_page_without_a_next_cursor_is_refused() -> None:
+    """The envelope always carries it, null on the last page.
+
+    Treating an absent one as "no more" is how a drifted response silently
+    truncates a model, and a pinned release then caches that truncation.
+    """
+    opener = FakeOpener([FakeResponse({"items": [{"a": 1}], "pageSize": 1})])
+    client = TocClient(settings(), opener=opener)
+
+    with pytest.raises(errors.ContractViolation) as caught:
+        list(client.paginate("/v1/threatmodels"))
+    assert "nextCursor" in str(caught.value)
+
+
+def test_a_row_that_is_not_an_object_is_refused() -> None:
+    # Skipping it would quietly drop an entity from the assembled document.
+    opener = FakeOpener(
+        [FakeResponse({"items": ["nope"], "nextCursor": None, "pageSize": 1})]
+    )
+    client = TocClient(settings(), opener=opener)
+
+    with pytest.raises(errors.ContractViolation):
+        list(client.paginate("/v1/threatmodels"))
+
+
+def test_a_cross_origin_redirect_is_refused_rather_than_followed() -> None:
+    """urllib copies Authorization onto the redirected request.
+
+    So a redirect to another host hands the tenant key to whatever answers
+    there. The handler refuses before that can happen.
+    """
+    handler = SameOriginRedirectHandler()
+    request = urllib.request.Request("https://api.example.test/v1/me")
+
+    with pytest.raises(errors.RemoteError) as caught:
+        handler.redirect_request(
+            request, None, 302, "Found", {}, "https://evil.example/v1/me"
+        )
+    assert "disclose" in str(caught.value)
+
+
+def test_a_downgrade_to_http_is_refused() -> None:
+    handler = SameOriginRedirectHandler()
+    request = urllib.request.Request("https://api.example.test/v1/me")
+
+    with pytest.raises(errors.RemoteError):
+        handler.redirect_request(
+            request, None, 302, "Found", {}, "http://api.example.test/v1/me"
+        )
+
+
+def test_a_same_origin_redirect_is_allowed() -> None:
+    handler = SameOriginRedirectHandler()
+    request = urllib.request.Request("https://api.example.test/v1/me")
+
+    followed = handler.redirect_request(
+        request, None, 302, "Found", {}, "https://api.example.test/v1/me/"
+    )
+
+    assert followed is not None
+
+
+def test_the_default_opener_carries_the_redirect_guard() -> None:
+    # A client built without an injected opener must still be protected.
+    opener = default_opener()
+
+    assert any(isinstance(h, SameOriginRedirectHandler) for h in opener.handlers), (
+        "the default opener follows redirects unguarded"
+    )

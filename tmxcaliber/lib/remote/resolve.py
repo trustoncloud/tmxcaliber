@@ -17,7 +17,7 @@ import os
 from collections.abc import Mapping
 
 from .assemble import fetch_document
-from .cache import DEFAULT_MAX_AGE, cached_path, read, write
+from .cache import DEFAULT_MAX_AGE, PINNED_MAX_AGE, cached_path, read, write
 from .client import TocClient
 from .config import load_settings
 from .ref import TmRef, is_remote_ref, parse_ref
@@ -68,13 +68,13 @@ def fetch_to_cache(
     api = client or _client(env)
 
     if ref.release:
-        path = cached_path(ref, ref.release, api.base_url, env)
-        if not refresh and read(path, max_age=None) is not None:
+        path = cached_path(ref, ref.release, api.base_url, api.key_id, env)
+        if not refresh and read(path, max_age=PINNED_MAX_AGE) is not None:
             return str(path)
         write(path, fetch_document(api, ref))
         return str(path)
 
-    latest = cached_path(ref, "latest", api.base_url, env)
+    latest = cached_path(ref, "latest", api.base_url, api.key_id, env)
     if not refresh and read(latest, max_age=DEFAULT_MAX_AGE) is not None:
         return str(latest)
 
@@ -85,7 +85,7 @@ def fetch_to_cache(
     metadata = document.get("metadata")
     release = str(metadata.get("version") or "") if isinstance(metadata, dict) else ""
     if release:
-        write(cached_path(ref, release, api.base_url, env), document)
+        write(cached_path(ref, release, api.base_url, api.key_id, env), document)
     return str(latest)
 
 
