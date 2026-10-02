@@ -13,6 +13,7 @@ to.
 
 from __future__ import annotations
 
+import http.client
 import json
 import platform
 import random
@@ -283,6 +284,17 @@ class TocClient:
                 f"{self._settings.timeout:.0f}s.",
                 code="timeout",
             ) from None
+        except (OSError, http.client.HTTPException) as exc:
+            # A connection lost while the body is being read arrives as
+            # ConnectionResetError or IncompleteRead, neither of which is a
+            # URLError. Left uncaught they escaped `get`, so the GET was
+            # never retried and the CLI printed a traceback instead of a
+            # message.
+            raise ServiceUnavailable(
+                f"The connection to {self._settings.base_url} failed while "
+                f"reading the response: {type(exc).__name__}.",
+                code="connection_lost",
+            ) from None
 
         try:
             parsed = json.loads(body.decode("utf-8"))
@@ -404,9 +416,18 @@ class TocClient:
                     code="bad_page",
                 )
             cursor = body.get("nextCursor")
-            if not cursor:
+            # Null, and only null, means the walk is over. An empty string,
+            # false or zero from a degraded response would otherwise read as
+            # completion, and the truncated collection then caches as a whole
+            # document.
+            if cursor is None:
                 return
-            cursor = str(cursor)
+            if not isinstance(cursor, str) or not cursor:
+                raise ContractViolation(
+                    f"{path} returned a nextCursor that is neither null nor "
+                    "a cursor.",
+                    code="bad_cursor",
+                )
             if cursor in seen:
                 raise ContractViolation(
                     f"{path} returned a cursor it had already served.",

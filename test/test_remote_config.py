@@ -165,3 +165,23 @@ def test_loopback_and_https_endpoints_are_accepted(url: str) -> None:
     # Local development against a container on this machine is the one case
     # where plain HTTP never leaves the host.
     assert load_settings(env={"TOC_API_KEY": KEY, "TOC_API_URL": url}).base_url == url
+
+
+def test_a_malformed_credentials_file_never_echoes_the_key(
+    tmp_path: pathlib.Path,
+) -> None:
+    """ConfigParser puts the offending line into its exception.
+
+    So a key written without its separator would be printed to a terminal
+    or a CI log by the very error complaining about it.
+    """
+    config = tmp_path / "credentials"
+    config.write_text(f"[default]\napi_key {KEY}\n", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError) as caught:
+        load_settings(env={"TOC_CONFIG_FILE": str(config)})
+
+    message = str(caught.value)
+    assert KEY not in message
+    assert "toc-tak1" not in message
+    assert "could not be parsed" in message
