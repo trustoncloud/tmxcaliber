@@ -21,6 +21,7 @@ from .lib.errors import BinaryNotFound, FeatureClassCycleError
 from .lib.filter import Filter
 from .lib.filter_applier import FilterApplier
 from .lib.remote.errors import RemoteError
+from .lib.remote.ref import is_remote_ref
 from .lib.remote.resolve import resolve_source
 from .lib.scf import get_scf_data
 from .lib.threatmodel_data import (
@@ -185,8 +186,12 @@ def validate(parser: ArgumentParser) -> Namespace:
             ids=getattr(args, "ids", ""),
         )
     elif args.operation == Operation.generate:
+        # A reference names no file, so the suffix check cannot speak for it.
+        # This runs at parse time, before the document is fetched, so without
+        # the exemption the documented `tmxcaliber generate aws-s3` exits 2.
         if (
             isinstance(args.source, str)
+            and not is_remote_ref(args.source)
             and not args.source.endswith("_DFD.xml")
             and not args.source.endswith(".json")
         ):

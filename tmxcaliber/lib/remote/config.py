@@ -78,6 +78,20 @@ class Credentials:
         """
         return f"Credentials(source={self.source!r})"
 
+    @property
+    def key_id(self) -> str:
+        """The credential's public identifier.
+
+        A key is ``toc-<kind>-<id>-<secret>``, and only the last part is a
+        secret. The id names which credential is asking, which is what the
+        cache needs in order not to serve one tenant's document to another.
+
+        Returns:
+            The key id, or an empty string if the key is not in that shape.
+        """
+        parts = self.api_key.split("-")
+        return parts[2] if len(parts) >= 4 else ""
+
 
 @dataclass(frozen=True)
 class Settings:

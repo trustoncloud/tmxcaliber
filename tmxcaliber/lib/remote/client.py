@@ -142,6 +142,61 @@ def _raise_for(status: int, body: bytes, headers: Mapping[str, str]) -> None:
     raise cls(text, code=code, request_id=request_id, status=status)
 
 
+class SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse a redirect that would disclose the credential.
+
+    **urllib copies the original request's headers onto the redirected
+    one**, Authorization included. A redirect to another host, or to plain
+    HTTP, therefore hands a tenant API key to whatever answers there. The
+    API publishes no redirecting route, so refusing is free; following one
+    blindly is not.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        """Allow a same-origin redirect and refuse any other.
+
+        Args:
+            req: The original request.
+            fp: The response body.
+            code: The redirect status.
+            msg: The status text.
+            headers: The response headers.
+            newurl: Where the server is pointing.
+
+        Returns:
+            The redirected request when it stays on the same origin.
+
+        Raises:
+            RemoteError: When the target is a different origin or scheme.
+        """
+        here = urllib.parse.urlsplit(req.full_url)
+        there = urllib.parse.urlsplit(newurl)
+        if (here.scheme, here.netloc) != (there.scheme, there.netloc):
+            raise RemoteError(
+                f"{req.full_url} redirected to {there.scheme}://{there.netloc}, "
+                "which would disclose the API key. Refusing to follow.",
+                code="cross_origin_redirect",
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def default_opener() -> urllib.request.OpenerDirector:
+    """Build the opener this client uses.
+
+    Returns:
+        An opener that will not follow a redirect off this origin.
+    """
+    return urllib.request.build_opener(SameOriginRedirectHandler)
+
+
 class TocClient:
     """A read-only client for the TrustOnCloud API.
 
@@ -162,7 +217,7 @@ class TocClient:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._settings = settings
-        self._opener = opener or urllib.request.build_opener()
+        self._opener = opener or default_opener()
         self._sleep = sleep
 
     @property
@@ -173,6 +228,15 @@ class TocClient:
             The base URL, without a trailing slash.
         """
         return self._settings.base_url
+
+    @property
+    def key_id(self) -> str:
+        """Which credential this client speaks as.
+
+        Returns:
+            The public half of the key, never the secret.
+        """
+        return self._settings.credentials.key_id
 
     def _request(self, path: str, params: Mapping[str, str]) -> dict[str, Any]:
         """Perform one GET and parse the answer.
@@ -322,8 +386,23 @@ class TocClient:
                     f"{path} answered without an items list.", code="bad_page"
                 )
             for row in items:
-                if isinstance(row, dict):
-                    yield row
+                if not isinstance(row, dict):
+                    # Skipping it would quietly drop an entity from the
+                    # assembled document, which then caches as complete.
+                    raise ContractViolation(
+                        f"{path} returned a row that is not an object.",
+                        code="bad_row",
+                    )
+                yield row
+            if "nextCursor" not in body:
+                # The envelope always carries it, null on the last page.
+                # Treating an absent one as "no more" is how a drifted
+                # response silently truncates a model, and a pinned release
+                # then caches that truncation.
+                raise ContractViolation(
+                    f"{path} returned a page with no nextCursor.",
+                    code="bad_page",
+                )
             cursor = body.get("nextCursor")
             if not cursor:
                 return

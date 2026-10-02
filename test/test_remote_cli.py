@@ -25,6 +25,8 @@ class StubClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, str]]] = []
 
+    key: str = "KEYONE"
+
     @property
     def base_url(self) -> str:
         """The endpoint, for cache keying.
@@ -33,6 +35,15 @@ class StubClient:
             A stable fake.
         """
         return "https://api.example.test"
+
+    @property
+    def key_id(self) -> str:
+        """Which credential this stub speaks as.
+
+        Returns:
+            The fake key id.
+        """
+        return self.key
 
     def get(self, path: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
         """Answer a single-resource call.
@@ -193,3 +204,38 @@ def test_the_api_commands_are_reachable_from_the_parser(
     assert params.api_route is not None
     assert params.api_route.path == "/v1/threatmodels/{provider}/{service}"
     assert params.tm_id == "aws-s3"
+
+
+def test_a_second_credential_does_not_read_the_first_one_s_cache(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Entitlement is decided per key, so the cache cannot be shared.
+
+    Without the credential in the cache key, a second key reads a document
+    the first one fetched with no request, and therefore no entitlement
+    check. Revoking the first key would not stop it.
+    """
+    env = {"TMXCALIBER_CACHE_DIR": str(tmp_path / "cache")}
+    first = StubClient()
+    first.key = "KEYONE"
+    resolve_source("aws-s3", client=first, env=env)  # type: ignore[arg-type]
+
+    second = StubClient()
+    second.key = "KEYTWO"
+    resolve_source("aws-s3", client=second, env=env)  # type: ignore[arg-type]
+
+    assert len(second.calls) == 5, "the second credential reused the first's cache"
+
+
+def test_generate_accepts_a_reference(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The documented `tmxcaliber generate aws-s3` must parse.
+
+    `validate` rejects a source without a .json or _DFD.xml suffix, and it
+    runs before the document is fetched, so a reference has to be exempt or
+    the command exits 2.
+    """
+    monkeypatch.setattr(sys, "argv", ["tmxcaliber", "generate", "aws-s3"])
+
+    params = cli_module.get_params()
+
+    assert params.source == "aws-s3"
