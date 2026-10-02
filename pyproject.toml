@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tmxcaliber"
-version = "0.4.0"
+version = "0.5.0"
 description = "CLI utility to filter down one or more TrustOnCloud ThreatModels and get more refined information."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -65,7 +65,14 @@ include = ["tmxcaliber*"]
 exclude = ["test*"]
 
 [tool.setuptools.package-data]
-tmxcaliber = ["schema/*.json", "schema/*/*.json"]
+# The vendored API contract ships with the package: the live one sits
+# behind authentication and the tenant feature flag, so a client cannot
+# read the contract it is about to call.
+tmxcaliber = [
+    "schema/*.json",
+    "schema/*/*.json",
+    "lib/remote/openapi/*.json",
+]
 
 [tool.ruff]
 line-length = 88

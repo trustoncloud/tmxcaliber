@@ -20,6 +20,8 @@ from .lib.control_selector import resolve_control_ids
 from .lib.errors import BinaryNotFound, FeatureClassCycleError
 from .lib.filter import Filter
 from .lib.filter_applier import FilterApplier
+from .lib.remote.errors import RemoteError
+from .lib.remote.resolve import resolve_source
 from .lib.scf import get_scf_data
 from .lib.threatmodel_data import (
     ThreatModelData,
@@ -37,6 +39,7 @@ from .params import (
     ListOperation,
     Operation,
 )
+from .remote_cli import add_api_parsers, run_api_command, selected_route
 
 JsonDict = dict[str, Any]
 
@@ -69,6 +72,9 @@ def get_params() -> Namespace:
     parsers.add_gen_parser(subparsers)
     parsers.add_list_parser(subparsers)
     parsers.add_changelog_parser(subparsers)
+    # Built from the route contract rather than written out here, so the API
+    # surface and the CLI cannot drift apart.
+    add_api_parsers(subparsers)
 
     return validate(parser)
 
@@ -356,7 +362,7 @@ def get_recursive_json_file_paths(source: str) -> list[str]:
 def get_service_rows(source: str) -> list[dict[str, str]]:
     service_rows: list[dict[str, str]] = []
 
-    for json_file_path in get_recursive_json_file_paths(source):
+    for json_file_path in get_recursive_json_file_paths(resolve_source(source)):
         data = load_json_data(json_file_path)
         metadata_block = data.get("metadata", {})
         if not isinstance(metadata_block, dict):
@@ -385,7 +391,7 @@ def get_service_rows(source: str) -> list[dict[str, str]]:
 
 
 def get_feature_class_rows(source: str) -> list[dict[str, str]]:
-    data = load_json_data(source)
+    data = load_json_data(resolve_source(source))
     feature_classes = data.get("feature_classes", {})
     if not isinstance(feature_classes, dict):
         return []
@@ -426,6 +432,10 @@ def get_input_data(
 
     all_data: dict[str, list[ThreatModelData] | str] = {}
     for key, source in all_sources.items():
+        # A reference becomes a cached path here; a path is handed back
+        # unchanged, so every existing invocation reaches the same code it
+        # always did.
+        source = resolve_source(source)
         if not os.path.exists(source):
             print(f"File or directory not found: {source}")
             sys.exit(1)
@@ -534,7 +544,25 @@ def output_result(
 
 
 def main() -> None:
+    """Run the CLI, reporting an API failure as a message rather than a trace.
+
+    The wrapper exists because nothing here caught anything before. A failed
+    call would surface as a raw traceback, and a urllib traceback carries the
+    Request object, which carries the Authorization header.
+    """
+    try:
+        _run()
+    except RemoteError as exc:
+        print(Fore.RED + str(exc) + Fore.RESET)
+        sys.exit(1)
+
+
+def _run() -> None:
     params = get_params()
+    if selected_route(params) is not None:
+        result, result_type = run_api_command(params)
+        output_result(params.output, result, result_type)
+        return
     if (
         params.operation == Operation.list
         and params.list_type == ListOperation.services
