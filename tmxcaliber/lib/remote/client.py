@@ -424,8 +424,7 @@ class TocClient:
                 return
             if not isinstance(cursor, str) or not cursor:
                 raise ContractViolation(
-                    f"{path} returned a nextCursor that is neither null nor "
-                    "a cursor.",
+                    f"{path} returned a nextCursor that is neither null nor a cursor.",
                     code="bad_cursor",
                 )
             if cursor in seen:

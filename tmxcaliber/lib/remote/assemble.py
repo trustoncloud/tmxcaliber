@@ -86,11 +86,33 @@ def fetch_document(client: TocClient, ref: TmRef) -> Fetched:
     # cached under the requested reference, and then read back as fact for
     # as long as the cache lives.
     answered = str(detail.get("tmId") or "")
-    if answered and answered.lower() != ref.tm_id.lower():
+    if not answered:
+        # Absent is not "assume it is the right one". A response with no
+        # identity would be combined with collections requested for this
+        # model and cached under this reference, which is the same wrong
+        # document as naming another model, arrived at more quietly.
+        raise ContractViolation(
+            f"{base} answered without naming which ThreatModel it is.",
+            code="unidentified",
+        )
+    if answered.lower() != ref.tm_id.lower():
         raise ContractViolation(
             f"{base} answered for {answered}, not {ref.tm_id}.",
             code="wrong_model",
         )
+
+    # The metadata names the same model a second time, and the two must
+    # agree: a document whose body belongs to another service would
+    # otherwise pass on the strength of a correct envelope alone.
+    metadata = detail.get("metadata")
+    if isinstance(metadata, dict):
+        stated = f"{metadata.get('provider', '')}-{metadata.get('service', '')}".lower()
+        if stated != "-" and stated != ref.tm_id.lower():
+            raise ContractViolation(
+                f"{base} answered with a document describing {stated}, "
+                f"not {ref.tm_id}.",
+                code="wrong_model",
+            )
 
     # The release the detail route actually answered with. Pinning the rest
     # of the read to this, rather than to what the caller asked for, is what

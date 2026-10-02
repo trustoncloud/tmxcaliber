@@ -332,3 +332,31 @@ def test_a_schema_version_is_not_mistaken_for_a_release() -> None:
     assert fetched.document["metadata"]["version"] == "20240423"
     assert fetched.release == "1611187200"
     assert fetched.release != fetched.document["metadata"]["version"]
+
+
+def test_a_document_that_names_no_model_is_refused() -> None:
+    """Absent identity is not "assume it is the right one".
+
+    A response with no `tmId` would be combined with collections requested
+    for this model and cached under this reference: the same wrong
+    document, arrived at more quietly.
+    """
+    client = StubClient({k: v for k, v in DETAIL.items() if k != "tmId"})
+
+    with pytest.raises(ContractViolation) as caught:
+        fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
+    assert "without naming" in str(caught.value)
+
+
+def test_a_document_whose_metadata_describes_another_service_is_refused() -> None:
+    # A correct envelope around the wrong body must not pass on the
+    # envelope alone.
+    detail = {
+        **DETAIL,
+        "metadata": {**DETAIL["metadata"], "provider": "gcp", "service": "storage"},
+    }
+    client = StubClient(detail)
+
+    with pytest.raises(ContractViolation) as caught:
+        fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
+    assert "gcp-storage" in str(caught.value)
