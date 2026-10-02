@@ -140,3 +140,28 @@ def test_things_that_are_not_references(value: str) -> None:
 def test_parsing_a_non_reference_raises() -> None:
     with pytest.raises(ValueError):
         parse_ref("threatmodel.json")
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://api.trustoncloud.com", "http://evil.example", "ftp://api.example"],
+)
+def test_a_cleartext_endpoint_is_refused(url: str) -> None:
+    """The key travels in a request header.
+
+    A mistyped or untrusted `TOC_API_URL` would otherwise hand a live
+    tenant credential to anyone able to watch the connection.
+    """
+    with pytest.raises(ConfigurationError) as caught:
+        load_settings(env={"TOC_API_KEY": KEY, "TOC_API_URL": url})
+
+    assert "https" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "url", ["http://localhost:8081", "http://127.0.0.1:8081", "https://api.example"]
+)
+def test_loopback_and_https_endpoints_are_accepted(url: str) -> None:
+    # Local development against a container on this machine is the one case
+    # where plain HTTP never leaves the host.
+    assert load_settings(env={"TOC_API_KEY": KEY, "TOC_API_URL": url}).base_url == url

@@ -114,11 +114,35 @@ PARTS: dict[str, list[dict[str, Any]]] = {
 DFD = {"body": "PG14ZmlsZT48L214ZmlsZT4="}
 
 
+def _at_release(detail: dict[str, Any], asked: str | None) -> dict[str, Any]:
+    """Answer a detail call as the release it was asked for.
+
+    Args:
+        detail: The base detail fixture.
+        asked: The release the caller pinned, if any.
+
+    Returns:
+        The detail document, naming the requested release.
+    """
+    answer = dict(detail)
+    if asked:
+        answer["version"] = asked
+        metadata = dict(answer.get("metadata", {}))
+        metadata["version"] = asked
+        answer["metadata"] = metadata
+    return answer
+
+
 class StubClient:
     """A client that answers from fixtures and records what it was asked."""
 
-    def __init__(self, detail: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, detail: dict[str, Any] | None = None, *, honour_release: bool = True
+    ) -> None:
         self.detail = dict(DETAIL if detail is None else detail)
+        # A well-behaved server answers for the release it was asked for.
+        # Setting this False is how a test plays one that does not.
+        self.honour_release = honour_release
         self.calls: list[tuple[str, dict[str, str]]] = []
 
     key: str = "KEYONE"
@@ -154,7 +178,10 @@ class StubClient:
         self.calls.append((path, dict(params or {})))
         if path.endswith("/dfd"):
             return dict(DFD)
-        return dict(self.detail)
+        # A real detail route answers for the release it was asked for, and
+        # the assembler refuses an answer that names a different one.
+        asked = dict(params or {}).get("release")
+        return _at_release(self.detail, asked if self.honour_release else None)
 
     def paginate(
         self,
@@ -266,3 +293,37 @@ def test_loading_does_not_leak_into_the_shared_registry() -> None:
     load_remote(StubClient(), TmRef("aws", "s3"))  # type: ignore[arg-type]
 
     assert len(ThreatModelData.threatmodel_data_list) == before
+
+
+def test_a_document_for_another_model_is_refused() -> None:
+    """A proxy or server-side identity slip must not be cached as fact.
+
+    Without this the wrong document is assembled, filed under the requested
+    reference, and read back as correct for as long as the cache lives.
+    """
+    client = StubClient({**DETAIL, "tmId": "aws-ec2"})
+
+    with pytest.raises(ContractViolation) as caught:
+        fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
+    assert "aws-ec2" in str(caught.value)
+
+
+def test_a_release_other_than_the_one_pinned_is_refused() -> None:
+    # Answering a different version of the right model is the same problem
+    # one level down, and the cache would file it under the pin.
+    client = StubClient({**DETAIL, "version": "9999"}, honour_release=False)
+
+    with pytest.raises(ContractViolation) as caught:
+        fetch_document(client, TmRef("aws", "s3", "1611187200"))  # type: ignore[arg-type]
+    assert "9999" in str(caught.value)
+
+
+def test_metadata_disagreeing_about_the_release_is_refused() -> None:
+    # The cache keys an unpinned read from metadata.version, so two answers
+    # that disagree would file the document under the wrong release.
+    detail = {**DETAIL, "metadata": {**DETAIL["metadata"], "version": "7777"}}
+    client = StubClient(detail)
+
+    with pytest.raises(ContractViolation) as caught:
+        fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
+    assert "7777" in str(caught.value)

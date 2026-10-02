@@ -16,7 +16,7 @@ from tmxcaliber.lib.remote.contract import route_for
 from tmxcaliber.lib.remote.resolve import resolve_source
 from tmxcaliber.remote_cli import run_api_command
 
-from .test_remote_assemble import DETAIL, DFD, PARTS
+from .test_remote_assemble import DETAIL, DFD, PARTS, _at_release
 
 
 class StubClient:
@@ -58,9 +58,12 @@ class StubClient:
         self.calls.append((path, dict(params or {})))
         if path.endswith("/dfd"):
             return dict(DFD)
+        # A real detail route answers for the release it was asked for, and
+        # the assembler refuses an answer that names a different one.
+        asked = dict(params or {}).get("release")
         if path == "/v1/me":
             return {"tenantId": "t-1", "permissions": ["api.threatmodels.read"]}
-        return dict(DETAIL)
+        return _at_release(DETAIL, asked)
 
     def paginate(
         self,

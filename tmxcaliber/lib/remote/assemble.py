@@ -61,15 +61,32 @@ def fetch_document(client: TocClient, ref: TmRef) -> dict[str, Any]:
     pinned = {"release": ref.release} if ref.release else {}
     detail = client.get(base, pinned)
 
+    # **Check the answer is the one that was asked for, before anything is
+    # built on it or written to disk.** A proxy or a server-side identity
+    # slip that returned a different model would otherwise be assembled,
+    # cached under the requested reference, and then read back as fact for
+    # as long as the cache lives.
+    answered = str(detail.get("tmId") or "")
+    if answered and answered.lower() != ref.tm_id.lower():
+        raise ContractViolation(
+            f"{base} answered for {answered}, not {ref.tm_id}.",
+            code="wrong_model",
+        )
+
     # The release the detail route actually answered with. Pinning the rest
     # of the read to this, rather than to what the caller asked for, is what
     # closes the window: "latest" is resolved once, here, and never again.
-    release = str(detail.get("version") or ref.release or "")
+    release = str(detail.get("version") or "")
     if not release:
         raise ContractViolation(
             f"{base} did not name the release it answered with, so the "
             "remaining sections cannot be pinned to it.",
             code="unpinnable",
+        )
+    if ref.release and release != ref.release:
+        raise ContractViolation(
+            f"{base} answered with release {release}, not the requested {ref.release}.",
+            code="wrong_release",
         )
     at_release = {"release": release}
 
@@ -82,6 +99,19 @@ def fetch_document(client: TocClient, ref: TmRef) -> dict[str, Any]:
         document[part] = _by_id(part, rows)
 
     document["dfd"] = client.get(f"{base}/dfd", at_release)
+
+    # The metadata carries its own version, and the cache is keyed from it
+    # for an unpinned read. Two answers that disagree about which release
+    # this is would be filed under the wrong one.
+    metadata = document.get("metadata")
+    if isinstance(metadata, dict):
+        stated = str(metadata.get("version") or "")
+        if stated and stated != release:
+            raise ContractViolation(
+                f"{base} answered as release {release} while its metadata "
+                f"says {stated}.",
+                code="release_disagreement",
+            )
     return document
 
 
