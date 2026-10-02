@@ -397,3 +397,65 @@ def test_the_default_opener_carries_the_redirect_guard() -> None:
     assert any(isinstance(h, SameOriginRedirectHandler) for h in opener.handlers), (
         "the default opener follows redirects unguarded"
     )
+
+
+@pytest.mark.parametrize("cursor", ["", 0, False])
+def test_a_falsey_cursor_is_refused_rather_than_read_as_the_end(
+    cursor: object,
+) -> None:
+    """Null, and only null, marks the last page.
+
+    An empty string, false or zero from a degraded response would otherwise
+    read as completion, and the truncated collection then caches as a whole
+    document.
+    """
+    opener = FakeOpener(
+        [FakeResponse({"items": [{"a": 1}], "nextCursor": cursor, "pageSize": 1})]
+    )
+    client = TocClient(settings(), opener=opener)
+
+    with pytest.raises(errors.ContractViolation):
+        list(client.paginate("/v1/threatmodels"))
+
+
+def test_a_null_cursor_ends_the_walk() -> None:
+    opener = FakeOpener(
+        [FakeResponse({"items": [{"a": 1}], "nextCursor": None, "pageSize": 1})]
+    )
+    client = TocClient(settings(), opener=opener)
+
+    assert list(client.paginate("/v1/threatmodels")) == [{"a": 1}]
+
+
+def test_a_connection_lost_while_reading_is_retried_like_any_transport_failure() -> (
+    None
+):
+    """ConnectionResetError is not a URLError.
+
+    Uncaught it escaped `get`, so the GET was never retried and the CLI
+    printed a traceback rather than a message.
+    """
+
+    class Dropped(FakeResponse):
+        def read(self) -> bytes:
+            raise ConnectionResetError("peer hung up")
+
+    opener = FakeOpener([Dropped({}), FakeResponse({"tenantId": "t-1"})])
+    client = TocClient(settings(), opener=opener, sleep=lambda _: None)
+
+    assert client.get("/v1/me") == {"tenantId": "t-1"}
+    assert len(opener.requests) == 2
+
+
+def test_an_incomplete_read_is_reported_rather_than_raised_raw() -> None:
+    import http.client
+
+    class Truncated(FakeResponse):
+        def read(self) -> bytes:
+            raise http.client.IncompleteRead(b"half")
+
+    opener = FakeOpener([Truncated({}) for _ in range(MAX_ATTEMPTS)])
+    client = TocClient(settings(), opener=opener, sleep=lambda _: None)
+
+    with pytest.raises(errors.ServiceUnavailable):
+        client.get("/v1/me")

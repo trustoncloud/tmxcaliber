@@ -150,8 +150,18 @@ def _from_file(
     try:
         parser.read(path, encoding="utf-8")
     except configparser.Error as exc:
+        # **The message never carries the parser's text.** ConfigParser puts
+        # the offending line into a ParsingError, so a key written without
+        # its separator would be printed to a terminal or a CI log by the
+        # very error that complained about it. A line number says as much
+        # as the reader needs and discloses nothing.
+        where = ""
+        errors = getattr(exc, "errors", None)
+        if errors:
+            where = f" at line {errors[0][0]}"
         raise ConfigurationError(
-            f"{path} could not be read: {exc}", code="bad_config"
+            f"{path} could not be parsed as an INI file{where}.",
+            code="bad_config",
         ) from None
     section = profile or env.get("TOC_PROFILE") or "default"
     if not parser.has_section(section):
