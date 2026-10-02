@@ -14,7 +14,7 @@ document that still validates against the schema and is wrong.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NamedTuple
 
 from ..threatmodel_data import ThreatModelData
 from .client import TocClient
@@ -40,7 +40,25 @@ def _detail_path(ref: TmRef) -> str:
     return f"/v1/threatmodels/{ref.provider}/{ref.service}"
 
 
-def fetch_document(client: TocClient, ref: TmRef) -> dict[str, Any]:
+class Fetched(NamedTuple):
+    """An assembled document and the release it came from.
+
+    **The release is carried beside the document, not inside it.** The
+    canonical ``metadata.version`` is the template schema version, a date
+    such as ``20240423``, and a release key is an epoch such as
+    ``1611187200``. They are different facts with similar names, and reading
+    one as the other files a document under a key nothing will look for.
+
+    Attributes:
+        document: The canonical document.
+        release: The release the API answered with.
+    """
+
+    document: dict[str, Any]
+    release: str
+
+
+def fetch_document(client: TocClient, ref: TmRef) -> Fetched:
     """Assemble one ThreatModel from the API.
 
     Args:
@@ -48,7 +66,8 @@ def fetch_document(client: TocClient, ref: TmRef) -> dict[str, Any]:
         ref: The ThreatModel, optionally pinned to a release.
 
     Returns:
-        The canonical document, with every section the schema requires.
+        The canonical document, with every section the schema requires,
+        and the release it was read at.
 
     Raises:
         NotFound: If the model, or the pinned release, is not available to
@@ -99,20 +118,7 @@ def fetch_document(client: TocClient, ref: TmRef) -> dict[str, Any]:
         document[part] = _by_id(part, rows)
 
     document["dfd"] = client.get(f"{base}/dfd", at_release)
-
-    # The metadata carries its own version, and the cache is keyed from it
-    # for an unpinned read. Two answers that disagree about which release
-    # this is would be filed under the wrong one.
-    metadata = document.get("metadata")
-    if isinstance(metadata, dict):
-        stated = str(metadata.get("version") or "")
-        if stated and stated != release:
-            raise ContractViolation(
-                f"{base} answered as release {release} while its metadata "
-                f"says {stated}.",
-                code="release_disagreement",
-            )
-    return document
+    return Fetched(document, release)
 
 
 def _by_id(part: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -161,11 +167,11 @@ def load_remote(client: TocClient, ref: TmRef) -> ThreatModelData:
         NotFound: If the model is not available to this credential.
         RemoteError: On any transport or server failure.
     """
-    document = fetch_document(client, ref)
+    fetched = fetch_document(client, ref)
     # `add_to_list=False` on purpose: ThreatModelData keeps a class-level
     # registry that every construction appends to, so assembling several
     # models would leak them into whatever ran next.
-    return ThreatModelData(document, add_to_list=False)
+    return ThreatModelData(fetched.document, add_to_list=False)
 
 
 __all__ = ["PARTS", "NotFound", "fetch_document", "load_remote"]

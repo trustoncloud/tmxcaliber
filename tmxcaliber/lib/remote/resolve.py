@@ -71,21 +71,24 @@ def fetch_to_cache(
         path = cached_path(ref, ref.release, api.base_url, api.key_id, env)
         if not refresh and read(path, max_age=PINNED_MAX_AGE) is not None:
             return str(path)
-        write(path, fetch_document(api, ref))
+        write(path, fetch_document(api, ref).document)
         return str(path)
 
     latest = cached_path(ref, "latest", api.base_url, api.key_id, env)
     if not refresh and read(latest, max_age=DEFAULT_MAX_AGE) is not None:
         return str(latest)
 
-    document = fetch_document(api, ref)
-    write(latest, document)
+    fetched = fetch_document(api, ref)
+    write(latest, fetched.document)
     # Also stored under the release it turned out to be, so a later pinned
-    # reference to the same version is served without a call.
-    metadata = document.get("metadata")
-    release = str(metadata.get("version") or "") if isinstance(metadata, dict) else ""
-    if release:
-        write(cached_path(ref, release, api.base_url, api.key_id, env), document)
+    # reference to the same version is served without a call. Keyed from
+    # the API's release and never from `metadata.version`, which is the
+    # template schema date and would file every model under the same name.
+    if fetched.release:
+        write(
+            cached_path(ref, fetched.release, api.base_url, api.key_id, env),
+            fetched.document,
+        )
     return str(latest)
 
 

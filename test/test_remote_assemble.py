@@ -19,7 +19,10 @@ DETAIL = {
         "provider": "aws",
         "service": "s3",
         "service_name": "Amazon S3",
-        "version": "1611187200",
+        # The canonical template schema version, as every published
+        # document carries it. Deliberately not the release: they are
+        # different facts with similar names.
+        "version": "20240423",
         "scf_version": "2025.3.1",
         "license": "CC BY-SA 4.0",
     },
@@ -126,10 +129,9 @@ def _at_release(detail: dict[str, Any], asked: str | None) -> dict[str, Any]:
     """
     answer = dict(detail)
     if asked:
+        # Only the API's own field. `metadata.version` is the schema date
+        # and does not move with the release.
         answer["version"] = asked
-        metadata = dict(answer.get("metadata", {}))
-        metadata["version"] = asked
-        answer["metadata"] = metadata
     return answer
 
 
@@ -206,7 +208,7 @@ class StubClient:
 
 def test_the_assembled_document_satisfies_the_canonical_schema() -> None:
     # The whole point of the exercise: eight sections, as the schema requires.
-    document = fetch_document(StubClient(), TmRef("aws", "s3"))  # type: ignore[arg-type]
+    document = fetch_document(StubClient(), TmRef("aws", "s3")).document  # type: ignore[arg-type]
 
     assert sorted(document) == [
         "actions",
@@ -224,7 +226,7 @@ def test_the_assembled_document_satisfies_the_canonical_schema() -> None:
 def test_the_sections_are_keyed_by_entity_id() -> None:
     # The API publishes an identity field because a list needs one; the
     # stored document keys the object by it instead.
-    document = fetch_document(StubClient(), TmRef("aws", "s3"))  # type: ignore[arg-type]
+    document = fetch_document(StubClient(), TmRef("aws", "s3")).document  # type: ignore[arg-type]
 
     assert list(document["threats"]) == ["S3.T1"]
     assert document["threats"]["S3.T1"]["name"] == "Bucket takeover"
@@ -318,12 +320,15 @@ def test_a_release_other_than_the_one_pinned_is_refused() -> None:
     assert "9999" in str(caught.value)
 
 
-def test_metadata_disagreeing_about_the_release_is_refused() -> None:
-    # The cache keys an unpinned read from metadata.version, so two answers
-    # that disagree would file the document under the wrong release.
-    detail = {**DETAIL, "metadata": {**DETAIL["metadata"], "version": "7777"}}
-    client = StubClient(detail)
+def test_a_schema_version_is_not_mistaken_for_a_release() -> None:
+    """`metadata.version` is the template schema date, not the release.
 
-    with pytest.raises(ContractViolation) as caught:
-        fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
-    assert "7777" in str(caught.value)
+    Published documents carry `20240423` there while a release key is an
+    epoch such as `1611187200`. Reading one as the other made every real
+    document fail assembly, and filed every model under one cache name.
+    """
+    fetched = fetch_document(StubClient(), TmRef("aws", "s3"))  # type: ignore[arg-type]
+
+    assert fetched.document["metadata"]["version"] == "20240423"
+    assert fetched.release == "1611187200"
+    assert fetched.release != fetched.document["metadata"]["version"]

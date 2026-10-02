@@ -242,3 +242,26 @@ def test_generate_accepts_a_reference(monkeypatch: pytest.MonkeyPatch) -> None:
     params = cli_module.get_params()
 
     assert params.source == "aws-s3"
+
+
+def test_an_unpinned_fetch_satisfies_a_later_pinned_request(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The pinned copy is filed under the API's release.
+
+    Keyed from `metadata.version` instead, it landed under the schema date,
+    so every pinned request missed and repeated the whole five-call
+    assembly against an hourly budget.
+    """
+    env = {"TMXCALIBER_CACHE_DIR": str(tmp_path / "cache")}
+    first = StubClient()
+    resolve_source("aws-s3", client=first, env=env)  # type: ignore[arg-type]
+    assert len(first.calls) == 5
+
+    pinned = StubClient()
+    path = resolve_source(  # type: ignore[arg-type]
+        "aws-s3@1611187200", client=pinned, env=env
+    )
+
+    assert pinned.calls == [], "the pinned request repeated the assembly"
+    assert path.endswith("1611187200.json")
