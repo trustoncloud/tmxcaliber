@@ -537,3 +537,32 @@ def test_a_dfd_without_a_usable_body_is_refused(body: object) -> None:
     with pytest.raises(ContractViolation) as caught:
         fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
     assert "diagram body" in str(caught.value)
+
+
+@pytest.mark.parametrize("identity", [None, "", "  ", 7, {"a": 1}])
+def test_a_row_without_a_usable_identity_is_refused(identity: object) -> None:
+    # The stored document keys the section by this value, so anything that
+    # is merely printable becomes a nonsense key in a document that still
+    # looks valid.
+    PARTS["threats"].append({"threatId": identity, "name": "x"})
+    try:
+        with pytest.raises(ContractViolation):
+            fetch_document(StubClient(), TmRef("aws", "s3"))  # type: ignore[arg-type]
+    finally:
+        PARTS["threats"].pop()
+
+
+def test_a_repeated_row_is_refused_rather_than_overwriting() -> None:
+    """Assigning twice would drop the first silently.
+
+    The walk that produced it would still look complete, and the rows are
+    sorted and paged on this key, so a repeat means the page boundary
+    moved under the read.
+    """
+    PARTS["threats"].append(dict(PARTS["threats"][0]))
+    try:
+        with pytest.raises(ContractViolation) as caught:
+            fetch_document(StubClient(), TmRef("aws", "s3"))  # type: ignore[arg-type]
+        assert "twice" in str(caught.value)
+    finally:
+        PARTS["threats"].pop()
