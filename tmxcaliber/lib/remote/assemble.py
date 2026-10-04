@@ -259,12 +259,23 @@ def _by_id(part: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
     section: dict[str, Any] = {}
     for row in rows:
         identity = row.get(field)
-        if not identity:
+        # A real string, not something that can be printed. The stored
+        # document keys this section by the identity, so anything else
+        # becomes a nonsense key that still looks like a valid document.
+        if not isinstance(identity, str) or not identity.strip():
             raise ContractViolation(
-                f"a {part[:-1]} arrived with no {field}.", code="row_without_id"
+                f"a {part[:-1]} arrived with no usable {field}.",
+                code="row_without_id",
             )
-        body = {key: value for key, value in row.items() if key != field}
-        section[str(identity)] = body
+        if identity in section:
+            # Assigning would drop the first one silently, and the walk
+            # that produced it would still look complete. The rows are
+            # sorted by this key and paged on it, so a repeat means the
+            # page boundary moved under the read.
+            raise ContractViolation(
+                f"{part} contained {identity} twice.", code="duplicate_row"
+            )
+        section[identity] = {key: value for key, value in row.items() if key != field}
     return section
 
 
