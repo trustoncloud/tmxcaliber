@@ -107,31 +107,38 @@ entitled ThreatModels directly instead of working from files you downloaded.
 
 ### Set a key
 
-Create a key in the app under Settings, Service API keys, then either:
+Create a key in the app under Settings, Service API keys, then:
+
+```sh
+tmxcaliber init
+```
+
+It asks for the key without echoing it, stores it in
+`~/.trustoncloud/credentials` readable only by you, and then calls the API to
+confirm it works and tell you which tenant it belongs to. Run it again any
+time to see what is currently set, or to change the endpoint.
+
+In CI, where there is no terminal to prompt, pipe the key in:
+
+```sh
+echo "$TOC_API_KEY" | tmxcaliber init
+```
+
+A one-off override needs no file at all:
 
 ```sh
 export TOC_API_KEY=toc-tak1-...
+export TOC_API_URL=https://api.example.com   # optional
 ```
 
-or put it in `~/.trustoncloud/credentials`:
-
-```ini
-[default]
-api_key = toc-tak1-...
-
-[staging]
-api_key = toc-tak1-...
-api_url = https://api.example.com
-```
+The environment wins over the file, which is also why there are no profiles:
+one stored key, and an environment variable for the "a different one, right
+now" case.
 
 The key is a TrustOnCloud credential rather than a tmxcaliber one, which is
 why it is named and stored this way: the same key works with `curl` or any
 other client. There is deliberately no `--api-key` flag, so the secret never
-lands in your shell history or a CI log. Check the setup with:
-
-```sh
-tmxcaliber me
-```
+lands in your shell history or a CI log.
 
 **Two prerequisites that are easy to miss.** Your organization must have IP
 filtering configured, and the address you run from has to be on the allow

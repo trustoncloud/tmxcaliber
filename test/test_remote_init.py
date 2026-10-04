@@ -1,0 +1,273 @@
+"""`tmxcaliber init`: storing a key, and saying whether it works."""
+
+from __future__ import annotations
+
+import pathlib
+from argparse import Namespace
+from collections.abc import Iterator, Mapping
+from typing import Any
+
+import pytest
+
+from tmxcaliber.lib.remote.config import load_settings
+from tmxcaliber.lib.remote.errors import ConfigurationError, NotFound
+from tmxcaliber.remote_cli import run_init
+
+KEY = "toc-tak1-" + "A" * 16 + "-" + "B" * 52
+OTHER = "toc-tak1-" + "C" * 16 + "-" + "D" * 52
+
+
+class StubClient:
+    """Answers `/v1/me`, or refuses to."""
+
+    def __init__(self, failure: Exception | None = None) -> None:
+        self.failure = failure
+
+    @property
+    def base_url(self) -> str:
+        """The endpoint.
+
+        Returns:
+            A stable fake.
+        """
+        return "https://api.example.test"
+
+    @property
+    def key_id(self) -> str:
+        """The credential identity.
+
+        Returns:
+            A stable fake.
+        """
+        return "KEYONE"
+
+    def get(self, path: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
+        """Answer the identity call.
+
+        Args:
+            path: The path.
+            params: Unused.
+
+        Returns:
+            The principal.
+
+        Raises:
+            Exception: Whatever this stub was built to raise.
+        """
+        if self.failure is not None:
+            raise self.failure
+        return {"tenantId": "t-02370141", "permissions": ["api.threatmodels.read"]}
+
+    def paginate(
+        self,
+        path: str,
+        params: Mapping[str, str] | None = None,
+        *,
+        page_size: int = 0,
+    ) -> Iterator[dict[str, Any]]:
+        """Unused here.
+
+        Args:
+            path: The path.
+            params: Unused.
+            page_size: Unused.
+
+        Yields:
+            Nothing.
+        """
+        yield from ()
+
+
+def env_for(tmp_path: pathlib.Path, **extra: str) -> dict[str, str]:
+    """Build an environment pointing at a throwaway credentials file.
+
+    Args:
+        tmp_path: The test's directory.
+        **extra: Anything else to set.
+
+    Returns:
+        The environment.
+    """
+    return {"TOC_CONFIG_FILE": str(tmp_path / "credentials"), **extra}
+
+
+def test_it_writes_a_key_and_verifies_it(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env = env_for(tmp_path)
+
+    run_init(
+        Namespace(),
+        env=env,
+        read_secret=lambda _: KEY,
+        read_line=lambda _: "",
+        interactive=True,
+        client=StubClient(),  # type: ignore[arg-type]
+    )
+
+    out = capsys.readouterr().out
+    assert "readable only by you" in out
+    assert "t-02370141" in out
+    assert load_settings(env=env).credentials.api_key == KEY
+
+
+def test_the_key_is_never_printed(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_init(
+        Namespace(),
+        env=env_for(tmp_path),
+        read_secret=lambda _: KEY,
+        read_line=lambda _: "",
+        interactive=True,
+        client=StubClient(),  # type: ignore[arg-type]
+    )
+
+    assert KEY not in capsys.readouterr().out
+
+
+def test_an_empty_answer_keeps_the_current_key(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The prompt offers the existing key as the default, so re-running
+    # `init` to change only the endpoint must not wipe the credential.
+    env = env_for(tmp_path)
+    run_init(
+        Namespace(),
+        env=env,
+        read_secret=lambda _: KEY,
+        read_line=lambda _: "",
+        interactive=True,
+        client=StubClient(),  # type: ignore[arg-type]
+    )
+
+    run_init(
+        Namespace(),
+        env=env,
+        read_secret=lambda _: "",
+        read_line=lambda _: "",
+        interactive=True,
+        client=StubClient(),  # type: ignore[arg-type]
+    )
+
+    assert load_settings(env=env).credentials.api_key == KEY
+    # Re-running is also how you see what is set, so the masked key shows.
+    assert "toc-tak1-" + "A" * 16 in capsys.readouterr().out
+
+
+def test_a_first_run_with_no_key_refuses(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(ConfigurationError) as caught:
+        run_init(
+            Namespace(),
+            env=env_for(tmp_path),
+            read_secret=lambda _: "",
+            read_line=lambda _: "",
+            interactive=True,
+            client=StubClient(),  # type: ignore[arg-type]
+        )
+    assert "nothing was written" in str(caught.value)
+
+
+def test_a_piped_key_needs_no_prompt(tmp_path: pathlib.Path) -> None:
+    # `echo "$KEY" | tmxcaliber init` has to work in CI, where there is no
+    # tty and no one to answer a question about the endpoint.
+    env = env_for(tmp_path)
+
+    def refuse(_prompt: str) -> str:
+        raise AssertionError("init asked a question with no tty")
+
+    run_init(
+        Namespace(),
+        env=env,
+        read_secret=lambda _: KEY,
+        read_line=refuse,
+        interactive=False,
+        client=StubClient(),  # type: ignore[arg-type]
+    )
+
+    assert load_settings(env=env).credentials.api_key == KEY
+
+
+def test_it_warns_when_the_environment_shadows_the_file(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # TOC_API_KEY silently wins, so someone who just ran init and still
+    # sees the old tenant would otherwise have no way to find out why.
+    run_init(
+        Namespace(),
+        env=env_for(tmp_path, TOC_API_KEY=OTHER),
+        read_secret=lambda _: KEY,
+        read_line=lambda _: "",
+        interactive=True,
+        client=StubClient(),  # type: ignore[arg-type]
+    )
+
+    assert "takes precedence" in capsys.readouterr().out
+
+
+def test_a_failed_check_does_not_discard_what_was_written(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Verification reports, it does not gate.
+
+    A 404 here usually means the API is not enabled for the organization
+    yet, which is not a reason to throw away a key that is otherwise fine.
+    """
+    env = env_for(tmp_path)
+
+    run_init(
+        Namespace(),
+        env=env,
+        read_secret=lambda _: KEY,
+        read_line=lambda _: "",
+        interactive=True,
+        client=StubClient(NotFound("Not found.", code="not_found")),  # type: ignore[arg-type]
+    )
+
+    out = capsys.readouterr().out
+    assert "did not work" in out
+    assert "not be enabled" in out
+    assert load_settings(env=env).credentials.api_key == KEY
+
+
+def test_an_endpoint_given_at_the_prompt_is_stored(tmp_path: pathlib.Path) -> None:
+    env = env_for(tmp_path)
+
+    run_init(
+        Namespace(),
+        env=env,
+        read_secret=lambda _: KEY,
+        read_line=lambda _: "https://api-staging.example",
+        interactive=True,
+        client=StubClient(),  # type: ignore[arg-type]
+    )
+
+    assert load_settings(env=env).base_url == "https://api-staging.example"
+
+
+def test_it_repairs_a_file_the_loader_would_refuse(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`init` is the cure the permission refusal points at.
+
+    So it has to be able to read a file the loader rejects, rather than
+    failing the same way and leaving no way out.
+    """
+    env = env_for(tmp_path)
+    exposed = tmp_path / "credentials"
+    exposed.write_text(f"[default]\napi_key = {OTHER}\n", encoding="utf-8")
+    exposed.chmod(0o644)
+    with pytest.raises(ConfigurationError):
+        load_settings(env=env)
+
+    run_init(
+        Namespace(),
+        env=env,
+        read_secret=lambda _: "",
+        read_line=lambda _: "",
+        interactive=True,
+        client=StubClient(),  # type: ignore[arg-type]
+    )
+
+    assert exposed.stat().st_mode & 0o777 == 0o600
+    assert load_settings(env=env).credentials.api_key == OTHER

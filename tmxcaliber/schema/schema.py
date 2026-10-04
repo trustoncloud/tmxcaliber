@@ -194,6 +194,19 @@ def _validate(instance: object, kind: _SchemaKind) -> None:
         ) from e
 
 
+def threatmodel_required_sections() -> tuple[str, ...]:
+    """List the top-level sections a ThreatModel must carry.
+
+    Read from the schema rather than written out, so a section added or
+    removed there needs no second edit anywhere else.
+
+    Returns:
+        The required property names, in the schema's own order.
+    """
+    required = _load_schema("threatmodel").get("required", [])
+    return tuple(str(name) for name in required)
+
+
 def validate_threatmodel_schema(
     instance: object,
     schema_pointer: str | None = None,

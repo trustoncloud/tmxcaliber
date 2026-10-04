@@ -17,12 +17,27 @@ The shape mirrors the API:
 
 from __future__ import annotations
 
+import configparser
+import getpass
+import os
+import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
+from collections.abc import Callable, Mapping
 from typing import Any
 
+from colorama import Fore
+
 from .lib.remote.client import TocClient
-from .lib.remote.config import load_settings
+from .lib.remote.config import (
+    DEFAULT_BASE_URL,
+    SECTION,
+    config_path,
+    load_settings,
+    masked,
+    write_credentials,
+)
 from .lib.remote.contract import ROUTES, Route, required_parameters
+from .lib.remote.errors import ConfigurationError, RemoteError
 from .lib.remote.ref import parse_ref
 
 #: The namespace key each nesting level of the command tree parks its word in.
@@ -185,3 +200,142 @@ def run_api_command(
         )
         return rows, "json"
     return api.get(path, query), "json"
+
+
+def add_init_parser(subparsers: _SubParsersAction[ArgumentParser]) -> None:
+    """Add the `init` command.
+
+    **The one command not derived from the route contract**, and the reason
+    is categorical rather than a preference: it configures access to the API
+    rather than calling it, so there is no route it could be derived from.
+    Any future exception needs its own reason and may not cite this one.
+
+    Args:
+        subparsers: The top-level subparser action.
+    """
+    parser = subparsers.add_parser(
+        "init",
+        help="store a TrustOnCloud API key, and check that it works.",
+    )
+    parser.set_defaults(api_init=True)
+
+
+def _read_secret_tty(prompt: str) -> str:
+    """Read a secret without echoing it.
+
+    Args:
+        prompt: What to show.
+
+    Returns:
+        What was typed, stripped.
+    """
+    return getpass.getpass(prompt).strip()
+
+
+def _current_key(env: Mapping[str, str]) -> str:
+    """Read the key already in the credentials file, forgivingly.
+
+    Unlike the loader this tolerates anything, because `init` exists to
+    repair a file the loader would refuse, including one whose permissions
+    are the problem.
+
+    Args:
+        env: The environment to read.
+
+    Returns:
+        The stored key, or an empty string.
+    """
+    path = config_path(env)
+    if not path.is_file():
+        return ""
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(path, encoding="utf-8")
+        return parser.get(SECTION, "api_key", fallback="").strip()
+    except configparser.Error:
+        return ""
+
+
+def run_init(
+    _params: Namespace,
+    *,
+    env: Mapping[str, str] | None = None,
+    read_secret: Callable[[str], str] | None = None,
+    read_line: Callable[[str], str] | None = None,
+    interactive: bool | None = None,
+    client: TocClient | None = None,
+) -> None:
+    """Store an API key and report whether it works.
+
+    Args:
+        _params: The parsed arguments, unused.
+        env: The environment to read.
+        read_secret: How to read the key without echoing it.
+        read_line: How to read a visible answer.
+        interactive: Whether to prompt, defaulting to whether stdin is a tty.
+        client: A client to verify with, built from the new settings when
+            omitted.
+
+    Raises:
+        ConfigurationError: If no key is given, or the key is malformed.
+    """
+    environ = os.environ if env is None else env
+    secret = read_secret or _read_secret_tty
+    line = read_line or (lambda prompt: input(prompt).strip())
+    prompting = sys.stdin.isatty() if interactive is None else interactive
+
+    existing = _current_key(environ)
+    api_url = ""
+
+    if prompting:
+        if existing:
+            print(f"Current key: {masked(existing)}")
+        suffix = " (press enter to keep the current one)" if existing else ""
+        key = secret(f"TrustOnCloud API key{suffix}: ") or existing
+        api_url = line(f"API endpoint (enter for {DEFAULT_BASE_URL}): ")
+    else:
+        # Piped, so one line and no questions: `echo "$KEY" | tmxcaliber init`
+        # works in CI without a tty.
+        key = secret("")
+
+    if not key:
+        raise ConfigurationError("No API key given, so nothing was written.")
+
+    path = write_credentials(key, api_url=api_url, env=environ)
+    print(f"Wrote {path} (readable only by you).")
+
+    if environ.get("TOC_API_KEY", "").strip():
+        # It silently wins over the file, so someone who just ran this and
+        # still sees the old tenant would have no way to find out why.
+        print(
+            Fore.YELLOW + "Note: TOC_API_KEY is set, and it takes precedence over this "
+            "file. Unset it to use what was just written." + Fore.RESET
+        )
+
+    _verify(environ, client)
+
+
+def _verify(env: Mapping[str, str], client: TocClient | None) -> None:
+    """Call /v1/me and say what answered.
+
+    Reported rather than enforced: the key is already written, and a
+    verification failure is information about the tenant or the network
+    rather than a reason to discard it.
+
+    Args:
+        env: The environment to read.
+        client: A client to use, built from the resolved settings otherwise.
+    """
+    try:
+        api = client or TocClient(load_settings(env=env))
+        who = api.get("/v1/me")
+    except RemoteError as exc:
+        print(Fore.YELLOW + f"Stored, but the key did not work: {exc}" + Fore.RESET)
+        print(
+            "If this says not found, the API may not be enabled for your "
+            "organization yet, or your address may not be on its allow list."
+        )
+        return
+    tenant = who.get("tenantId", "unknown")
+    granted = who.get("permissions") or []
+    print(f"Verified. Tenant {tenant}, {len(granted)} permission(s).")

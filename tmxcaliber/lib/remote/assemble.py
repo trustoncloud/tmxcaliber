@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
+from ...schema.schema import threatmodel_required_sections
 from ..threatmodel_data import ThreatModelData
 from .client import TocClient
 from .errors import ContractViolation, NotFound
@@ -140,6 +141,27 @@ def fetch_document(client: TocClient, ref: TmRef) -> Fetched:
         document[part] = _by_id(part, rows)
 
     document["dfd"] = client.get(f"{base}/dfd", at_release)
+
+    # **Complete, or not written at all.** Every check above asks whether
+    # this is the right document; this one asks whether it is a whole one.
+    # A detail response missing `metadata` or `control_objectives` passed
+    # all of them, cached, and then read back as a model whose services or
+    # mappings are simply empty, with nothing anywhere saying why.
+    #
+    # Structural rather than a schema validation: the published corpus does
+    # not satisfy its own schema in every detail, so validating here would
+    # reject real documents while this catches the truncation that matters.
+    missing = [
+        section
+        for section in threatmodel_required_sections()
+        if not isinstance(document.get(section), dict)
+    ]
+    if missing:
+        raise ContractViolation(
+            f"{base} did not yield a whole ThreatModel; "
+            f"{', '.join(missing)} is missing or not an object.",
+            code="incomplete_document",
+        )
     return Fetched(document, release)
 
 
