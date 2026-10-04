@@ -240,8 +240,13 @@ def _read_secret(prompt: str) -> str:
     return sys.stdin.readline().strip()
 
 
-def _current_key(env: Mapping[str, str]) -> str:
-    """Read the key already in the credentials file, forgivingly.
+def _current(env: Mapping[str, str]) -> tuple[str, str]:
+    """Read what is already configured, forgivingly.
+
+    **Both values, not just the key.** Reading only the key meant a blank
+    answer at the endpoint prompt rewrote the file without the endpoint, so
+    re-running `init` to check a setup silently moved it back to the
+    default, and the piped form did it with no prompt at all.
 
     Unlike the loader this tolerates anything, because `init` exists to
     repair a file the loader would refuse, including one whose permissions
@@ -251,17 +256,20 @@ def _current_key(env: Mapping[str, str]) -> str:
         env: The environment to read.
 
     Returns:
-        The stored key, or an empty string.
+        The stored key and endpoint, either of which may be empty.
     """
     path = config_path(env)
     if not path.is_file():
-        return ""
-    parser = configparser.ConfigParser()
+        return "", ""
+    parser = configparser.ConfigParser(interpolation=None)
     try:
         parser.read(path, encoding="utf-8")
-        return parser.get(SECTION, "api_key", fallback="").strip()
+        return (
+            parser.get(SECTION, "api_key", fallback="").strip(),
+            parser.get(SECTION, "api_url", fallback="").strip(),
+        )
     except configparser.Error:
-        return ""
+        return "", ""
 
 
 def run_init(
@@ -295,18 +303,23 @@ def run_init(
     line = read_line or (lambda prompt: input(prompt).strip())
     prompting = sys.stdin.isatty() if interactive is None else interactive
 
-    existing = _current_key(environ)
-    api_url = ""
+    existing, current_url = _current(environ)
+    # Blank means keep, for the endpoint exactly as for the key. Those two
+    # answers meaning opposite things in one command is what discarded a
+    # configured endpoint.
+    api_url = current_url
 
     if prompting:
         if existing:
             print(f"Current key: {masked(existing)}")
         suffix = " (press enter to keep the current one)" if existing else ""
         key = secret(f"TrustOnCloud API key{suffix}: ") or existing
-        api_url = line(f"API endpoint (enter for {DEFAULT_BASE_URL}): ")
+        shown = current_url or DEFAULT_BASE_URL
+        api_url = line(f"API endpoint (enter to keep {shown}): ") or current_url
     else:
         # Piped, so one line and no questions: `echo "$KEY" | tmxcaliber init`
-        # works in CI without a tty.
+        # works in CI without a tty. The endpoint is carried over untouched,
+        # because nothing here could have asked about it.
         key = secret("")
 
     if not key:

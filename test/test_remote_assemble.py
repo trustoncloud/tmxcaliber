@@ -146,6 +146,7 @@ class StubClient:
         # Setting this False is how a test plays one that does not.
         self.honour_release = honour_release
         self.calls: list[tuple[str, dict[str, str]]] = []
+        self.page_sizes: list[int] = []
 
     key: str = "KEYONE"
 
@@ -203,6 +204,7 @@ class StubClient:
             The fixture rows for that path.
         """
         self.calls.append((path, dict(params or {})))
+        self.page_sizes.append(page_size)
         yield from PARTS[path.rsplit("/", 1)[-1]]
 
 
@@ -362,7 +364,54 @@ def test_a_document_whose_metadata_describes_another_service_is_refused() -> Non
     assert "gcp-storage" in str(caught.value)
 
 
-@pytest.mark.parametrize("missing", ["metadata", "control_objectives", "scorecard"])
+def test_a_detail_response_with_no_metadata_is_refused_on_the_first_call() -> None:
+    """Rejected before the four calls that would build on it.
+
+    The metadata checks used to run after them, so a response with no
+    metadata cost five calls to reject instead of one, and the
+    provider/service cross-check was skipped rather than failing when
+    there was nothing to cross-check against.
+    """
+    client = StubClient({k: v for k, v in DETAIL.items() if k != "metadata"})
+
+    with pytest.raises(ContractViolation) as caught:
+        fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
+
+    assert "without metadata" in str(caught.value)
+    assert len(client.calls) == 1, "it kept fetching after the answer was unusable"
+
+
+@pytest.mark.parametrize("field", ["service_name", "scf_version", "license"])
+def test_metadata_missing_a_required_field_is_refused(field: str) -> None:
+    """A present section is not a populated one.
+
+    `list services` reads `service_name` with `.get`, so a missing one
+    drops the model from the listing rather than failing.
+    """
+    thin = {k: v for k, v in DETAIL["metadata"].items() if k != field}
+    client = StubClient({**DETAIL, "metadata": thin})
+
+    with pytest.raises(ContractViolation) as caught:
+        fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
+
+    assert field in str(caught.value)
+    assert len(client.calls) == 1
+
+
+def test_each_collection_is_walked_at_the_contract_maximum() -> None:
+    # The server default is smaller, and the difference is whole extra
+    # calls per section against an hourly budget a single assembly already
+    # spends five of.
+    client = StubClient()
+
+    fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
+
+    walked = [p for p, _ in client.calls if p.rsplit("/", 1)[-1] in PARTS]
+    assert len(walked) == 3
+    assert client.page_sizes == [500, 500, 500], client.page_sizes
+
+
+@pytest.mark.parametrize("missing", ["control_objectives", "scorecard"])
 def test_an_incomplete_document_is_refused_before_it_caches(missing: str) -> None:
     """Complete, or not written at all.
 

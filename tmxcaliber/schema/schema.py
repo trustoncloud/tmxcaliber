@@ -207,6 +207,19 @@ def threatmodel_required_sections() -> tuple[str, ...]:
     return tuple(str(name) for name in required)
 
 
+def threatmodel_required_metadata() -> tuple[str, ...]:
+    """List the metadata fields a ThreatModel must carry.
+
+    Read from the schema for the same reason the section list is, and used
+    for the same job: deciding whether an assembled document is whole.
+
+    Returns:
+        The required metadata property names.
+    """
+    metadata = _load_schema("threatmodel").get("properties", {}).get("metadata", {})
+    return tuple(str(name) for name in metadata.get("required", []))
+
+
 def validate_threatmodel_schema(
     instance: object,
     schema_pointer: str | None = None,
