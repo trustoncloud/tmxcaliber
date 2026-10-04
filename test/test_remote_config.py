@@ -10,12 +10,32 @@ from tmxcaliber.lib.remote.config import (
     DEFAULT_BASE_URL,
     Credentials,
     load_settings,
+    masked,
+    write_credentials,
 )
 from tmxcaliber.lib.remote.errors import ConfigurationError
 from tmxcaliber.lib.remote.ref import TmRef, is_remote_ref, parse_ref
 
 KEY = "toc-tak1-" + "A" * 16 + "-" + "B" * 52
 OTHER = "toc-tak1-" + "C" * 16 + "-" + "D" * 52
+
+
+def write_config(path: pathlib.Path, body: str) -> pathlib.Path:
+    """Write a credentials file the loader will accept.
+
+    Owner-only, because the loader refuses anything wider and `init` is
+    what creates it in real use.
+
+    Args:
+        path: Where to write.
+        body: The INI contents.
+
+    Returns:
+        The path written.
+    """
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o600)
+    return path
 
 
 def test_the_environment_supplies_the_key() -> None:
@@ -26,8 +46,7 @@ def test_the_environment_supplies_the_key() -> None:
 
 
 def test_the_environment_beats_the_file(tmp_path: pathlib.Path) -> None:
-    config = tmp_path / "credentials"
-    config.write_text(f"[default]\napi_key = {OTHER}\n", encoding="utf-8")
+    config = write_config(tmp_path / "credentials", f"[default]\napi_key = {OTHER}\n")
 
     found = load_settings(env={"TOC_API_KEY": KEY, "TOC_CONFIG_FILE": str(config)})
 
@@ -35,10 +54,9 @@ def test_the_environment_beats_the_file(tmp_path: pathlib.Path) -> None:
 
 
 def test_the_file_supplies_the_key_and_the_endpoint(tmp_path: pathlib.Path) -> None:
-    config = tmp_path / "credentials"
-    config.write_text(
+    config = write_config(
+        tmp_path / "credentials",
         f"[default]\napi_key = {KEY}\napi_url = https://api-staging.example\n",
-        encoding="utf-8",
     )
 
     found = load_settings(env={"TOC_CONFIG_FILE": str(config)})
@@ -47,14 +65,19 @@ def test_the_file_supplies_the_key_and_the_endpoint(tmp_path: pathlib.Path) -> N
     assert found.base_url == "https://api-staging.example"
 
 
-def test_a_named_profile_is_selected(tmp_path: pathlib.Path) -> None:
-    config = tmp_path / "credentials"
-    config.write_text(
-        f"[default]\napi_key = {OTHER}\n\n[staging]\napi_key = {KEY}\n",
-        encoding="utf-8",
+def test_there_are_no_profiles(tmp_path: pathlib.Path) -> None:
+    """Only `[default]` is read, whatever else the file holds.
+
+    One key, one endpoint, and `TOC_API_KEY` for the "a different one right
+    now" case. A second section is a second way to say the same thing, and
+    `init` could not write it anyway.
+    """
+    config = write_config(
+        tmp_path / "credentials",
+        f"[default]\napi_key = {KEY}\n\n[staging]\napi_key = {OTHER}\n",
     )
 
-    found = load_settings(profile="staging", env={"TOC_CONFIG_FILE": str(config)})
+    found = load_settings(env={"TOC_CONFIG_FILE": str(config)})
 
     assert found.credentials.api_key == KEY
 
@@ -175,8 +198,7 @@ def test_a_malformed_credentials_file_never_echoes_the_key(
     So a key written without its separator would be printed to a terminal
     or a CI log by the very error complaining about it.
     """
-    config = tmp_path / "credentials"
-    config.write_text(f"[default]\napi_key {KEY}\n", encoding="utf-8")
+    config = write_config(tmp_path / "credentials", f"[default]\napi_key {KEY}\n")
 
     with pytest.raises(ConfigurationError) as caught:
         load_settings(env={"TOC_CONFIG_FILE": str(config)})
@@ -185,3 +207,67 @@ def test_a_malformed_credentials_file_never_echoes_the_key(
     assert KEY not in message
     assert "toc-tak1" not in message
     assert "could not be parsed" in message
+
+
+def test_a_credentials_file_other_users_can_read_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The CLI writes this file at 0600, so a wider mode is hand-made.
+
+    Under a default umask a hand-created file is 0644, which puts a tenant
+    credential within reach of every other account on the machine.
+    """
+    config = tmp_path / "credentials"
+    config.write_text(f"[default]\napi_key = {KEY}\n", encoding="utf-8")
+    config.chmod(0o644)
+
+    with pytest.raises(ConfigurationError) as caught:
+        load_settings(env={"TOC_CONFIG_FILE": str(config)})
+
+    message = str(caught.value)
+    assert "readable by other users" in message
+    # The cure, named, because a refusal with no next step is a dead end.
+    assert "tmxcaliber init" in message
+    assert KEY not in message
+
+
+def test_the_written_file_is_owner_only(tmp_path: pathlib.Path) -> None:
+    written = write_credentials(KEY, env={"TOC_CONFIG_FILE": str(tmp_path / "c")})
+
+    assert written.stat().st_mode & 0o777 == 0o600
+    assert (
+        load_settings(env={"TOC_CONFIG_FILE": str(written)}).credentials.api_key == KEY
+    )
+
+
+def test_the_written_directory_is_owner_only(tmp_path: pathlib.Path) -> None:
+    nested = tmp_path / "fresh" / "credentials"
+
+    write_credentials(KEY, env={"TOC_CONFIG_FILE": str(nested)})
+
+    assert nested.parent.stat().st_mode & 0o777 == 0o700
+
+
+def test_a_written_endpoint_is_read_back(tmp_path: pathlib.Path) -> None:
+    written = write_credentials(
+        KEY,
+        api_url="https://api-staging.example",
+        env={"TOC_CONFIG_FILE": str(tmp_path / "c")},
+    )
+
+    assert load_settings(env={"TOC_CONFIG_FILE": str(written)}).base_url == (
+        "https://api-staging.example"
+    )
+
+
+def test_writing_a_malformed_key_is_refused(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(ConfigurationError):
+        write_credentials("nope", env={"TOC_CONFIG_FILE": str(tmp_path / "c")})
+
+
+def test_masking_keeps_the_id_and_hides_the_secret() -> None:
+    # The id is public and is what support asks for; the secret never is.
+    shown = masked(KEY)
+
+    assert shown.startswith("toc-tak1-" + "A" * 16)
+    assert "B" * 52 not in shown

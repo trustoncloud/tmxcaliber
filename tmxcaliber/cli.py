@@ -40,7 +40,13 @@ from .params import (
     ListOperation,
     Operation,
 )
-from .remote_cli import add_api_parsers, run_api_command, selected_route
+from .remote_cli import (
+    add_api_parsers,
+    add_init_parser,
+    run_api_command,
+    run_init,
+    selected_route,
+)
 
 JsonDict = dict[str, Any]
 
@@ -76,6 +82,8 @@ def get_params() -> Namespace:
     # Built from the route contract rather than written out here, so the API
     # surface and the CLI cannot drift apart.
     add_api_parsers(subparsers)
+    # The one command with no route behind it; see add_init_parser.
+    add_init_parser(subparsers)
 
     return validate(parser)
 
@@ -564,6 +572,9 @@ def main() -> None:
 
 def _run() -> None:
     params = get_params()
+    if getattr(params, "api_init", False):
+        run_init(params)
+        return
     if selected_route(params) is not None:
         result, result_type = run_api_command(params)
         output_result(params.output, result, result_type)

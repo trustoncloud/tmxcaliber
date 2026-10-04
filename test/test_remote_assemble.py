@@ -360,3 +360,37 @@ def test_a_document_whose_metadata_describes_another_service_is_refused() -> Non
     with pytest.raises(ContractViolation) as caught:
         fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
     assert "gcp-storage" in str(caught.value)
+
+
+@pytest.mark.parametrize("missing", ["metadata", "control_objectives", "scorecard"])
+def test_an_incomplete_document_is_refused_before_it_caches(missing: str) -> None:
+    """Complete, or not written at all.
+
+    Every other check asks whether this is the right document; this one
+    asks whether it is a whole one. A detail response missing a section
+    passed them all, cached, and then read back as a model whose services
+    or mappings are simply empty with nothing saying why.
+    """
+    client = StubClient({k: v for k, v in DETAIL.items() if k != missing})
+
+    with pytest.raises(ContractViolation) as caught:
+        fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
+    assert missing in str(caught.value)
+    assert "whole ThreatModel" in str(caught.value)
+
+
+def test_the_required_sections_come_from_the_schema() -> None:
+    # Read from the canonical schema rather than written out here, so a
+    # section added or removed there needs no second edit.
+    from tmxcaliber.schema.schema import threatmodel_required_sections
+
+    assert set(threatmodel_required_sections()) == {
+        "actions",
+        "control_objectives",
+        "controls",
+        "dfd",
+        "feature_classes",
+        "metadata",
+        "scorecard",
+        "threats",
+    }
