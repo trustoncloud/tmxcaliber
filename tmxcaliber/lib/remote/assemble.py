@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any, NamedTuple
 
 from ...schema.schema import (
+    threatmodel_required_entity_fields,
     threatmodel_required_metadata,
     threatmodel_required_sections,
 )
@@ -275,7 +276,26 @@ def _by_id(part: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
             raise ContractViolation(
                 f"{part} contained {identity} twice.", code="duplicate_row"
             )
-        section[identity] = {key: value for key, value in row.items() if key != field}
+        body = {key: value for key, value in row.items() if key != field}
+
+        # **A retired entity is a stub by design and carries almost
+        # nothing, so the check has to know the difference.** A live row
+        # that arrived thin is a different thing: assembly accepted it,
+        # cached it, and `list threats` then raised KeyError on a field
+        # the schema requires, with the same answer served until the
+        # cache expired.
+        if body.get("retired") is not True:
+            absent = [
+                name
+                for name in threatmodel_required_entity_fields(part)
+                if name not in body
+            ]
+            if absent:
+                raise ContractViolation(
+                    f"{identity} arrived without {', '.join(absent)}.",
+                    code="thin_row",
+                )
+        section[identity] = body
     return section
 
 

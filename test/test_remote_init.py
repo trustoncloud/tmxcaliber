@@ -361,3 +361,34 @@ def test_a_successful_check_exits_zero(tmp_path: pathlib.Path) -> None:
     )
 
     assert code == 0
+
+
+def test_it_verifies_the_endpoint_commands_will_use(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TOC_API_URL wins here exactly as it does for every other command.
+
+    Taking only the stored value meant init checked one API while later
+    commands called another, which is the failure the endpoint precedence
+    fix was meant to end and did not finish ending.
+    """
+    checked: list[str] = []
+
+    class SpyClient:
+        def __init__(self, settings: Any) -> None:
+            checked.append(settings.base_url)
+
+        def get(self, path: str, params: Any = None) -> dict[str, Any]:
+            return {"tenantId": "t-1", "permissions": []}
+
+    monkeypatch.setattr("tmxcaliber.remote_cli.TocClient", SpyClient)
+
+    run_init(
+        Namespace(),
+        env=env_for(tmp_path, TOC_API_URL="https://api.example.com"),
+        read_secret=lambda _: KEY,
+        read_line=lambda _: "",
+        interactive=False,
+    )
+
+    assert checked == ["https://api.example.com"]

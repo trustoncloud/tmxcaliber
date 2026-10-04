@@ -327,7 +327,14 @@ def run_init(
 
     # Built before anything is written, so a malformed key or an endpoint
     # that would carry it in the clear is refused rather than stored.
-    settings = settings_for(key, api_url=api_url, source="tmxcaliber init")
+    #
+    # **Verified against the endpoint commands will actually use**, which
+    # means TOC_API_URL wins here exactly as it does in `load_settings`.
+    # Taking only the stored value meant init could check one API while
+    # every later command called another, which is the failure the
+    # endpoint precedence fix was supposed to end.
+    effective = environ.get("TOC_API_URL", "").strip() or api_url
+    settings = settings_for(key, api_url=effective, source="tmxcaliber init")
 
     path = write_credentials(key, api_url=api_url, env=environ)
     print(f"Wrote {path} (readable only by you).")
@@ -379,5 +386,10 @@ def _verify(settings: Settings, client: TocClient | None) -> int:
         return 1
     tenant = who.get("tenantId", "unknown")
     granted = who.get("permissions") or []
-    print(f"Verified. Tenant {tenant}, {len(granted)} permission(s).")
+    # Naming the endpoint, because which one was checked is the thing a
+    # caller cannot otherwise tell.
+    print(
+        f"Verified against {settings.base_url}. "
+        f"Tenant {tenant}, {len(granted)} permission(s)."
+    )
     return 0

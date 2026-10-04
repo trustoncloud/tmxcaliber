@@ -586,3 +586,36 @@ def test_a_non_numeric_release_reports_rather_than_tracebacks() -> None:
 
     with pytest.raises(ValueError):
         generate_change_log(older, newer)
+
+
+def test_a_thin_live_row_is_refused() -> None:
+    """A live entity missing required fields breaks a later command.
+
+    Assembly accepted it, cached it, and `list threats` then raised
+    KeyError on a field the schema requires, with the same answer served
+    until the cache expired.
+    """
+    PARTS["threats"].append({"threatId": "S3.T99", "retired": False})
+    try:
+        with pytest.raises(ContractViolation) as caught:
+            fetch_document(StubClient(), TmRef("aws", "s3"))  # type: ignore[arg-type]
+        assert "S3.T99" in str(caught.value)
+    finally:
+        PARTS["threats"].pop()
+
+
+def test_a_retired_stub_stays_acceptable() -> None:
+    """Retired entities are thin by design.
+
+    The API serves them as `{id, retired}`, so a check that demanded the
+    full shape of every row would reject documents that are entirely
+    correct.
+    """
+    PARTS["threats"].append({"threatId": "S3.T98", "retired": True})
+    try:
+        document = fetch_document(  # type: ignore[arg-type]
+            StubClient(), TmRef("aws", "s3")
+        ).document
+        assert document["threats"]["S3.T98"] == {"retired": True}
+    finally:
+        PARTS["threats"].pop()
