@@ -300,16 +300,19 @@ def load_settings(
     """
     environ = os.environ if env is None else env
 
+    # **The endpoint is resolved independently of the key.** Reading the
+    # file only when the key was absent meant that setting TOC_API_KEY
+    # silently moved a configured custom endpoint back to the default, so
+    # a caller could verify one API and then call another.
+    stored = _from_file(environ)
+    url = environ.get("TOC_API_URL", "").strip() or (stored[1] if stored else "")
+
     key = environ.get("TOC_API_KEY", "").strip()
     source = "TOC_API_KEY"
-    url = environ.get("TOC_API_URL", "").strip()
-
     if not key:
-        found = _from_file(environ)
-        if found is None:
+        if stored is None:
             raise ConfigurationError(_HELP, code="no_credential")
-        key, file_url, source = found
-        url = url or file_url
+        key, _, source = stored
 
     return settings_for(key, api_url=url, source=source, timeout=timeout)
 

@@ -293,3 +293,39 @@ def test_a_percent_in_the_file_never_reaches_an_error_message(
     assert "not a TrustOnCloud key" in message
     assert mangled not in message
     assert mangled[10:30] not in message
+
+
+def test_a_stored_endpoint_survives_an_environment_key(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Setting TOC_API_KEY must not move which API is called.
+
+    The file used to be read only when the key was absent, so an
+    environment key silently returned a configured custom endpoint to the
+    default, and `init` could verify one API while commands called
+    another.
+    """
+    config = write_config(
+        tmp_path / "credentials",
+        f"[default]\napi_key = {OTHER}\napi_url = https://api.example.com\n",
+    )
+
+    found = load_settings(env={"TOC_API_KEY": KEY, "TOC_CONFIG_FILE": str(config)})
+
+    assert found.credentials.api_key == KEY
+    assert found.base_url == "https://api.example.com"
+
+
+def test_an_environment_endpoint_still_wins_over_the_stored_one(
+    tmp_path: pathlib.Path,
+) -> None:
+    config = write_config(
+        tmp_path / "credentials",
+        f"[default]\napi_key = {KEY}\napi_url = https://api.example.com\n",
+    )
+
+    found = load_settings(
+        env={"TOC_API_URL": "https://other.example", "TOC_CONFIG_FILE": str(config)}
+    )
+
+    assert found.base_url == "https://other.example"
