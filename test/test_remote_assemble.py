@@ -419,3 +419,39 @@ def test_a_caller_cannot_type_a_dangerous_release_either() -> None:
     for value in ["aws-s3@..", "aws-s3@."]:
         with pytest.raises(ValueError):
             parse_ref(value)
+
+
+def test_the_assembled_document_carries_the_release_change_logs_need() -> None:
+    """`generate_change_log` reads `metadata["release"]` directly.
+
+    The published document has no such field: it is added by the
+    per-customer stamp on the delivery path, which the API does not apply.
+    Without stamping it here the documented remote `create-change-log`
+    raises KeyError on a response that is otherwise perfectly valid.
+    """
+    fetched = fetch_document(StubClient(), TmRef("aws", "s3"))  # type: ignore[arg-type]
+
+    assert fetched.document["metadata"]["release"] == fetched.release
+    # The schema version is a different fact and is left alone.
+    assert fetched.document["metadata"]["version"] == "20240423"
+
+
+def test_a_change_log_between_two_remote_releases_runs() -> None:
+    """The documented remote command, end to end.
+
+    It was written up in the README as the payoff of release pinning and
+    never actually exercised against an assembled document, which is how
+    the missing release went unnoticed.
+    """
+    from tmxcaliber.lib.change_log import generate_change_log
+
+    older = fetch_document(  # type: ignore[arg-type]
+        StubClient(), TmRef("aws", "s3", "1600000000")
+    ).document
+    newer = fetch_document(  # type: ignore[arg-type]
+        StubClient(), TmRef("aws", "s3", "1611187200")
+    ).document
+
+    change_log = generate_change_log(older, newer)
+
+    assert change_log is not None

@@ -150,6 +150,19 @@ def fetch_document(client: TocClient, ref: TmRef) -> Fetched:
 
     document["dfd"] = client.get(f"{base}/dfd", at_release)
 
+    # **`metadata.release` is written here because nothing else writes it.**
+    # `change_log.generate_change_log` reads `metadata["release"]` directly,
+    # and the published document does not carry one: it is added by the
+    # per-customer stamp on the delivery path, which this API does not
+    # apply. Without this the documented remote `create-change-log` raises
+    # KeyError on a response that is otherwise perfectly valid.
+    #
+    # Safe to write rather than a guess: it is the release the detail route
+    # named, already checked against the pin and against the grammar.
+    metadata = document.get("metadata")
+    if isinstance(metadata, dict):
+        document["metadata"] = {**metadata, "release": release}
+
     # **Complete, or not written at all.** Every check above asks whether
     # this is the right document; this one asks whether it is a whole one.
     # A detail response missing `metadata` or `control_objectives` passed

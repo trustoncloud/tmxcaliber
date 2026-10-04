@@ -271,3 +271,25 @@ def test_masking_keeps_the_id_and_hides_the_secret() -> None:
 
     assert shown.startswith("toc-tak1-" + "A" * 16)
     assert "B" * 52 not in shown
+
+
+def test_a_percent_in_the_file_never_reaches_an_error_message(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Interpolation is off, so a `%` cannot quote the key back at you.
+
+    With it on, a value containing `%` raises InterpolationSyntaxError
+    whose message includes the rest of that value. The earlier fix covered
+    `parser.read`; this is the same disclosure through `parser.get`.
+    """
+    mangled = KEY[:20] + "%" + KEY[21:]
+    config = write_config(tmp_path / "credentials", f"[default]\napi_key = {mangled}\n")
+
+    with pytest.raises(ConfigurationError) as caught:
+        load_settings(env={"TOC_CONFIG_FILE": str(config)})
+
+    message = str(caught.value)
+    # Refused for its shape, not by leaking it.
+    assert "not a TrustOnCloud key" in message
+    assert mangled not in message
+    assert mangled[10:30] not in message

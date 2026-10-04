@@ -272,7 +272,7 @@ def run_init(
     read_line: Callable[[str], str] | None = None,
     interactive: bool | None = None,
     client: TocClient | None = None,
-) -> None:
+) -> int:
     """Store an API key and report whether it works.
 
     Args:
@@ -283,6 +283,9 @@ def run_init(
         interactive: Whether to prompt, defaulting to whether stdin is a tty.
         client: A client to verify with, built from the new settings when
             omitted.
+
+    Returns:
+        0 when the stored key answered, 1 when it did not.
 
     Raises:
         ConfigurationError: If no key is given, or the key is malformed.
@@ -325,10 +328,10 @@ def run_init(
             "use the environment one until you unset it." + Fore.RESET
         )
 
-    _verify(settings, client)
+    return _verify(settings, client)
 
 
-def _verify(settings: Settings, client: TocClient | None) -> None:
+def _verify(settings: Settings, client: TocClient | None) -> int:
     """Call /v1/me with the credential just stored, and say what answered.
 
     **The settings are passed in rather than resolved.** Resolving consults
@@ -336,13 +339,19 @@ def _verify(settings: Settings, client: TocClient | None) -> None:
     for a key the command had not written and never tested, while the one
     in the file went untried.
 
-    Reported rather than enforced: the key is already written, and a
-    failure here is information about the tenant or the network rather than
-    a reason to discard it.
+    **The key is kept either way, and the exit code still says no.** A
+    failure here is usually the organization not being enabled yet rather
+    than a bad key, so discarding what the caller just typed would be
+    unhelpful. Exiting zero would be worse: the documented piped form runs
+    in CI, where a setup step that cannot work must not look like one that
+    did.
 
     Args:
         settings: The credential and endpoint just stored.
         client: A client to use, built from those settings otherwise.
+
+    Returns:
+        0 when the key answered, 1 when it did not.
     """
     try:
         api = client or TocClient(settings)
@@ -353,7 +362,9 @@ def _verify(settings: Settings, client: TocClient | None) -> None:
             "If this says not found, the API may not be enabled for your "
             "organization yet, or your address may not be on its allow list."
         )
-        return
+        print("The key was kept; nothing else needs re-entering.")
+        return 1
     tenant = who.get("tenantId", "unknown")
     granted = who.get("permissions") or []
     print(f"Verified. Tenant {tenant}, {len(granted)} permission(s).")
+    return 0

@@ -573,8 +573,9 @@ def main() -> None:
 def _run() -> None:
     params = get_params()
     if getattr(params, "api_init", False):
-        run_init(params)
-        return
+        # Non-zero when the stored key did not answer, so a CI setup step
+        # that cannot work does not look like one that did.
+        sys.exit(run_init(params))
     if selected_route(params) is not None:
         result, result_type = run_api_command(params)
         output_result(params.output, result, result_type)
