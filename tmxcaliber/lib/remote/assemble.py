@@ -16,9 +16,13 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
-from ...schema.schema import threatmodel_required_sections
+from ...schema.schema import (
+    threatmodel_required_metadata,
+    threatmodel_required_sections,
+)
 from ..threatmodel_data import ThreatModelData
 from .client import TocClient
+from .contract import page_maximum
 from .errors import ContractViolation, NotFound
 from .ref import TmRef, is_release
 
@@ -102,18 +106,44 @@ def fetch_document(client: TocClient, ref: TmRef) -> Fetched:
             code="wrong_model",
         )
 
+    # **Everything knowable from this one response is decided here**, before
+    # the four calls that build on it. The metadata checks used to sit after
+    # them, so a response with no metadata cost five calls to reject instead
+    # of one, and the cross-check below was skipped entirely rather than
+    # failing when there was nothing to cross-check against.
+    metadata = detail.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ContractViolation(
+            f"{base} answered without metadata.", code="incomplete_metadata"
+        )
+    # A present section is not a populated one. `list services` reads
+    # `service_name` with `.get`, so a missing one drops the model from the
+    # listing rather than failing, and a pinned entry holds that for a week.
+    #
+    # Checked here rather than by validating the whole document, because the
+    # published corpus does not satisfy its own schema in every detail.
+    # Metadata is the exception: every published model carries all of these.
+    thin = [
+        field
+        for field in threatmodel_required_metadata()
+        if not str(metadata.get(field, "")).strip()
+    ]
+    if thin:
+        raise ContractViolation(
+            f"{base} answered with metadata missing {', '.join(thin)}.",
+            code="incomplete_metadata",
+        )
+
     # The metadata names the same model a second time, and the two must
     # agree: a document whose body belongs to another service would
-    # otherwise pass on the strength of a correct envelope alone.
-    metadata = detail.get("metadata")
-    if isinstance(metadata, dict):
-        stated = f"{metadata.get('provider', '')}-{metadata.get('service', '')}".lower()
-        if stated != "-" and stated != ref.tm_id.lower():
-            raise ContractViolation(
-                f"{base} answered with a document describing {stated}, "
-                f"not {ref.tm_id}.",
-                code="wrong_model",
-            )
+    # otherwise pass on the strength of a correct envelope alone. No longer
+    # conditional, because metadata is now known to be there.
+    stated = f"{metadata['provider']}-{metadata['service']}".lower()
+    if stated != ref.tm_id.lower():
+        raise ContractViolation(
+            f"{base} answered with a document describing {stated}, not {ref.tm_id}.",
+            code="wrong_model",
+        )
 
     # The release the detail route actually answered with. Pinning the rest
     # of the read to this, rather than to what the caller asked for, is what
@@ -145,7 +175,12 @@ def fetch_document(client: TocClient, ref: TmRef) -> Fetched:
     }
 
     for part in PARTS:
-        rows = list(client.paginate(f"{base}/{part}", at_release))
+        # The largest page the contract allows, read from the contract. The
+        # server's default is smaller, and the difference is whole extra
+        # calls per section against an hourly budget a single assembly
+        # already spends five of.
+        largest = page_maximum(f"/v1/threatmodels/{{provider}}/{{service}}/{part}") or 0
+        rows = list(client.paginate(f"{base}/{part}", at_release, page_size=largest))
         document[part] = _by_id(part, rows)
 
     document["dfd"] = client.get(f"{base}/dfd", at_release)
@@ -183,6 +218,7 @@ def fetch_document(client: TocClient, ref: TmRef) -> Fetched:
             f"{', '.join(missing)} is missing or not an object.",
             code="incomplete_document",
         )
+
     return Fetched(document, release)
 
 
