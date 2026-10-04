@@ -123,10 +123,14 @@ def fetch_document(client: TocClient, ref: TmRef) -> Fetched:
     # Checked here rather than by validating the whole document, because the
     # published corpus does not satisfy its own schema in every detail.
     # Metadata is the exception: every published model carries all of these.
+    # **`str()` was the hole here.** Coercing first made `None` into the
+    # string "None", which is truthy, so a null field passed the very check
+    # written to catch an empty one. The schema types all six as strings
+    # and the published corpus holds strings, so ask for one.
     thin = [
         field
         for field in threatmodel_required_metadata()
-        if not str(metadata.get(field, "")).strip()
+        if not isinstance(metadata.get(field), str) or not metadata[field].strip()
     ]
     if thin:
         raise ContractViolation(
@@ -183,7 +187,17 @@ def fetch_document(client: TocClient, ref: TmRef) -> Fetched:
         rows = list(client.paginate(f"{base}/{part}", at_release, page_size=largest))
         document[part] = _by_id(part, rows)
 
-    document["dfd"] = client.get(f"{base}/dfd", at_release)
+    dfd = client.get(f"{base}/dfd", at_release)
+    # An empty object is a dict, so the section check below would pass it,
+    # and `generate` then fails on the missing body while the cache keeps
+    # serving the same answer until it expires. The schema requires a
+    # body; a diagram with no body is not one.
+    if not isinstance(dfd.get("body"), str) or not dfd["body"].strip():
+        raise ContractViolation(
+            f"{base}/dfd answered without a diagram body.",
+            code="empty_dfd",
+        )
+    document["dfd"] = dfd
 
     # **`metadata.release` is written here because nothing else writes it.**
     # `change_log.generate_change_log` reads `metadata["release"]` directly,

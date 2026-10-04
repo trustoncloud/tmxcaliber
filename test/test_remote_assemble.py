@@ -147,6 +147,7 @@ class StubClient:
         self.honour_release = honour_release
         self.calls: list[tuple[str, dict[str, str]]] = []
         self.page_sizes: list[int] = []
+        self.dfd: dict[str, Any] = dict(DFD)
 
     key: str = "KEYONE"
 
@@ -180,7 +181,7 @@ class StubClient:
         """
         self.calls.append((path, dict(params or {})))
         if path.endswith("/dfd"):
-            return dict(DFD)
+            return dict(self.dfd)
         # A real detail route answers for the release it was asked for, and
         # the assembler refuses an answer that names a different one.
         asked = dict(params or {}).get("release")
@@ -504,3 +505,35 @@ def test_a_change_log_between_two_remote_releases_runs() -> None:
     change_log = generate_change_log(older, newer)
 
     assert change_log is not None
+
+
+@pytest.mark.parametrize("value", [None, "", "   ", 42, [], {}])
+def test_a_metadata_field_that_is_not_a_real_string_is_refused(value: object) -> None:
+    """`str()` coercion was the hole this closes.
+
+    Coercing first turned `None` into the string "None", which is truthy,
+    so a null field passed the very check written to catch an empty one.
+    The schema types all six as strings.
+    """
+    thin = {**DETAIL["metadata"], "service_name": value}
+    client = StubClient({**DETAIL, "metadata": thin})
+
+    with pytest.raises(ContractViolation) as caught:
+        fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
+    assert "service_name" in str(caught.value)
+
+
+@pytest.mark.parametrize("body", [None, "", "  ", 0, []])
+def test_a_dfd_without_a_usable_body_is_refused(body: object) -> None:
+    """An empty object is still a dict, so the section check passes it.
+
+    `generate` then fails on the missing body while the cache keeps
+    serving the same answer until it expires. A diagram with no body is
+    not a diagram.
+    """
+    client = StubClient()
+    client.dfd = {"body": body} if body is not None else {}  # type: ignore[attr-defined]
+
+    with pytest.raises(ContractViolation) as caught:
+        fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
+    assert "diagram body" in str(caught.value)
