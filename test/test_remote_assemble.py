@@ -566,3 +566,23 @@ def test_a_repeated_row_is_refused_rather_than_overwriting() -> None:
         assert "twice" in str(caught.value)
     finally:
         PARTS["threats"].pop()
+
+
+def test_a_non_numeric_release_reports_rather_than_tracebacks() -> None:
+    """`generate_change_log` parses `metadata.release` as an integer.
+
+    Every published release key is an epoch, so this does not arise in
+    practice, but the grammar accepts a string and the API types it as
+    one. A document that cannot be compared should say so rather than
+    surfacing a bare ValueError from two layers down.
+    """
+    from tmxcaliber.lib.change_log import generate_change_log
+
+    older = fetch_document(  # type: ignore[arg-type]
+        StubClient(), TmRef("aws", "s3", "1600000000")
+    ).document
+    newer = dict(older)
+    newer["metadata"] = {**older["metadata"], "release": "v1.2.3"}
+
+    with pytest.raises(ValueError):
+        generate_change_log(older, newer)

@@ -667,7 +667,19 @@ def _run() -> None:
         new_model = new_tm_data[0]
         FilterApplier(params.filter_obj, params.exclude).apply_filter(old_model)
         FilterApplier(params.filter_obj, params.exclude).apply_filter(new_model)
-        change_log = generate_change_log(old_model.get_json(), new_model.get_json())
+        # `generate_change_log` reads `metadata.release` and parses it as an
+        # integer, which every published ThreatModel satisfies because a
+        # release key is an epoch. A document that does not, whether it came
+        # from disk or was assembled from the API, otherwise surfaced as a
+        # bare KeyError or ValueError with no indication of which file or
+        # which field was at fault.
+        try:
+            change_log = generate_change_log(old_model.get_json(), new_model.get_json())
+        except (KeyError, ValueError) as exc:
+            raise SystemExit(
+                "Cannot compare these ThreatModels: each needs a numeric "
+                f"metadata.release and one of them does not have one ({exc})."
+            ) from None
         if params.format == "json":
             output_result(params.output, change_log.get_json(), "json")
         elif params.format == "md":
