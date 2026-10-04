@@ -271,3 +271,58 @@ def test_it_repairs_a_file_the_loader_would_refuse(
 
     assert exposed.stat().st_mode & 0o777 == 0o600
     assert load_settings(env=env).credentials.api_key == OTHER
+
+
+def test_it_verifies_the_key_it_stored_not_the_one_in_the_environment(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`init` must test what it wrote.
+
+    Verification used to resolve settings the ordinary way, which prefers
+    TOC_API_KEY, so with that variable set it printed "Verified" for a key
+    the command had neither written nor tested while the stored one went
+    untried.
+
+    **No client is injected here, deliberately.** Injecting one is what hid
+    this: it skips the very decision under test. Only the client's
+    construction is faked, so the real choice of credential still runs.
+    """
+    seen: list[str] = []
+
+    class SpyClient:
+        def __init__(self, settings: Any) -> None:
+            seen.append(settings.credentials.api_key)
+
+        def get(self, path: str, params: Any = None) -> dict[str, Any]:
+            return {"tenantId": "t-02370141", "permissions": []}
+
+    monkeypatch.setattr("tmxcaliber.remote_cli.TocClient", SpyClient)
+
+    run_init(
+        Namespace(),
+        env=env_for(tmp_path, TOC_API_KEY=OTHER),
+        read_secret=lambda _: KEY,
+        read_line=lambda _: "",
+        interactive=True,
+    )
+
+    assert seen == [KEY], "init verified the environment key, not the stored one"
+
+
+def test_an_endpoint_that_would_leak_the_key_is_refused_before_writing(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Validated before the file is touched, so a bad answer at the prompt
+    # does not leave a stored credential pointing somewhere unsafe.
+    env = env_for(tmp_path)
+
+    with pytest.raises(ConfigurationError):
+        run_init(
+            Namespace(),
+            env=env,
+            read_secret=lambda _: KEY,
+            read_line=lambda _: "http://not-localhost.example",
+            interactive=True,
+        )
+
+    assert not pathlib.Path(env["TOC_CONFIG_FILE"]).exists()

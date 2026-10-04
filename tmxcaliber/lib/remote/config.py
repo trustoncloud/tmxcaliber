@@ -307,20 +307,48 @@ def load_settings(
         key, file_url, source = found
         url = url or file_url
 
-    if CREDENTIAL_PATTERN.match(key) is None:
+    return settings_for(key, api_url=url, source=source, timeout=timeout)
+
+
+def settings_for(
+    api_key: str,
+    *,
+    api_url: str = "",
+    source: str = "",
+    timeout: float = DEFAULT_TIMEOUT,
+) -> Settings:
+    """Build settings from a credential given explicitly.
+
+    **The one place a key and an endpoint become usable settings**, so the
+    format and scheme rules cannot be skipped by a caller that assembles a
+    `Settings` itself. `init` uses it to verify the credential it just
+    stored rather than whatever ambient resolution would pick.
+
+    Args:
+        api_key: The key.
+        api_url: The endpoint, or empty for the default.
+        source: Where the key came from, for diagnostics.
+        timeout: Seconds to wait on one request.
+
+    Returns:
+        The settings.
+
+    Raises:
+        ConfigurationError: If the key is malformed, or the endpoint would
+            carry it in the clear.
+    """
+    if CREDENTIAL_PATTERN.match(api_key) is None:
         # Named without quoting it. A malformed key in an error message is
         # still a secret if it was only mistyped by one character.
         raise ConfigurationError(
-            f"The API key from {source} is not a TrustOnCloud key. "
+            f"The API key from {source or 'input'} is not a TrustOnCloud key. "
             "A key looks like toc-tak1- followed by an id and a secret.",
             code="bad_credential",
         )
-
-    base_url = (url or DEFAULT_BASE_URL).rstrip("/")
+    base_url = (api_url or DEFAULT_BASE_URL).rstrip("/")
     _refuse_cleartext(base_url)
-
     return Settings(
-        credentials=Credentials(api_key=key, source=source),
+        credentials=Credentials(api_key=api_key, source=source),
         base_url=base_url,
         timeout=timeout,
     )

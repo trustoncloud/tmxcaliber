@@ -394,3 +394,28 @@ def test_the_required_sections_come_from_the_schema() -> None:
         "scorecard",
         "threats",
     }
+
+
+@pytest.mark.parametrize("release", ["/tmp/target", "../../../tmp/evil", "..", ""])
+def test_a_release_that_could_act_as_a_path_is_refused(release: str) -> None:
+    """The server names the release, and the release becomes a filename.
+
+    `pathlib` discards everything left of an absolute component, so an
+    unchecked release here is an arbitrary-write primitive driven by the
+    API's answer. Refused where the other "do not trust the answer" checks
+    live, so it costs one call rather than five.
+    """
+    client = StubClient({**DETAIL, "version": release}, honour_release=False)
+
+    with pytest.raises(ContractViolation):
+        fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
+
+
+def test_a_caller_cannot_type_a_dangerous_release_either() -> None:
+    # The reference grammar already excluded a slash, which is why the gap
+    # was only ever on the server's side. `..` slipped through until now.
+    from tmxcaliber.lib.remote.ref import parse_ref
+
+    for value in ["aws-s3@..", "aws-s3@."]:
+        with pytest.raises(ValueError):
+            parse_ref(value)
