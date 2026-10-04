@@ -326,3 +326,38 @@ def test_an_endpoint_that_would_leak_the_key_is_refused_before_writing(
         )
 
     assert not pathlib.Path(env["TOC_CONFIG_FILE"]).exists()
+
+
+def test_a_failed_check_exits_non_zero(tmp_path: pathlib.Path) -> None:
+    """CI must be able to tell a setup that cannot work from one that did.
+
+    The key is still kept, because a failure here is usually the
+    organization not being enabled yet rather than a bad key, and making
+    the caller re-enter it would help nobody.
+    """
+    env = env_for(tmp_path)
+
+    code = run_init(
+        Namespace(),
+        env=env,
+        read_secret=lambda _: KEY,
+        read_line=lambda _: "",
+        interactive=False,
+        client=StubClient(NotFound("Not found.", code="not_found")),  # type: ignore[arg-type]
+    )
+
+    assert code == 1
+    assert load_settings(env=env).credentials.api_key == KEY
+
+
+def test_a_successful_check_exits_zero(tmp_path: pathlib.Path) -> None:
+    code = run_init(
+        Namespace(),
+        env=env_for(tmp_path),
+        read_secret=lambda _: KEY,
+        read_line=lambda _: "",
+        interactive=False,
+        client=StubClient(),  # type: ignore[arg-type]
+    )
+
+    assert code == 0

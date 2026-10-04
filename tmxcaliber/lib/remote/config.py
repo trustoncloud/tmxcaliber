@@ -182,9 +182,17 @@ def _from_file(env: Mapping[str, str]) -> tuple[str, str, str] | None:
     if not path.is_file():
         return None
     _refuse_shared_file(path)
-    parser = configparser.ConfigParser()
+    # **Interpolation off.** With it on, a `%` anywhere in a value raises an
+    # InterpolationSyntaxError whose message quotes the rest of that value,
+    # so a mangled key would be disclosed by the error complaining about it.
+    # A credentials file has nothing to interpolate.
+    parser = configparser.ConfigParser(interpolation=None)
     try:
         parser.read(path, encoding="utf-8")
+        if not parser.has_section(SECTION):
+            return None
+        key = parser.get(SECTION, "api_key", fallback="").strip()
+        url = parser.get(SECTION, "api_url", fallback="").strip()
     except configparser.Error as exc:
         # **The message never carries the parser's text.** ConfigParser puts
         # the offending line into a ParsingError, so a key written without
@@ -199,12 +207,8 @@ def _from_file(env: Mapping[str, str]) -> tuple[str, str, str] | None:
             f"{path} could not be parsed as an INI file{where}.",
             code="bad_config",
         ) from None
-    if not parser.has_section(SECTION):
-        return None
-    key = parser.get(SECTION, "api_key", fallback="").strip()
     if not key:
         return None
-    url = parser.get(SECTION, "api_url", fallback="").strip()
     return key, url, str(path)
 
 
