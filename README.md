@@ -128,8 +128,10 @@ A one-off override needs no file at all:
 
 ```sh
 export TOC_API_KEY=toc-tak1-...
-export TOC_API_URL=https://api.example.com   # optional
 ```
+
+`TOC_API_URL` overrides the endpoint if TrustOnCloud has given you a
+different one to use. It defaults to `https://api.trustoncloud.com`.
 
 The environment wins over the file, which is also why there are no profiles:
 one stored key, and an environment variable for the "a different one, right

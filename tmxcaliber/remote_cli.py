@@ -220,16 +220,22 @@ def add_init_parser(subparsers: _SubParsersAction[ArgumentParser]) -> None:
     parser.set_defaults(api_init=True)
 
 
-def _read_secret_tty(prompt: str) -> str:
-    """Read a secret without echoing it.
+def _read_secret(prompt: str) -> str:
+    """Read a secret, suppressing the echo only when there is one.
+
+    `getpass` on a pipe warns that it cannot control the terminal, which is
+    noise on the documented CI path where there is no terminal and nothing
+    to echo to.
 
     Args:
-        prompt: What to show.
+        prompt: What to show, when there is anyone to show it to.
 
     Returns:
-        What was typed, stripped.
+        What was read, stripped.
     """
-    return getpass.getpass(prompt).strip()
+    if sys.stdin.isatty():
+        return getpass.getpass(prompt).strip()
+    return sys.stdin.readline().strip()
 
 
 def _current_key(env: Mapping[str, str]) -> str:
@@ -280,7 +286,7 @@ def run_init(
         ConfigurationError: If no key is given, or the key is malformed.
     """
     environ = os.environ if env is None else env
-    secret = read_secret or _read_secret_tty
+    secret = read_secret or _read_secret
     line = read_line or (lambda prompt: input(prompt).strip())
     prompting = sys.stdin.isatty() if interactive is None else interactive
 
