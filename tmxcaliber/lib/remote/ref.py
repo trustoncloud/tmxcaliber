@@ -32,6 +32,34 @@ REF_PATTERN: Final[re.Pattern[str]] = re.compile(
 )
 
 
+#: What a release key may look like.
+#:
+#: **One path component, and it must not be able to act like a path.** A
+#: release reaches the filesystem as a cache filename, and `pathlib` discards
+#: everything to its left when joined with an absolute value, so an unchecked
+#: release is an arbitrary-write primitive. Leading with an alphanumeric rules
+#: out `.`, `..` and anything that reads as a flag; the class excludes the
+#: separators outright.
+#:
+#: This constrains the release the **server** returns as well as the one a
+#: caller types. The reference grammar above already excluded a slash from
+#: what a caller can type, which is exactly why the gap was only ever on the
+#: server's side of the exchange.
+RELEASE_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def is_release(value: str) -> bool:
+    """Report whether a value is safe to use as a release key.
+
+    Args:
+        value: The release, from a caller or from the API.
+
+    Returns:
+        True when it is a single, inert path component.
+    """
+    return RELEASE_PATTERN.match(value) is not None
+
+
 @dataclass(frozen=True)
 class TmRef:
     """One ThreatModel, and optionally the release to read.
@@ -98,8 +126,11 @@ def parse_ref(value: str) -> TmRef:
             f"{value!r} is not a ThreatModel reference; expected "
             "provider-service, optionally with @release"
         )
+    release = match.group("release")
+    if release is not None and not is_release(release):
+        raise ValueError(f"{release!r} is not a usable release key.")
     return TmRef(
         provider=match.group("provider"),
         service=match.group("service"),
-        release=match.group("release"),
+        release=release,
     )

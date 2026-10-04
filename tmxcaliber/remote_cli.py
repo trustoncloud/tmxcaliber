@@ -31,9 +31,11 @@ from .lib.remote.client import TocClient
 from .lib.remote.config import (
     DEFAULT_BASE_URL,
     SECTION,
+    Settings,
     config_path,
     load_settings,
     masked,
+    settings_for,
     write_credentials,
 )
 from .lib.remote.contract import ROUTES, Route, required_parameters
@@ -307,6 +309,10 @@ def run_init(
     if not key:
         raise ConfigurationError("No API key given, so nothing was written.")
 
+    # Built before anything is written, so a malformed key or an endpoint
+    # that would carry it in the clear is refused rather than stored.
+    settings = settings_for(key, api_url=api_url, source="tmxcaliber init")
+
     path = write_credentials(key, api_url=api_url, env=environ)
     print(f"Wrote {path} (readable only by you).")
 
@@ -314,26 +320,32 @@ def run_init(
         # It silently wins over the file, so someone who just ran this and
         # still sees the old tenant would have no way to find out why.
         print(
-            Fore.YELLOW + "Note: TOC_API_KEY is set, and it takes precedence over this "
-            "file. Unset it to use what was just written." + Fore.RESET
+            Fore.YELLOW + "Note: TOC_API_KEY is set, and it takes precedence over "
+            "this file. The check below is of the key just stored; commands will "
+            "use the environment one until you unset it." + Fore.RESET
         )
 
-    _verify(environ, client)
+    _verify(settings, client)
 
 
-def _verify(env: Mapping[str, str], client: TocClient | None) -> None:
-    """Call /v1/me and say what answered.
+def _verify(settings: Settings, client: TocClient | None) -> None:
+    """Call /v1/me with the credential just stored, and say what answered.
+
+    **The settings are passed in rather than resolved.** Resolving consults
+    `TOC_API_KEY` first, so with that variable set this reported "Verified"
+    for a key the command had not written and never tested, while the one
+    in the file went untried.
 
     Reported rather than enforced: the key is already written, and a
-    verification failure is information about the tenant or the network
-    rather than a reason to discard it.
+    failure here is information about the tenant or the network rather than
+    a reason to discard it.
 
     Args:
-        env: The environment to read.
-        client: A client to use, built from the resolved settings otherwise.
+        settings: The credential and endpoint just stored.
+        client: A client to use, built from those settings otherwise.
     """
     try:
-        api = client or TocClient(load_settings(env=env))
+        api = client or TocClient(settings)
         who = api.get("/v1/me")
     except RemoteError as exc:
         print(Fore.YELLOW + f"Stored, but the key did not work: {exc}" + Fore.RESET)

@@ -20,7 +20,7 @@ from ...schema.schema import threatmodel_required_sections
 from ..threatmodel_data import ThreatModelData
 from .client import TocClient
 from .errors import ContractViolation, NotFound
-from .ref import TmRef
+from .ref import TmRef, is_release
 
 #: The sections the detail route omits, each served by its own route.
 #:
@@ -124,6 +124,14 @@ def fetch_document(client: TocClient, ref: TmRef) -> Fetched:
             f"{base} did not name the release it answered with, so the "
             "remaining sections cannot be pinned to it.",
             code="unpinnable",
+        )
+    if not is_release(release):
+        # The server names the release, and the release becomes a filename.
+        # Every other check here asks whether the answer is the right one;
+        # this asks whether it is safe to act on.
+        raise ContractViolation(
+            f"{base} answered with a release that cannot be used as a name.",
+            code="unusable_release",
         )
     if ref.release and release != ref.release:
         raise ContractViolation(

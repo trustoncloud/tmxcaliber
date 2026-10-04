@@ -30,7 +30,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from .ref import TmRef
+from .ref import TmRef, is_release
 
 #: How long an assembled document is reused when no release was pinned.
 #:
@@ -85,6 +85,11 @@ def cached_path(
     Returns:
         The file path.
     """
+    if release != "latest" and not is_release(release):
+        # A backstop rather than the real check, which lives where the
+        # release arrives. It is here because this is the line that turns a
+        # string into a path, and a future caller may not have checked.
+        raise ValueError(f"{release!r} is not a usable release key.")
     endpoint = hashlib.sha256(base_url.encode("utf-8")).hexdigest()[:12]
     # Hashed rather than written out: the id is not a secret, but there is
     # no reason to leave any part of a credential in a filesystem path.
