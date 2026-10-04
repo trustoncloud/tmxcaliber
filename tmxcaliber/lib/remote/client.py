@@ -23,6 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator, Mapping
+from importlib import metadata
 from typing import Any, Final
 
 from .config import Settings
@@ -63,11 +64,11 @@ def _user_agent() -> str:
         The header value.
     """
     try:
-        from importlib.metadata import version
-
-        release = version("tmxcaliber")
-    except Exception:
-        release = "0.0.0"
+        release = metadata.version("tmxcaliber")
+    except metadata.PackageNotFoundError:
+        # Running from a checkout that was never installed. The same
+        # narrow catch `cli.py` already uses for the --version string.
+        release = "unknown"
     return (
         f"tmxcaliber/{release} "
         f"(python {sys.version_info.major}.{sys.version_info.minor}; "
