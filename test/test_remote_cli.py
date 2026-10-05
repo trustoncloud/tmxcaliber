@@ -209,6 +209,55 @@ def test_the_api_commands_are_reachable_from_the_parser(
     assert params.tm_id == "aws-s3"
 
 
+def _help_of(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+) -> str:
+    """Render a command's help through the real parser.
+
+    Args:
+        monkeypatch: Sets argv.
+        capsys: Captures the help.
+        argv: The words after the program name, without -h.
+
+    Returns:
+        The printed help.
+    """
+    monkeypatch.setattr(sys, "argv", ["tmxcaliber", *argv, "-h"])
+    with pytest.raises(SystemExit):
+        cli_module.get_params()
+    return capsys.readouterr().out
+
+
+def test_a_required_filter_is_listed_as_required_and_names_its_source(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = _help_of(monkeypatch, capsys, ["compliance", "mappings", "list"])
+
+    required = text.split("required arguments:", 1)[1]
+    assert "--framework" in required
+    assert "tmxcaliber compliance frameworks list" in required
+    assert "filter by framework" not in text
+
+
+def test_the_group_help_says_what_its_command_needs(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = _help_of(monkeypatch, capsys, ["compliance", "mappings"])
+
+    assert "Requires --framework." in " ".join(text.split())
+
+
+def test_an_optional_filter_keeps_its_wording(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = _help_of(monkeypatch, capsys, ["threatmodels", "list"])
+
+    assert "filter by provider." in text
+    assert "required arguments:" not in text
+
+
 def test_a_second_credential_does_not_read_the_first_one_s_cache(
     tmp_path: pathlib.Path,
 ) -> None:

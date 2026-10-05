@@ -90,3 +90,54 @@ def test_the_vendored_contract_is_the_published_one() -> None:
     document = contract.contract()
     assert document["openapi"].startswith("3.")
     assert all(path.startswith("/v1/") for path in document["paths"])
+
+
+def _row_properties(path: str) -> set[str]:
+    """Read the fields of one paged route's rows from the contract.
+
+    Args:
+        path: The OpenAPI path template.
+
+    Returns:
+        The property names of the row schema.
+    """
+    document = contract.contract()
+    response = document["paths"][path]["get"]["responses"]["200"]
+    schema = response["content"]["application/json"]["schema"]
+    items = next(part for part in schema["allOf"] if "properties" in part)
+    reference = items["properties"]["items"]["items"]["$ref"]
+    row = document["components"]["schemas"][reference.rsplit("/", 1)[-1]]
+    return set(row["properties"])
+
+
+def test_the_framework_filter_names_the_frameworks_list() -> None:
+    """A required filter with no hint is what made `mappings list` a dead end."""
+    mappings = contract.route_for(("compliance", "mappings", "list"))
+    assert mappings is not None
+
+    lookup = contract.values_route(mappings, "framework")
+
+    assert lookup is not None
+    assert lookup.command == ("compliance", "frameworks", "list")
+    assert contract.values_field("framework") == "frameworkId"
+
+
+@pytest.mark.parametrize("route", contract.ROUTES, ids=lambda r: r.path)
+def test_every_values_route_carries_the_field_it_is_cited_for(
+    route: contract.Route,
+) -> None:
+    """The help names a field; the listing it points at must have that field."""
+    for name in route.filters:
+        lookup = contract.values_route(route, name)
+        if lookup is None:
+            continue
+        field = contract.values_field(name)
+        assert field in _row_properties(lookup.path), (
+            f"{route.path} --{name} cites {lookup.path} rows for {field}, "
+            "which they do not carry"
+        )
+
+
+def test_values_field_joins_snake_case_words() -> None:
+    """Multi-word filters take the API's camelCase spelling."""
+    assert contract.values_field("feature_class") == "featureClassId"
