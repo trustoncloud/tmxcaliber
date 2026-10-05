@@ -124,28 +124,10 @@
               "null"
             ],
             "x-defined-by": "this-api"
-          },
-          "group": {
-            "description": "The framework's family, such as NIST. Null for scf.",
-            "type": [
-              "string",
-              "null"
-            ],
-            "x-defined-by": "this-api"
-          },
-          "name": {
-            "description": "The framework's name within its family, such as 800-53 (rev5). Null for scf.",
-            "type": [
-              "string",
-              "null"
-            ],
-            "x-defined-by": "this-api"
           }
         },
         "required": [
-          "frameworkId",
-          "group",
-          "name"
+          "frameworkId"
         ],
         "type": "object"
       },
