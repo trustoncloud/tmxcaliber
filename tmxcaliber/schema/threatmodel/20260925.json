@@ -569,9 +569,7 @@
 								"mitigate",
 								"feature_class",
 								"weighted_priority",
-								"weighted_priority_score",
-								"queryable_objective_id",
-								"queryable_id"
+								"weighted_priority_score"
 							]
 						},
 						{
@@ -640,7 +638,6 @@
 								"iam_permission",
 								"event_name",
 								"stage",
-								"action_id_int",
 								"retired"
 							]
 						},

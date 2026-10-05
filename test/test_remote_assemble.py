@@ -46,7 +46,14 @@ DETAIL = {
     },
 }
 
-#: One row per section, carrying exactly what the canonical schema requires.
+#: One row per section, carrying exactly what the API publishes.
+#:
+#: **Trimmed to the API's declared projection, not to the schema.** It used
+#: to carry `queryable_id`, `queryable_objective_id` and `action_id_int`,
+#: which the API does not publish because they are the entity id's number
+#: in another encoding. Those three in the fixture hid the fact that the
+#: assembler demanded fields no real response carries, so every live
+#: control would have been rejected.
 #:
 #: Shaped from the published aws-s3 document rather than invented, because a
 #: fixture that satisfies a weaker shape than the real corpus would let the
@@ -93,8 +100,6 @@ PARTS: dict[str, list[dict[str, Any]]] = {
             "feature_class": ["S3.FC1"],
             "weighted_priority": "High",
             "weighted_priority_score": 3,
-            "queryable_objective_id": 1,
-            "queryable_id": 1,
         }
     ],
     "actions": [
@@ -108,7 +113,6 @@ PARTS: dict[str, list[dict[str, Any]]] = {
             "iam_permission": "s3:AbortMultipartUpload",
             "event_name": "Data-AWS::S3::Object-AbortMultipartUpload",
             "stage": "ga",
-            "action_id_int": 1,
             "retired": False,
         }
     ],
