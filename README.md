@@ -180,7 +180,7 @@ tmxcaliber threatmodels threats aws-s3 --feature-class S3.FC1
 tmxcaliber threatmodels dfd aws-s3
 tmxcaliber subscriptions list
 tmxcaliber compliance frameworks list
-tmxcaliber compliance mappings list --framework "NIST CSF v2.0"
+tmxcaliber compliance mappings list --framework v800_53
 tmxcaliber ccr packs list
 ```
 
