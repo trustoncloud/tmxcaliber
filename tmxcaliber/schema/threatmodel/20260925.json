@@ -352,8 +352,7 @@
 							"description": "Status of the threat, e.g., false"
 						},
 						"cvss_severity": {
-							"type": "string",
-							"description": "CVSS severity rating, e.g., 'Low', 'Medium'"
+							"$ref": "#/definitions/severityRating"
 						},
 						"cvss_score": {
 							"type": "number",
@@ -496,23 +495,18 @@
 										"description": "Priority of the threat mitigation"
 									},
 									"max_dependency": {
-										"type": "number",
-										"description": "Maximum dependency for the threat"
+										"type": [
+											"number",
+											"null"
+										],
+										"description": "Maximum dependency for the threat, or null when there is none."
 									},
 									"priority_overall": {
 										"type": "number",
 										"description": "Overall priority of the threat mitigation"
 									},
 									"cvss": {
-										"type": "string",
-										"description": "CVSS severity rating for the threat",
-										"enum": [
-											"Very High",
-											"High",
-											"Medium",
-											"Low",
-											"Very Low"
-										]
+										"$ref": "#/definitions/severityRating"
 									}
 								},
 								"required": [
@@ -679,7 +673,7 @@
 			"properties": {
 				"OPTIONAL": {
 					"description": "Optional permissions that may be required.",
-					"oneOf": [
+					"anyOf": [
 						{
 							"type": "string"
 						},
@@ -688,6 +682,12 @@
 							"items": {
 								"$ref": "#/definitions/accessDetailsItem"
 							}
+						},
+						{
+							"$ref": "#/definitions/accessDetails"
+						},
+						{
+							"$ref": "#/definitions/accessCondition"
 						}
 					]
 				},
@@ -706,8 +706,18 @@
 					}
 				},
 				"UNIQUE": {
-					"type": "string",
-					"description": "A single, unique permission that is required."
+					"description": "A unique permission, or a list of them, that is required.",
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "array",
+							"items": {
+								"$ref": "#/definitions/accessDetailsItem"
+							}
+						}
+					]
 				}
 			},
 			"additionalProperties": false
@@ -825,6 +835,25 @@
 				"retired"
 			],
 			"additionalProperties": false
+		},
+		"accessCondition": {
+			"type": "object",
+			"description": "A permission mapped to the condition under which it is required, for example {\"API:CreateDeployment\": \"if not autodeploy on HTTP API\"}.",
+			"minProperties": 1,
+			"additionalProperties": {
+				"type": "string"
+			}
+		},
+		"severityRating": {
+			"type": "string",
+			"description": "A qualitative severity rating on TrustOnCloud's scale. The scale is CVSS-like but is TrustOnCloud's own classification: it tops out at 'Very High' and has no 'Critical' rating. Defined once here because the control and threat sections both carry it.",
+			"enum": [
+				"Very High",
+				"High",
+				"Medium",
+				"Low",
+				"Very Low"
+			]
 		}
 	}
 }
