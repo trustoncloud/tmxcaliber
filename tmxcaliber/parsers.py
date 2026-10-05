@@ -15,6 +15,7 @@ from .lib.filter import (
     IDS_INPUT_SEPARATOR,
     PERMISSIONS_INPUT_SEPARATOR,
 )
+from .lib.remote.ref import is_remote_ref
 from .lib.scf import get_supported_scf
 from .params import GUARDDUTY_PATTERN_NAME, IMG_DIR, XML_DIR, ListOperation, Operation
 
@@ -298,6 +299,45 @@ def valid_csv_path(file_path: str) -> str:
     return file_path
 
 
+def is_file_or_ref(path: str) -> str:
+    """Accept a file, or a ThreatModel reference to fetch.
+
+    **Disk wins.** Anything that exists is a path, so no existing invocation
+    changes meaning. Only a value that is not on disk is considered as a
+    reference, and anything that is neither falls through to `is_file`, which
+    produces exactly the message it always did.
+
+    Args:
+        path: The source as the caller typed it.
+
+    Returns:
+        The value, unchanged.
+
+    Raises:
+        ArgumentTypeError: If it is neither a usable file nor a reference.
+    """
+    if not os.path.exists(path) and is_remote_ref(path):
+        return path
+    return is_file(path)
+
+
+def is_file_or_dir_or_ref(path: str) -> str:
+    """Accept a file, a directory, or a ThreatModel reference to fetch.
+
+    Args:
+        path: The source as the caller typed it.
+
+    Returns:
+        The value, unchanged.
+
+    Raises:
+        ArgumentTypeError: If it is none of the three.
+    """
+    if not os.path.exists(path) and is_remote_ref(path):
+        return path
+    return is_file_or_dir(path)
+
+
 def is_file(path: str) -> str:
     if not os.path.exists(path):
         raise ArgumentTypeError(f"The path {path} does not exist.")
@@ -450,7 +490,7 @@ def add_source_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "source",
-            type=is_file,
+            type=is_file_or_ref,
             help=(
                 "path to the ThreatModel JSON file. We support XML file for "
                 "internal purposes on some operations."
@@ -462,7 +502,7 @@ def add_source_new_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "new_source",
-            type=is_file,
+            type=is_file_or_ref,
             help="path to the newer ThreatModel JSON file.",
         )
 
@@ -471,7 +511,7 @@ def add_source_old_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "old_source",
-            type=is_file,
+            type=is_file_or_ref,
             help="path to the older ThreatModel JSON file.",
         )
 
@@ -480,7 +520,7 @@ def add_source_json_or_dir_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "source",
-            type=is_file_or_dir,
+            type=is_file_or_dir_or_ref,
             help=(
                 "Path to the ThreatModel JSON file or directory containing "
                 "ThreatModel JSON files."

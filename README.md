@@ -100,6 +100,99 @@ docker run --rm -it tmxcaliber -h
 
 The `generate` command depends on `drawio`. If the binary is not automatically detected, provide it explicitly with `--bin`.
 
+## Working against the TrustOnCloud API
+
+If your organization subscribes to TrustOnCloud, `tmxcaliber` can read your
+entitled ThreatModels directly instead of working from files you downloaded.
+
+### Set a key
+
+Create a key in the app under Settings, Service API keys, then:
+
+```sh
+tmxcaliber init
+```
+
+It asks for the key without echoing it, stores it in
+`~/.trustoncloud/credentials` readable only by you, and then calls the API to
+confirm it works and tell you which tenant it belongs to. Run it again any
+time to see what is currently set, or to change the endpoint.
+
+In CI, where there is no terminal to prompt, pipe the key in:
+
+```sh
+echo "$TOC_API_KEY" | tmxcaliber init
+```
+
+A one-off override needs no file at all:
+
+```sh
+export TOC_API_KEY=toc-tak1-...
+```
+
+`TOC_API_URL` overrides the endpoint if TrustOnCloud has given you a
+different one to use. It defaults to `https://api.trustoncloud.com`.
+
+The environment wins over the file, which is also why there are no profiles:
+one stored key, and an environment variable for the "a different one, right
+now" case.
+
+The key is a TrustOnCloud credential rather than a tmxcaliber one, which is
+why it is named and stored this way: the same key works with `curl` or any
+other client. There is deliberately no `--api-key` flag, so the secret never
+lands in your shell history or a CI log.
+
+**Two prerequisites that are easy to miss.** Your organization must have IP
+filtering configured, and the address you run from has to be on the allow
+list: an empty list denies everything, and an IPv6 caller is refused
+whatever the list says. Until the API is enabled for your organization,
+every route answers `404`, including `tmxcaliber me`, so "not found" can
+mean "not enabled" rather than "does not exist".
+
+### Use a ThreatModel without downloading it
+
+Anywhere a command takes a file, it also takes a ThreatModel id, optionally
+pinned to a release:
+
+```sh
+tmxcaliber list threats aws-s3
+tmxcaliber filter aws-s3 --severity high --output filtered.json
+tmxcaliber generate aws-s3
+tmxcaliber create-change-log aws-s3@1700000000 aws-s3@1611187200
+```
+
+A value that exists on disk is always treated as a path, so nothing you run
+today changes meaning. Fetched documents are cached under
+`~/.tmxcaliber/cache`; set `TMXCALIBER_CACHE_DIR` to move it.
+
+That last example is worth noticing: comparing two released versions of the
+same model needs no local copies of either.
+
+### Call the API directly
+
+The commands mirror the API's own routes, so the published reference and
+the CLI use the same names:
+
+```sh
+tmxcaliber threatmodels list --provider aws
+tmxcaliber threatmodels get aws-s3
+tmxcaliber threatmodels threats aws-s3 --feature-class S3.FC1
+tmxcaliber threatmodels dfd aws-s3
+tmxcaliber subscriptions list
+tmxcaliber compliance mappings list --framework "NIST CSF v2.0"
+tmxcaliber ccr packs list
+```
+
+Collections are read in full; paging is handled for you. For anything these
+commands do not cover, the API takes the same key directly:
+
+```sh
+curl -H "Authorization: Bearer $TOC_API_KEY" https://api.trustoncloud.com/v1/apis
+```
+
+A document pulled with your key is licensed to your organization and carries
+its attribution. It is not a file to redistribute.
+
 ## Command Overview
 
 | Command | Purpose | Typical output |

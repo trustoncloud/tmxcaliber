@@ -194,6 +194,57 @@ def _validate(instance: object, kind: _SchemaKind) -> None:
         ) from e
 
 
+def threatmodel_required_sections() -> tuple[str, ...]:
+    """List the top-level sections a ThreatModel must carry.
+
+    Read from the schema rather than written out, so a section added or
+    removed there needs no second edit anywhere else.
+
+    Returns:
+        The required property names, in the schema's own order.
+    """
+    required = _load_schema("threatmodel").get("required", [])
+    return tuple(str(name) for name in required)
+
+
+def threatmodel_required_metadata() -> tuple[str, ...]:
+    """List the metadata fields a ThreatModel must carry.
+
+    Read from the schema for the same reason the section list is, and used
+    for the same job: deciding whether an assembled document is whole.
+
+    Returns:
+        The required metadata property names.
+    """
+    metadata = _load_schema("threatmodel").get("properties", {}).get("metadata", {})
+    return tuple(str(name) for name in metadata.get("required", []))
+
+
+def threatmodel_required_entity_fields(section: str) -> tuple[str, ...]:
+    """List the fields a live entity in one section must carry.
+
+    A retired entity is served as a stub and carries almost nothing, which
+    is why this describes the live shape only. The schema states both as a
+    `oneOf`; this reads the first branch.
+
+    Args:
+        section: ``threats``, ``controls`` or ``actions``.
+
+    Returns:
+        The required property names, empty when the section has no such
+        rule.
+    """
+    properties = _load_schema("threatmodel").get("properties", {})
+    patterns = properties.get(section, {}).get("patternProperties", {})
+    for rule in patterns.values():
+        branches = rule.get("oneOf")
+        required = (
+            branches[0].get("required", []) if branches else rule.get("required", [])
+        )
+        return tuple(str(name) for name in required)
+    return ()
+
+
 def validate_threatmodel_schema(
     instance: object,
     schema_pointer: str | None = None,
