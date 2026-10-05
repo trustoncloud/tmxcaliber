@@ -20,6 +20,9 @@ from .lib.control_selector import resolve_control_ids
 from .lib.errors import BinaryNotFound, FeatureClassCycleError
 from .lib.filter import Filter
 from .lib.filter_applier import FilterApplier
+from .lib.remote.errors import RemoteError
+from .lib.remote.ref import is_remote_ref
+from .lib.remote.resolve import resolve_source
 from .lib.scf import get_scf_data
 from .lib.threatmodel_data import (
     ThreatModelData,
@@ -36,6 +39,13 @@ from .params import (
     XML_DIR,
     ListOperation,
     Operation,
+)
+from .remote_cli import (
+    add_api_parsers,
+    add_init_parser,
+    run_api_command,
+    run_init,
+    selected_route,
 )
 
 JsonDict = dict[str, Any]
@@ -69,6 +79,11 @@ def get_params() -> Namespace:
     parsers.add_gen_parser(subparsers)
     parsers.add_list_parser(subparsers)
     parsers.add_changelog_parser(subparsers)
+    # Built from the route contract rather than written out here, so the API
+    # surface and the CLI cannot drift apart.
+    add_api_parsers(subparsers)
+    # The one command with no route behind it; see add_init_parser.
+    add_init_parser(subparsers)
 
     return validate(parser)
 
@@ -179,8 +194,12 @@ def validate(parser: ArgumentParser) -> Namespace:
             ids=getattr(args, "ids", ""),
         )
     elif args.operation == Operation.generate:
+        # A reference names no file, so the suffix check cannot speak for it.
+        # This runs at parse time, before the document is fetched, so without
+        # the exemption the documented `tmxcaliber generate aws-s3` exits 2.
         if (
             isinstance(args.source, str)
+            and not is_remote_ref(args.source)
             and not args.source.endswith("_DFD.xml")
             and not args.source.endswith(".json")
         ):
@@ -356,7 +375,7 @@ def get_recursive_json_file_paths(source: str) -> list[str]:
 def get_service_rows(source: str) -> list[dict[str, str]]:
     service_rows: list[dict[str, str]] = []
 
-    for json_file_path in get_recursive_json_file_paths(source):
+    for json_file_path in get_recursive_json_file_paths(resolve_source(source)):
         data = load_json_data(json_file_path)
         metadata_block = data.get("metadata", {})
         if not isinstance(metadata_block, dict):
@@ -385,7 +404,7 @@ def get_service_rows(source: str) -> list[dict[str, str]]:
 
 
 def get_feature_class_rows(source: str) -> list[dict[str, str]]:
-    data = load_json_data(source)
+    data = load_json_data(resolve_source(source))
     feature_classes = data.get("feature_classes", {})
     if not isinstance(feature_classes, dict):
         return []
@@ -426,6 +445,10 @@ def get_input_data(
 
     all_data: dict[str, list[ThreatModelData] | str] = {}
     for key, source in all_sources.items():
+        # A reference becomes a cached path here; a path is handed back
+        # unchanged, so every existing invocation reaches the same code it
+        # always did.
+        source = resolve_source(source)
         if not os.path.exists(source):
             print(f"File or directory not found: {source}")
             sys.exit(1)
@@ -534,7 +557,29 @@ def output_result(
 
 
 def main() -> None:
+    """Run the CLI, reporting an API failure as a message rather than a trace.
+
+    The wrapper exists because nothing here caught anything before. A failed
+    call would surface as a raw traceback, and a urllib traceback carries the
+    Request object, which carries the Authorization header.
+    """
+    try:
+        _run()
+    except RemoteError as exc:
+        print(Fore.RED + str(exc) + Fore.RESET)
+        sys.exit(1)
+
+
+def _run() -> None:
     params = get_params()
+    if getattr(params, "api_init", False):
+        # Non-zero when the stored key did not answer, so a CI setup step
+        # that cannot work does not look like one that did.
+        sys.exit(run_init(params))
+    if selected_route(params) is not None:
+        result, result_type = run_api_command(params)
+        output_result(params.output, result, result_type)
+        return
     if (
         params.operation == Operation.list
         and params.list_type == ListOperation.services
@@ -622,7 +667,19 @@ def main() -> None:
         new_model = new_tm_data[0]
         FilterApplier(params.filter_obj, params.exclude).apply_filter(old_model)
         FilterApplier(params.filter_obj, params.exclude).apply_filter(new_model)
-        change_log = generate_change_log(old_model.get_json(), new_model.get_json())
+        # `generate_change_log` reads `metadata.release` and parses it as an
+        # integer, which every published ThreatModel satisfies because a
+        # release key is an epoch. A document that does not, whether it came
+        # from disk or was assembled from the API, otherwise surfaced as a
+        # bare KeyError or ValueError with no indication of which file or
+        # which field was at fault.
+        try:
+            change_log = generate_change_log(old_model.get_json(), new_model.get_json())
+        except (KeyError, ValueError) as exc:
+            raise SystemExit(
+                "Cannot compare these ThreatModels: each needs a numeric "
+                f"metadata.release and one of them does not have one ({exc})."
+            ) from None
         if params.format == "json":
             output_result(params.output, change_log.get_json(), "json")
         elif params.format == "md":

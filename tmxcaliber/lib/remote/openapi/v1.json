@@ -1,0 +1,2492 @@
+{
+  "components": {
+    "schemas": {
+      "ApisRow": {
+        "properties": {
+          "definitionUrl": {
+            "description": "Absolute URL of this definition's OpenAPI document.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "documentationUrl": {
+            "description": "Absolute URL of the human-readable reference.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "operations": {
+            "description": "Every operation the definition serves, each with its method, path, permission, filters, paging, fields, and whether this credential may call it. A route that serves a retired entity's row in place of a live one names that row's fields in retiredFields, which is null on every other route. Embedded rather than served separately: an operation has no identity apart from the definition it belongs to.",
+            "type": [
+              "array",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "preferred": {
+            "description": "True for the version a new integration should build against.",
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "version",
+          "title",
+          "description",
+          "definitionUrl",
+          "documentationUrl",
+          "preferred",
+          "operations"
+        ],
+        "type": "object"
+      },
+      "CcrPacksRow": {
+        "properties": {
+          "releaseKey": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "ruleCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "service": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          }
+        },
+        "required": [
+          "releaseKey",
+          "service",
+          "ruleCount"
+        ],
+        "type": "object"
+      },
+      "ComplianceFrameworksRow": {
+        "properties": {
+          "frameworkId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          }
+        },
+        "required": [
+          "frameworkId"
+        ],
+        "type": "object"
+      },
+      "ComplianceMappingsRow": {
+        "properties": {
+          "controlId": {
+            "description": "The framework's control, not a TrustOnCloud control identifier.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "frameworkId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "objectiveId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "tmId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          }
+        },
+        "required": [
+          "frameworkId",
+          "controlId",
+          "tmId",
+          "objectiveId"
+        ],
+        "type": "object"
+      },
+      "Error": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requestId": {
+                "description": "Quote this when reporting a problem.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "requestId"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "Page": {
+        "description": "The collection envelope. A route with a declared projection narrows `items` to its own row schema.",
+        "properties": {
+          "items": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "description": "Absent as null on the last page. No total count is served.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pageSize": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "pageSize"
+        ],
+        "type": "object"
+      },
+      "SubscriptionsRow": {
+        "properties": {
+          "endDate": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "startDate": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "tmName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          }
+        },
+        "required": [
+          "tmName",
+          "startDate",
+          "endDate"
+        ],
+        "type": "object"
+      },
+      "ThreatmodelsProviderServiceActionsRow": {
+        "description": "A live entity's row, or a retired entity's row in its place. `retired` tells them apart.",
+        "oneOf": [
+          {
+            "properties": {
+              "actionId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "this-api"
+              },
+              "action_description": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "api": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "endpoint": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "event_name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "feature_class": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "feature_class_action_type": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "iam_permission": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "retired": {
+                "const": false,
+                "type": "boolean",
+                "x-defined-by": "canonical-schema"
+              },
+              "stage": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              }
+            },
+            "required": [
+              "actionId",
+              "action_description",
+              "api",
+              "endpoint",
+              "feature_class",
+              "feature_class_action_type",
+              "iam_permission",
+              "event_name",
+              "stage",
+              "retired"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A retired entity keeps its place in the ordering and carries only these properties. It has no feature class, so it appears only on an unfiltered page.",
+            "properties": {
+              "actionId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "this-api"
+              },
+              "retired": {
+                "const": true,
+                "type": "boolean",
+                "x-defined-by": "canonical-schema"
+              }
+            },
+            "required": [
+              "actionId",
+              "retired"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ThreatmodelsProviderServiceControlsRow": {
+        "description": "A live entity's row, or a retired entity's row in its place. `retired` tells them apart.",
+        "oneOf": [
+          {
+            "properties": {
+              "assured_by": {
+                "description": "A comma-separated string, published as it is rather than split into an array.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "controlId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "this-api"
+              },
+              "coso": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "depends_on": {
+                "description": "A comma-separated string, published as it is rather than split into an array.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "effort": {
+                "description": "One of Very High, High, Medium, Low.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "feature_class": {
+                "description": "An array of feature classes. A threat's field of the same name is a single string.",
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "mitigate": {
+                "description": "Objects carrying threat, impact, priority, max_dependency, priority_overall and cvss, where cvss is a severity enum from Very High to Very Low.",
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "nist_csf": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "objective": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "retired": {
+                "const": false,
+                "type": "boolean",
+                "x-defined-by": "canonical-schema"
+              },
+              "testing": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "weighted_priority": {
+                "description": "One of Very High, High, Medium, Low.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "weighted_priority_score": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              }
+            },
+            "required": [
+              "controlId",
+              "description",
+              "objective",
+              "feature_class",
+              "effort",
+              "testing",
+              "mitigate",
+              "assured_by",
+              "depends_on",
+              "nist_csf",
+              "coso",
+              "weighted_priority",
+              "weighted_priority_score",
+              "retired"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A retired entity keeps its place in the ordering and carries only these properties. It has no feature class, so it appears only on an unfiltered page.",
+            "properties": {
+              "controlId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "this-api"
+              },
+              "retired": {
+                "const": true,
+                "type": "boolean",
+                "x-defined-by": "canonical-schema"
+              }
+            },
+            "required": [
+              "controlId",
+              "retired"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ThreatmodelsProviderServiceThreatsRow": {
+        "description": "A live entity's row, or a retired entity's row in its place. `retired` tells them apart.",
+        "oneOf": [
+          {
+            "properties": {
+              "access": {
+                "description": "A nested boolean expression over permissions, with the keys AND, OR, OPTIONAL and UNIQUE. Not an access level.",
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "cvss": {
+                "description": "A CVSS vector string. A control's mitigate[].cvss is a severity enum instead.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "cvss_score": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "cvss_severity": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "feature_class": {
+                "description": "A single feature class. A control's field of the same name is an array.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "hlgoal": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "mitre_attack": {
+                "description": "One MITRE ATT&CK tactic id, such as TA0040. Not a list of mappings.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "canonical-schema"
+              },
+              "retired": {
+                "const": false,
+                "type": "boolean",
+                "x-defined-by": "canonical-schema"
+              },
+              "threatId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "this-api"
+              }
+            },
+            "required": [
+              "threatId",
+              "name",
+              "description",
+              "feature_class",
+              "hlgoal",
+              "mitre_attack",
+              "cvss",
+              "cvss_severity",
+              "cvss_score",
+              "access",
+              "retired"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A retired entity keeps its place in the ordering and carries only these properties. It has no feature class, so it appears only on an unfiltered page.",
+            "properties": {
+              "retired": {
+                "const": true,
+                "type": "boolean",
+                "x-defined-by": "canonical-schema"
+              },
+              "threatId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "this-api"
+              }
+            },
+            "required": [
+              "threatId",
+              "retired"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ThreatmodelsRow": {
+        "properties": {
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "service": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "tmId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          }
+        },
+        "required": [
+          "tmId",
+          "title",
+          "provider",
+          "service",
+          "version"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "apiKey": {
+        "description": "A tenant API key, in `Authorization: Bearer`. Never a query parameter: that writes the credential into access logs.",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Read access to the ThreatModel data your tenant is entitled to. Every route is read-only, authenticated with a tenant API key, and additionally restricted to your tenant's allowed IP ranges.",
+    "title": "TrustOnCloud API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/apis": {
+      "get": {
+        "operationId": "apis",
+        "parameters": [
+          {
+            "description": "Defaults to 50, capped at 50.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "An opaque cursor from a previous page's `nextCursor`. Bound to the tenant, the route, the filter arguments and the credential, so it is not valid on another collection or for another caller.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/ApisRow"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "One page. Ordered by id."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A malformed `limit`, a cursor not valid for this request, or a parameter this operation does not accept."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is valid and the source address is not in the tenant's allowed ranges."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "Every API definition this platform publishes, and what this credential may call."
+      }
+    },
+    "/v1/apis/openapi.json": {
+      "get": {
+        "operationId": "apisOpenapijson",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The resource."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A query parameter was supplied. This operation accepts none."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is valid and the source address is not in the tenant's allowed ranges."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "This document."
+      }
+    },
+    "/v1/ccr/packs": {
+      "get": {
+        "operationId": "ccrPacks",
+        "parameters": [
+          {
+            "description": "Defaults to 100, capped at 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "An opaque cursor from a previous page's `nextCursor`. Bound to the tenant, the route, the filter arguments and the credential, so it is not valid on another collection or for another caller.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/CcrPacksRow"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "One page. Ordered by releaseKey."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A malformed `limit`, a cursor not valid for this request, or a parameter this operation does not accept."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "Wiz Custom Configuration Rule packs.",
+        "x-required-permission": "api.ccr.read"
+      }
+    },
+    "/v1/ccr/packs/{releaseKey}": {
+      "get": {
+        "operationId": "ccrPacksReleaseKey",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "releaseKey",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The resource."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A query parameter was supplied. This operation accepts none."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "One CCR pack.",
+        "x-required-permission": "api.ccr.read"
+      }
+    },
+    "/v1/compliance/frameworks": {
+      "get": {
+        "operationId": "complianceFrameworks",
+        "parameters": [
+          {
+            "description": "Defaults to 200, capped at 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "An opaque cursor from a previous page's `nextCursor`. Bound to the tenant, the route, the filter arguments and the credential, so it is not valid on another collection or for another caller.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/ComplianceFrameworksRow"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "One page. Ordered by frameworkId."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A malformed `limit`, a cursor not valid for this request, or a parameter this operation does not accept."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "Compliance frameworks.",
+        "x-required-permission": "api.compliance.read"
+      }
+    },
+    "/v1/compliance/mappings": {
+      "get": {
+        "operationId": "complianceMappings",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "framework",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "service",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Defaults to 100, capped at 500.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "An opaque cursor from a previous page's `nextCursor`. Bound to the tenant, the route, the filter arguments and the credential, so it is not valid on another collection or for another caller.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/ComplianceMappingsRow"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "One page. Ordered by frameworkId, controlId, tmId, objectiveId."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A malformed `limit`, a cursor not valid for this request, a required filter left out, or a parameter this operation does not accept."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "Framework controls mapped to ThreatModel objectives.",
+        "x-required-permission": "api.compliance.read"
+      }
+    },
+    "/v1/me": {
+      "get": {
+        "operationId": "me",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The resource."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A query parameter was supplied. This operation accepts none."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The credential is valid and the source address is not in the tenant's allowed ranges."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "The calling credential: its tenant, and what it may do."
+      }
+    },
+    "/v1/subscriptions": {
+      "get": {
+        "operationId": "subscriptions",
+        "parameters": [
+          {
+            "description": "Defaults to 200, capped at 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "An opaque cursor from a previous page's `nextCursor`. Bound to the tenant, the route, the filter arguments and the credential, so it is not valid on another collection or for another caller.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "asOf": {
+                          "description": "When the platform asked for this tenant's entitlement, in UTC, and the rows on the page are exactly that answer. It is the time of the question, not of any change the rows reflect. Entitlement is cached briefly, so this can be earlier than the request.",
+                          "format": "date-time",
+                          "type": "string",
+                          "x-defined-by": "this-api"
+                        },
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/SubscriptionsRow"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "asOf"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "One page. Ordered by tmName."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A malformed `limit`, a cursor not valid for this request, or a parameter this operation does not accept."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "What this tenant is entitled to, and until when.",
+        "x-required-permission": "api.subscriptions.read"
+      }
+    },
+    "/v1/threatmodels": {
+      "get": {
+        "operationId": "threatmodels",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Defaults to 50, capped at 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "An opaque cursor from a previous page's `nextCursor`. Bound to the tenant, the route, the filter arguments and the credential, so it is not valid on another collection or for another caller.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/ThreatmodelsRow"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "One page. Ordered by tmId."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A malformed `limit`, a cursor not valid for this request, or a parameter this operation does not accept."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "ThreatModels this tenant is entitled to.",
+        "x-required-permission": "api.threatmodels.read"
+      }
+    },
+    "/v1/threatmodels/{provider}/{service}": {
+      "get": {
+        "operationId": "threatmodelsProviderService",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "release",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The resource."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A parameter this operation does not accept."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "One ThreatModel.",
+        "x-required-permission": "api.threatmodels.read"
+      }
+    },
+    "/v1/threatmodels/{provider}/{service}/actions": {
+      "get": {
+        "operationId": "threatmodelsProviderServiceActions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "feature_class",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "release",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Defaults to 100, capped at 500.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "An opaque cursor from a previous page's `nextCursor`. Bound to the tenant, the route, the filter arguments and the credential, so it is not valid on another collection or for another caller.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/ThreatmodelsProviderServiceActionsRow"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "One page. Ordered by actionId."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A malformed `limit`, a cursor not valid for this request, or a parameter this operation does not accept."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "A ThreatModel's actions.",
+        "x-required-permission": "api.threatmodels.read"
+      }
+    },
+    "/v1/threatmodels/{provider}/{service}/controls": {
+      "get": {
+        "operationId": "threatmodelsProviderServiceControls",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "feature_class",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "release",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Defaults to 100, capped at 500.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "An opaque cursor from a previous page's `nextCursor`. Bound to the tenant, the route, the filter arguments and the credential, so it is not valid on another collection or for another caller.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/ThreatmodelsProviderServiceControlsRow"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "One page. Ordered by controlId."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A malformed `limit`, a cursor not valid for this request, or a parameter this operation does not accept."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "A ThreatModel's controls.",
+        "x-required-permission": "api.threatmodels.read"
+      }
+    },
+    "/v1/threatmodels/{provider}/{service}/dfd": {
+      "get": {
+        "operationId": "threatmodelsProviderServiceDfd",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "release",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The resource."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A parameter this operation does not accept."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "A ThreatModel's data flow diagram.",
+        "x-required-permission": "api.threatmodels.read"
+      }
+    },
+    "/v1/threatmodels/{provider}/{service}/threats": {
+      "get": {
+        "operationId": "threatmodelsProviderServiceThreats",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "feature_class",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "release",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Defaults to 100, capped at 500.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "An opaque cursor from a previous page's `nextCursor`. Bound to the tenant, the route, the filter arguments and the credential, so it is not valid on another collection or for another caller.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/ThreatmodelsProviderServiceThreatsRow"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "One page. Ordered by threatId."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A malformed `limit`, a cursor not valid for this request, or a parameter this operation does not accept."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "A ThreatModel's threats.",
+        "x-required-permission": "api.threatmodels.read"
+      }
+    }
+  },
+  "security": [
+    {
+      "apiKey": []
+    }
+  ]
+}
