@@ -12,7 +12,7 @@ The shape mirrors the API:
     tmxcaliber threatmodels get aws-s3
     tmxcaliber threatmodels threats aws-s3 --feature-class S3.FC1
     tmxcaliber threatmodels dfd aws-s3@1611187200
-    tmxcaliber compliance mappings list --framework v800_53
+    tmxcaliber compliance mappings list --framework nist-800-53-r5
 """
 
 from __future__ import annotations
