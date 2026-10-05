@@ -261,6 +261,56 @@ def required_parameters(path: str) -> frozenset[str]:
     return frozenset(names)
 
 
+def values_route(route: Route, filter_name: str) -> Route | None:
+    """Find the route that lists the values one of a route's filters accepts.
+
+    Derived by the same kind of mechanical rule as the command names: the
+    paged sibling collection named for the filter's plural. ``framework`` on
+    ``/v1/compliance/mappings`` is answered by ``/v1/compliance/frameworks``,
+    whose rows carry a ``frameworkId``.
+
+    Args:
+        route: The route whose filter is being described.
+        filter_name: The query parameter, as the API spells it.
+
+    Returns:
+        The listing route, or None when the API publishes no such list.
+    """
+    parent = route.path.rsplit("/", 1)[0]
+    candidate = route_for_path(f"{parent}/{filter_name}s")
+    if candidate is None or not candidate.paged or candidate is route:
+        return None
+    return candidate
+
+
+def values_field(filter_name: str) -> str:
+    """Name the row field of a values route that a filter takes.
+
+    Args:
+        filter_name: The query parameter, as the API spells it.
+
+    Returns:
+        The field, in the API's camelCase (``framework`` -> ``frameworkId``).
+    """
+    head, *rest = filter_name.split("_")
+    return head + "".join(word.title() for word in rest) + "Id"
+
+
+def route_for_path(path: str) -> Route | None:
+    """Find the route bound to a path template.
+
+    Args:
+        path: The OpenAPI path template.
+
+    Returns:
+        The route, or None when no route binds that path.
+    """
+    for route in ROUTES:
+        if route.path == path:
+            return route
+    return None
+
+
 def query_parameters(path: str) -> frozenset[str]:
     """List a route's query parameters as the contract declares them.
 

@@ -38,7 +38,13 @@ from .lib.remote.config import (
     settings_for,
     write_credentials,
 )
-from .lib.remote.contract import ROUTES, Route, required_parameters
+from .lib.remote.contract import (
+    ROUTES,
+    Route,
+    required_parameters,
+    values_field,
+    values_route,
+)
 from .lib.remote.errors import ConfigurationError, RemoteError
 from .lib.remote.ref import parse_ref
 
@@ -70,6 +76,47 @@ def _option(filter_name: str) -> str:
     return f"--{filter_name.replace('_', '-')}"
 
 
+def _filter_help(route: Route, name: str, *, required: bool) -> str:
+    """Describe one query parameter for a command's help.
+
+    Args:
+        route: The route the command reaches.
+        name: The parameter, as the API spells it.
+        required: Whether the route refuses to answer without it.
+
+    Returns:
+        The help text, naming the command that lists the accepted values when
+        the API publishes one.
+    """
+    words = name.replace("_", " ")
+    text = f"the {words} to read." if required else f"filter by {words}."
+    lookup = values_route(route, name)
+    if lookup is not None:
+        text += (
+            f" Takes a {values_field(name)} as "
+            f"`tmxcaliber {' '.join(lookup.command)}` reports it."
+        )
+    return text
+
+
+def _summary(route: Route) -> str:
+    """Render a command's one-line help, naming what it cannot run without.
+
+    The parent's help is the first screen a caller sees, so a required option
+    shown only one level down meant the obvious next command failed.
+
+    Args:
+        route: The route the command reaches.
+
+    Returns:
+        The summary, with its required options appended.
+    """
+    needed = sorted(required_parameters(route.path) & set(route.filters))
+    if not needed:
+        return route.summary
+    return f"{route.summary} Requires {', '.join(_option(n) for n in needed)}."
+
+
 def _leaf(parser: ArgumentParser, route: Route) -> None:
     """Add one route's arguments to its parser.
 
@@ -81,13 +128,17 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
         metavar, help_text = POSITIONALS[route.positional]
         parser.add_argument(route.positional, metavar=metavar, help=help_text)
     required = required_parameters(route.path)
+    # argparse files every option under "options" whether or not it is
+    # required, which made a mandatory --framework read as an optional filter.
+    required_group = parser.add_argument_group("required arguments")
     for name in route.filters:
-        parser.add_argument(
+        target = required_group if name in required else parser
+        target.add_argument(
             _option(name),
             dest=name,
             default="",
             required=name in required,
-            help=f"filter by {name.replace('_', ' ')}.",
+            help=_filter_help(route, name, required=name in required),
         )
     if route.paged:
         parser.add_argument(
@@ -129,7 +180,9 @@ def add_api_parsers(subparsers: _SubParsersAction[ArgumentParser]) -> None:
                     dest=LEVEL_DEST.format(depth=depth + 1), required=True
                 )
             parent = groups[prefix]
-        leaf = parent.add_parser(route.command[-1], help=route.summary)
+        leaf = parent.add_parser(
+            route.command[-1], help=_summary(route), description=_summary(route)
+        )
         _leaf(leaf, route)
 
 
