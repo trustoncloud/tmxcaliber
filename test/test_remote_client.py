@@ -291,6 +291,29 @@ def test_a_pages_other_fields_are_handed_back() -> None:
     assert envelope == {"unresolvedTmIds": ["aws-s3"]}
 
 
+@pytest.mark.parametrize(
+    "page",
+    [
+        {"items": [], "nextCursor": None, "pageSize": 0},
+        {"items": [], "nextCursor": None, "pageSize": 0, "unresolvedTmIds": "aws-s3"},
+    ],
+    ids=["absent", "mistyped"],
+)
+def test_a_page_without_a_required_field_is_a_contract_violation(
+    page: dict[str, Any],
+) -> None:
+    # Absent is not empty: a mappings page without unresolvedTmIds would
+    # otherwise pass for one with nothing missing.
+    client = TocClient(settings(), opener=FakeOpener([FakeResponse(page)]))
+
+    with pytest.raises(errors.ContractViolation):
+        list(
+            client.paginate(
+                "/v1/compliance/mappings", required={"unresolvedTmIds": (list,)}
+            )
+        )
+
+
 def test_a_repeated_cursor_is_a_contract_violation() -> None:
     # Otherwise the walk never ends, and it spends the caller's hourly budget
     # doing it.

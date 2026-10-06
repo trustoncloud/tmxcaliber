@@ -141,3 +141,27 @@ def test_every_values_route_carries_the_field_it_is_cited_for(
 def test_values_field_joins_snake_case_words() -> None:
     """Multi-word filters take the API's camelCase spelling."""
     assert contract.values_field("feature_class") == "featureClassId"
+
+
+def test_the_mappings_route_requires_its_completeness_field() -> None:
+    """The compliance mappings page must say which ThreatModels it could not resolve."""
+    assert contract.required_page_fields("/v1/compliance/mappings") == {
+        "unresolvedTmIds": (list,)
+    }
+
+
+def test_every_incompleteness_field_is_required_by_some_route() -> None:
+    """A name the CLI watches for must be one the contract actually requires."""
+    from tmxcaliber.remote_cli import INCOMPLETENESS_FIELDS
+
+    required = {
+        name
+        for route in contract.ROUTES
+        for name in contract.required_page_fields(route.path)
+    }
+    assert set(INCOMPLETENESS_FIELDS) <= required
+
+
+def test_paging_fields_come_from_the_page_schema() -> None:
+    """The client walks by these, so they are read from the contract, not restated."""
+    assert contract.paging_fields() == {"items", "nextCursor", "pageSize"}

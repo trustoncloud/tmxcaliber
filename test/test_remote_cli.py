@@ -26,6 +26,8 @@ class StubClient:
         self.calls: list[tuple[str, dict[str, str]]] = []
         # What the stub's collections say beyond their rows.
         self.envelope_fields: dict[str, Any] = {}
+        # The fields the last walk was told every page must carry.
+        self.required: dict[str, tuple[type, ...]] = {}
 
     key: str = "KEYONE"
 
@@ -74,6 +76,7 @@ class StubClient:
         *,
         page_size: int = 0,
         envelope: dict[str, Any] | None = None,
+        required: Mapping[str, tuple[type, ...]] | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Answer a collection call.
 
@@ -82,11 +85,13 @@ class StubClient:
             params: The query.
             page_size: Ignored.
             envelope: Filled with ``envelope_fields``.
+            required: Recorded, for the caller to assert on.
 
         Yields:
             Fixture rows.
         """
         self.calls.append((path, dict(params or {})))
+        self.required = dict(required or {})
         if envelope is not None:
             envelope.update(self.envelope_fields)
         section = path.rsplit("/", 1)[-1]
@@ -178,6 +183,107 @@ def test_what_a_collection_says_beyond_its_rows_reaches_stderr(
     err = capsys.readouterr().err
     assert 'unresolvedTmIds: ["aws-s3"]' in err
     assert "empty" not in err
+
+
+def test_unresolved_threatmodels_mark_the_answer_incomplete() -> None:
+    route = route_for(("compliance", "mappings", "list"))
+    assert route is not None
+    client = StubClient()
+    client.envelope_fields = {"unresolvedTmIds": ["aws-s3"]}
+    params = Namespace(api_route=route, framework="nist-800-53-r5", service="", limit=0)
+    incomplete: list[str] = []
+
+    run_api_command(params, client=client, incomplete=incomplete)  # type: ignore[arg-type]
+
+    assert incomplete == ['unresolvedTmIds: ["aws-s3"]']
+    # The walk is held to the fields the contract makes required.
+    assert client.required == {"unresolvedTmIds": (list,)}
+
+
+def test_an_empty_unresolved_list_is_a_complete_answer() -> None:
+    route = route_for(("compliance", "mappings", "list"))
+    assert route is not None
+    client = StubClient()
+    client.envelope_fields = {"unresolvedTmIds": []}
+    params = Namespace(api_route=route, framework="nist-800-53-r5", service="", limit=0)
+    incomplete: list[str] = []
+
+    run_api_command(params, client=client, incomplete=incomplete)  # type: ignore[arg-type]
+
+    assert incomplete == []
+
+
+def _run_cli(
+    monkeypatch: pytest.MonkeyPatch, argv: list[str], reported: list[str]
+) -> int:
+    """Run the CLI over a stubbed API command that reports `reported`.
+
+    Args:
+        monkeypatch: Replaces argv and the command runner.
+        argv: The words after the program name.
+        reported: The incompleteness lines the stub reports.
+
+    Returns:
+        The exit status.
+    """
+
+    def fake_run(_params: Namespace, *, incomplete: list[str]) -> tuple[Any, str]:
+        incomplete.extend(reported)
+        return [{"frameworkId": "nist-800-53-r5"}], "json"
+
+    monkeypatch.setattr(cli_module, "run_api_command", fake_run)
+    monkeypatch.setattr(sys, "argv", ["tmxcaliber", *argv])
+    with pytest.raises(SystemExit) as caught:
+        cli_module._run()
+        raise SystemExit(0)
+    return int(caught.value.code or 0)
+
+
+def test_an_incomplete_answer_is_written_and_exits_three(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: pathlib.Path,
+) -> None:
+    # Written first, so what the API did answer is kept; the status is what a
+    # script sees.
+    out = tmp_path / "mappings.json"
+    argv = ["compliance", "mappings", "list", "--framework", "x", "--output", str(out)]
+
+    status = _run_cli(monkeypatch, argv, ['unresolvedTmIds: ["aws-s3"]'])
+
+    assert status == 3
+    assert json.loads(out.read_text())[0]["frameworkId"] == "nist-800-53-r5"
+    assert "--allow-incomplete" in capsys.readouterr().err
+
+
+def test_allow_incomplete_accepts_a_partial_answer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    out = tmp_path / "mappings.json"
+    argv = [
+        "compliance",
+        "mappings",
+        "list",
+        "--framework",
+        "x",
+        "--output",
+        str(out),
+        "--allow-incomplete",
+    ]
+
+    status = _run_cli(monkeypatch, argv, ['unresolvedTmIds: ["aws-s3"]'])
+
+    assert status == 0
+
+
+def test_only_a_route_that_can_be_incomplete_offers_the_option(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    mappings = _help_of(monkeypatch, capsys, ["compliance", "mappings", "list"])
+    threatmodels = _help_of(monkeypatch, capsys, ["threatmodels", "list"])
+
+    assert "--allow-incomplete" in mappings
+    assert "--allow-incomplete" not in threatmodels
 
 
 def test_an_at_release_suffix_becomes_the_query_parameter() -> None:

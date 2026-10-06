@@ -27,6 +27,7 @@ from importlib import metadata
 from typing import Any, Final
 
 from .config import Settings
+from .contract import paging_fields
 from .errors import (
     BY_CODE,
     BY_STATUS,
@@ -50,11 +51,6 @@ MAX_RETRY_AFTER: Final[float] = 60.0
 
 #: A page with a cursor that never advances is a defect, not a long read.
 MAX_PAGES: Final[int] = 1000
-
-#: The page envelope's own fields, as the contract's ``Page`` schema declares
-#: them. Anything else at a page's top level is something the route says about
-#: the whole answer, which ``paginate`` hands back through ``envelope``.
-PAGING_FIELDS: Final[frozenset[str]] = frozenset({"items", "nextCursor", "pageSize"})
 
 
 def _user_agent() -> str:
@@ -202,6 +198,39 @@ def default_opener() -> urllib.request.OpenerDirector:
         An opener that will not follow a redirect off this origin.
     """
     return urllib.request.build_opener(SameOriginRedirectHandler)
+
+
+def _check_required(
+    path: str, body: Mapping[str, Any], required: Mapping[str, tuple[type, ...]]
+) -> None:
+    """Refuse a page that lacks a field its route requires, or mistypes one.
+
+    **Absent is not the same as empty.** A compliance mapping page without
+    ``unresolvedTmIds`` would otherwise read as one with nothing missing, so an
+    answer from an older or degraded server could pass as complete.
+
+    Args:
+        path: The path, for the message.
+        body: The page.
+        required: Each required field and the types its value may have.
+
+    Raises:
+        ContractViolation: If a field is absent or of an undeclared type.
+    """
+    for name, types in required.items():
+        if name not in body:
+            raise ContractViolation(
+                f"{path} returned a page without {name}, which every page carries.",
+                code="bad_page",
+            )
+        value = body[name]
+        if not isinstance(value, types) or (
+            isinstance(value, bool) and bool not in types
+        ):
+            raise ContractViolation(
+                f"{path} returned a page whose {name} is not of its declared type.",
+                code="bad_page",
+            )
 
 
 class TocClient:
@@ -359,6 +388,7 @@ class TocClient:
         *,
         page_size: int = 0,
         envelope: dict[str, Any] | None = None,
+        required: Mapping[str, tuple[type, ...]] | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Walk a collection, yielding rows.
 
@@ -378,13 +408,16 @@ class TocClient:
             page_size: Rows per request, or 0 for the server's default.
             envelope: When given, filled with the first page's top-level
                 fields other than the paging ones.
+            required: Fields every page must carry, with the types their
+                value may have (``contract.required_page_fields``).
 
         Yields:
             Each row, in the order the API returns it.
 
         Raises:
-            ContractViolation: If a page is not an envelope, if a cursor
-                repeats, or if the walk does not terminate.
+            ContractViolation: If a page is not an envelope, lacks a required
+                field or carries one of the wrong type, if a cursor repeats,
+                or if the walk does not terminate.
             RemoteError: On any transport or server failure.
         """
         query = dict(params or {})
@@ -416,9 +449,10 @@ class TocClient:
                 raise ContractViolation(
                     f"{path} answered without an items list.", code="bad_page"
                 )
+            _check_required(path, body, required or {})
             if envelope is not None and pages == 1:
                 envelope.update(
-                    {k: v for k, v in body.items() if k not in PAGING_FIELDS}
+                    {k: v for k, v in body.items() if k not in paging_fields()}
                 )
             for row in items:
                 if not isinstance(row, dict):

@@ -41,6 +41,7 @@ from .params import (
     Operation,
 )
 from .remote_cli import (
+    INCOMPLETE_EXIT,
     add_api_parsers,
     add_init_parser,
     run_api_command,
@@ -577,8 +578,20 @@ def _run() -> None:
         # that cannot work does not look like one that did.
         sys.exit(run_init(params))
     if selected_route(params) is not None:
-        result, result_type = run_api_command(params)
+        incomplete: list[str] = []
+        result, result_type = run_api_command(params, incomplete=incomplete)
         output_result(params.output, result, result_type)
+        # Written first, so what the API did answer is never lost; the exit
+        # status is what tells a script the answer is partial.
+        if incomplete and not getattr(params, "allow_incomplete", False):
+            print(
+                Fore.RED
+                + "The API reported this answer incomplete; pass --allow-incomplete "
+                + "to accept it."
+                + Fore.RESET,
+                file=sys.stderr,
+            )
+            sys.exit(INCOMPLETE_EXIT)
         return
     if (
         params.operation == Operation.list
