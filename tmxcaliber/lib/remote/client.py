@@ -51,6 +51,11 @@ MAX_RETRY_AFTER: Final[float] = 60.0
 #: A page with a cursor that never advances is a defect, not a long read.
 MAX_PAGES: Final[int] = 1000
 
+#: The page envelope's own fields, as the contract's ``Page`` schema declares
+#: them. Anything else at a page's top level is something the route says about
+#: the whole answer, which ``paginate`` hands back through ``envelope``.
+PAGING_FIELDS: Final[frozenset[str]] = frozenset({"items", "nextCursor", "pageSize"})
+
 
 def _user_agent() -> str:
     """Build the User-Agent this client sends.
@@ -348,7 +353,12 @@ class TocClient:
                 self._sleep(wait * (0.5 + random.random() / 2))
 
     def paginate(
-        self, path: str, params: Mapping[str, str] | None = None, *, page_size: int = 0
+        self,
+        path: str,
+        params: Mapping[str, str] | None = None,
+        *,
+        page_size: int = 0,
+        envelope: dict[str, Any] | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Walk a collection, yielding rows.
 
@@ -356,10 +366,18 @@ class TocClient:
         credential, the route and the filters, so it is meaningless outside
         one walk and a caller shown one would be tempted to keep it.
 
+        **A page can say more than its rows**, such as when the answer was
+        evaluated, or which ThreatModels it could not resolve. Those top-level
+        fields are the same on every page of a walk, so the first page's are
+        what ``envelope`` receives; dropping them would present an incomplete
+        collection as a complete one.
+
         Args:
             path: The path, beginning with a slash.
             params: Query parameters other than ``limit`` and ``cursor``.
             page_size: Rows per request, or 0 for the server's default.
+            envelope: When given, filled with the first page's top-level
+                fields other than the paging ones.
 
         Yields:
             Each row, in the order the API returns it.
@@ -397,6 +415,10 @@ class TocClient:
             if not isinstance(items, list):
                 raise ContractViolation(
                     f"{path} answered without an items list.", code="bad_page"
+                )
+            if envelope is not None and pages == 1:
+                envelope.update(
+                    {k: v for k, v in body.items() if k not in PAGING_FIELDS}
                 )
             for row in items:
                 if not isinstance(row, dict):

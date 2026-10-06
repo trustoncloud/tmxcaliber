@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import configparser
 import getpass
+import json
 import os
 import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
@@ -227,6 +228,26 @@ def _path_for(route: Route, params: Namespace) -> str:
     return path
 
 
+def _report_envelope(envelope: Mapping[str, Any]) -> None:
+    """Print what a collection said about itself beyond its rows, on stderr.
+
+    The rows stay the whole of stdout, so a script reading them is unaffected,
+    while a person still sees, for example, which ThreatModels a compliance
+    mapping could not resolve. Dropping that would present an incomplete
+    collection as a complete one. An empty value says nothing and is skipped.
+
+    Args:
+        envelope: The page's fields other than the paging ones.
+    """
+    for name, value in envelope.items():
+        if value in (None, "", [], {}):
+            continue
+        print(
+            Fore.YELLOW + f"{name}: {json.dumps(value)}" + Fore.RESET,
+            file=sys.stderr,
+        )
+
+
 def run_api_command(
     params: Namespace, *, client: TocClient | None = None
 ) -> tuple[Any, str]:
@@ -250,9 +271,16 @@ def run_api_command(
     query = {name: str(getattr(params, name, "") or "") for name in route.filters}
 
     if route.paged:
+        envelope: dict[str, Any] = {}
         rows = list(
-            api.paginate(path, query, page_size=int(getattr(params, "limit", 0) or 0))
+            api.paginate(
+                path,
+                query,
+                page_size=int(getattr(params, "limit", 0) or 0),
+                envelope=envelope,
+            )
         )
+        _report_envelope(envelope)
         return rows, "json"
     return api.get(path, query), "json"
 
