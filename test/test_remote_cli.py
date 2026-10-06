@@ -24,6 +24,8 @@ class StubClient:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, str]]] = []
+        # What the stub's collections say beyond their rows.
+        self.envelope_fields: dict[str, Any] = {}
 
     key: str = "KEYONE"
 
@@ -71,6 +73,7 @@ class StubClient:
         params: Mapping[str, str] | None = None,
         *,
         page_size: int = 0,
+        envelope: dict[str, Any] | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Answer a collection call.
 
@@ -78,11 +81,14 @@ class StubClient:
             path: The path.
             params: The query.
             page_size: Ignored.
+            envelope: Filled with ``envelope_fields``.
 
         Yields:
             Fixture rows.
         """
         self.calls.append((path, dict(params or {})))
+        if envelope is not None:
+            envelope.update(self.envelope_fields)
         section = path.rsplit("/", 1)[-1]
         if section in PARTS:
             yield from PARTS[section]
@@ -153,6 +159,25 @@ def test_an_api_command_runs_and_returns_json() -> None:
     assert kind == "json"
     assert isinstance(result, list)
     assert result[0]["threatId"] == "S3.T1"
+
+
+def test_what_a_collection_says_beyond_its_rows_reaches_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Unresolved ThreatModels mean the rows are incomplete. Printing them on
+    # stderr tells a person without changing what a script reads on stdout.
+    route = route_for(("compliance", "mappings", "list"))
+    assert route is not None
+    client = StubClient()
+    client.envelope_fields = {"unresolvedTmIds": ["aws-s3"], "empty": []}
+    params = Namespace(api_route=route, framework="nist-800-53-r5", service="", limit=0)
+
+    result, _ = run_api_command(params, client=client)  # type: ignore[arg-type]
+
+    assert isinstance(result, list)
+    err = capsys.readouterr().err
+    assert 'unresolvedTmIds: ["aws-s3"]' in err
+    assert "empty" not in err
 
 
 def test_an_at_release_suffix_becomes_the_query_parameter() -> None:

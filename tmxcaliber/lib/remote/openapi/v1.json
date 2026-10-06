@@ -1332,8 +1332,16 @@
                             "$ref": "#/components/schemas/ComplianceMappingsRow"
                           },
                           "type": "array"
+                        },
+                        "unresolvedTmIds": {
+                          "description": "ThreatModels in scope whose mappings for this framework could not be resolved, because the SCF release they were mapped with is not recorded, not supported yet, or does not carry this framework. Their rows are missing from every page, so an empty or short collection is incomplete while this is not empty. Always empty for scf itself.",
+                          "type": "array",
+                          "x-defined-by": "this-api"
                         }
                       },
+                      "required": [
+                        "unresolvedTmIds"
+                      ],
                       "type": "object"
                     }
                   ]
