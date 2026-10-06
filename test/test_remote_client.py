@@ -259,6 +259,61 @@ def test_a_walk_follows_cursors_and_stops() -> None:
     assert list(client.paginate("/v1/threatmodels")) == [{"a": 1}, {"a": 2}]
 
 
+def test_a_pages_other_fields_are_handed_back() -> None:
+    # A page can say more than its rows, such as which ThreatModels it could
+    # not resolve; the first page's say it for the whole walk.
+    opener = FakeOpener(
+        [
+            FakeResponse(
+                {
+                    "items": [{"a": 1}],
+                    "nextCursor": "c1",
+                    "pageSize": 1,
+                    "unresolvedTmIds": ["aws-s3"],
+                }
+            ),
+            FakeResponse(
+                {
+                    "items": [{"a": 2}],
+                    "nextCursor": None,
+                    "pageSize": 1,
+                    "unresolvedTmIds": ["aws-s3"],
+                }
+            ),
+        ]
+    )
+    client = TocClient(settings(), opener=opener)
+    envelope: dict[str, Any] = {}
+
+    rows = list(client.paginate("/v1/compliance/mappings", envelope=envelope))
+
+    assert rows == [{"a": 1}, {"a": 2}]
+    assert envelope == {"unresolvedTmIds": ["aws-s3"]}
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        {"items": [], "nextCursor": None, "pageSize": 0},
+        {"items": [], "nextCursor": None, "pageSize": 0, "unresolvedTmIds": "aws-s3"},
+    ],
+    ids=["absent", "mistyped"],
+)
+def test_a_page_without_a_required_field_is_a_contract_violation(
+    page: dict[str, Any],
+) -> None:
+    # Absent is not empty: a mappings page without unresolvedTmIds would
+    # otherwise pass for one with nothing missing.
+    client = TocClient(settings(), opener=FakeOpener([FakeResponse(page)]))
+
+    with pytest.raises(errors.ContractViolation):
+        list(
+            client.paginate(
+                "/v1/compliance/mappings", required={"unresolvedTmIds": (list,)}
+            )
+        )
+
+
 def test_a_repeated_cursor_is_a_contract_violation() -> None:
     # Otherwise the walk never ends, and it spends the caller's hourly budget
     # doing it.

@@ -27,6 +27,7 @@ from importlib import metadata
 from typing import Any, Final
 
 from .config import Settings
+from .contract import paging_fields
 from .errors import (
     BY_CODE,
     BY_STATUS,
@@ -199,6 +200,39 @@ def default_opener() -> urllib.request.OpenerDirector:
     return urllib.request.build_opener(SameOriginRedirectHandler)
 
 
+def _check_required(
+    path: str, body: Mapping[str, Any], required: Mapping[str, tuple[type, ...]]
+) -> None:
+    """Refuse a page that lacks a field its route requires, or mistypes one.
+
+    **Absent is not the same as empty.** A compliance mapping page without
+    ``unresolvedTmIds`` would otherwise read as one with nothing missing, so an
+    answer from an older or degraded server could pass as complete.
+
+    Args:
+        path: The path, for the message.
+        body: The page.
+        required: Each required field and the types its value may have.
+
+    Raises:
+        ContractViolation: If a field is absent or of an undeclared type.
+    """
+    for name, types in required.items():
+        if name not in body:
+            raise ContractViolation(
+                f"{path} returned a page without {name}, which every page carries.",
+                code="bad_page",
+            )
+        value = body[name]
+        if not isinstance(value, types) or (
+            isinstance(value, bool) and bool not in types
+        ):
+            raise ContractViolation(
+                f"{path} returned a page whose {name} is not of its declared type.",
+                code="bad_page",
+            )
+
+
 class TocClient:
     """A read-only client for the TrustOnCloud API.
 
@@ -348,7 +382,13 @@ class TocClient:
                 self._sleep(wait * (0.5 + random.random() / 2))
 
     def paginate(
-        self, path: str, params: Mapping[str, str] | None = None, *, page_size: int = 0
+        self,
+        path: str,
+        params: Mapping[str, str] | None = None,
+        *,
+        page_size: int = 0,
+        envelope: dict[str, Any] | None = None,
+        required: Mapping[str, tuple[type, ...]] | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Walk a collection, yielding rows.
 
@@ -356,17 +396,28 @@ class TocClient:
         credential, the route and the filters, so it is meaningless outside
         one walk and a caller shown one would be tempted to keep it.
 
+        **A page can say more than its rows**, such as when the answer was
+        evaluated, or which ThreatModels it could not resolve. Those top-level
+        fields are the same on every page of a walk, so the first page's are
+        what ``envelope`` receives; dropping them would present an incomplete
+        collection as a complete one.
+
         Args:
             path: The path, beginning with a slash.
             params: Query parameters other than ``limit`` and ``cursor``.
             page_size: Rows per request, or 0 for the server's default.
+            envelope: When given, filled with the first page's top-level
+                fields other than the paging ones.
+            required: Fields every page must carry, with the types their
+                value may have (``contract.required_page_fields``).
 
         Yields:
             Each row, in the order the API returns it.
 
         Raises:
-            ContractViolation: If a page is not an envelope, if a cursor
-                repeats, or if the walk does not terminate.
+            ContractViolation: If a page is not an envelope, lacks a required
+                field or carries one of the wrong type, if a cursor repeats,
+                or if the walk does not terminate.
             RemoteError: On any transport or server failure.
         """
         query = dict(params or {})
@@ -397,6 +448,11 @@ class TocClient:
             if not isinstance(items, list):
                 raise ContractViolation(
                     f"{path} answered without an items list.", code="bad_page"
+                )
+            _check_required(path, body, required or {})
+            if envelope is not None and pages == 1:
+                envelope.update(
+                    {k: v for k, v in body.items() if k not in paging_fields()}
                 )
             for row in items:
                 if not isinstance(row, dict):

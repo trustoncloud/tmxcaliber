@@ -179,11 +179,16 @@ tmxcaliber threatmodels get aws-s3
 tmxcaliber threatmodels threats aws-s3 --feature-class S3.FC1
 tmxcaliber threatmodels dfd aws-s3
 tmxcaliber subscriptions list
-tmxcaliber compliance mappings list --framework "NIST CSF v2.0"
+tmxcaliber compliance frameworks list
+tmxcaliber compliance mappings list --framework nist-800-53-r5
 tmxcaliber ccr packs list
 ```
 
-Collections are read in full; paging is handled for you. For anything these
+Collections are read in full; paging is handled for you. When the API reports
+that an answer is incomplete (for example, compliance mappings for
+ThreatModels whose SCF release is not supported yet), the command still writes
+what it got, names what is missing on stderr, and exits 3; pass
+`--allow-incomplete` to accept a partial answer. For anything these
 commands do not cover, the API takes the same key directly:
 
 ```sh
