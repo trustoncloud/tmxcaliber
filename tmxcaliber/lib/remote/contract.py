@@ -261,6 +261,121 @@ def required_parameters(path: str) -> frozenset[str]:
     return frozenset(names)
 
 
+def values_route(route: Route, filter_name: str) -> Route | None:
+    """Find the route that lists the values one of a route's filters accepts.
+
+    Derived by the same kind of mechanical rule as the command names: the
+    paged sibling collection named for the filter's plural. ``framework`` on
+    ``/v1/compliance/mappings`` is answered by ``/v1/compliance/frameworks``,
+    whose rows carry a ``frameworkId``.
+
+    Args:
+        route: The route whose filter is being described.
+        filter_name: The query parameter, as the API spells it.
+
+    Returns:
+        The listing route, or None when the API publishes no such list.
+    """
+    parent = route.path.rsplit("/", 1)[0]
+    candidate = route_for_path(f"{parent}/{filter_name}s")
+    if candidate is None or not candidate.paged or candidate is route:
+        return None
+    return candidate
+
+
+def values_field(filter_name: str) -> str:
+    """Name the row field of a values route that a filter takes.
+
+    Args:
+        filter_name: The query parameter, as the API spells it.
+
+    Returns:
+        The field, in the API's camelCase (``framework`` -> ``frameworkId``).
+    """
+    head, *rest = filter_name.split("_")
+    return head + "".join(word.title() for word in rest) + "Id"
+
+
+def route_for_path(path: str) -> Route | None:
+    """Find the route bound to a path template.
+
+    Args:
+        path: The OpenAPI path template.
+
+    Returns:
+        The route, or None when no route binds that path.
+    """
+    for route in ROUTES:
+        if route.path == path:
+            return route
+    return None
+
+
+#: What each JSON Schema type is in Python, for checking a page's own fields.
+_JSON_TYPES: Final[dict[str, type | tuple[type, ...]]] = {
+    "array": list,
+    "boolean": bool,
+    "integer": int,
+    "null": type(None),
+    "number": (int, float),
+    "object": dict,
+    "string": str,
+}
+
+
+def paging_fields() -> frozenset[str]:
+    """List the fields every page carries, as the contract's ``Page`` declares.
+
+    Returns:
+        The envelope fields the client walks by, such as ``nextCursor``.
+    """
+    return frozenset(contract()["components"]["schemas"]["Page"]["required"])
+
+
+def required_page_fields(path: str) -> dict[str, tuple[type, ...]]:
+    """List the fields a route's every page must carry beyond the paging ones.
+
+    Read from the contract's 200 schema, so a field the API makes required,
+    such as which ThreatModels a compliance mapping could not resolve, is held
+    to without restating it here. A page that omits one is a contract breach,
+    not an answer with nothing to report.
+
+    Args:
+        path: The OpenAPI path template.
+
+    Returns:
+        Each required field and the Python types its value may have; empty
+        for a route that is not paged or declares none.
+    """
+    schema = (
+        contract()["paths"]
+        .get(path, {})
+        .get("get", {})
+        .get("responses", {})
+        .get("200", {})
+        .get("content", {})
+        .get("application/json", {})
+        .get("schema", {})
+    )
+    fields: dict[str, tuple[type, ...]] = {}
+    for part in schema.get("allOf", []):
+        properties = part.get("properties", {})
+        for name in part.get("required", []):
+            if name in paging_fields():
+                continue
+            declared = properties.get(name, {}).get("type", [])
+            names = declared if isinstance(declared, list) else [declared]
+            accepted: list[type] = []
+            for json_type in names:
+                python = _JSON_TYPES.get(json_type)
+                if isinstance(python, tuple):
+                    accepted.extend(python)
+                elif python is not None:
+                    accepted.append(python)
+            fields[name] = tuple(accepted) or (object,)
+    return fields
+
+
 def query_parameters(path: str) -> frozenset[str]:
     """List a route's query parameters as the contract declares them.
 

@@ -12,13 +12,14 @@ The shape mirrors the API:
     tmxcaliber threatmodels get aws-s3
     tmxcaliber threatmodels threats aws-s3 --feature-class S3.FC1
     tmxcaliber threatmodels dfd aws-s3@1611187200
-    tmxcaliber compliance mappings list --framework "NIST CSF v2.0"
+    tmxcaliber compliance mappings list --framework nist-800-53-r5
 """
 
 from __future__ import annotations
 
 import configparser
 import getpass
+import json
 import os
 import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
@@ -38,7 +39,14 @@ from .lib.remote.config import (
     settings_for,
     write_credentials,
 )
-from .lib.remote.contract import ROUTES, Route, required_parameters
+from .lib.remote.contract import (
+    ROUTES,
+    Route,
+    required_page_fields,
+    required_parameters,
+    values_field,
+    values_route,
+)
 from .lib.remote.errors import ConfigurationError, RemoteError
 from .lib.remote.ref import parse_ref
 
@@ -46,6 +54,17 @@ from .lib.remote.ref import parse_ref
 #:
 #: `operation` is the top level, which the existing commands already use.
 LEVEL_DEST = "api_level_{depth}"
+
+#: Page fields that, when not empty, mean the rows are incomplete.
+#:
+#: The contract says so in each field's description; the code cannot read that,
+#: so the names live here, and a test holds each to a route that requires it.
+#: A command over such a route exits ``INCOMPLETE_EXIT`` when the API reports
+#: missing rows, unless the caller passed ``--allow-incomplete``.
+INCOMPLETENESS_FIELDS: tuple[str, ...] = ("unresolvedTmIds",)
+
+#: The exit status of a command whose answer the API reported incomplete.
+INCOMPLETE_EXIT = 3
 
 #: What a positional holds, and how its help reads.
 POSITIONALS = {
@@ -70,6 +89,47 @@ def _option(filter_name: str) -> str:
     return f"--{filter_name.replace('_', '-')}"
 
 
+def _filter_help(route: Route, name: str, *, required: bool) -> str:
+    """Describe one query parameter for a command's help.
+
+    Args:
+        route: The route the command reaches.
+        name: The parameter, as the API spells it.
+        required: Whether the route refuses to answer without it.
+
+    Returns:
+        The help text, naming the command that lists the accepted values when
+        the API publishes one.
+    """
+    words = name.replace("_", " ")
+    text = f"the {words} to read." if required else f"filter by {words}."
+    lookup = values_route(route, name)
+    if lookup is not None:
+        text += (
+            f" Takes a {values_field(name)} as "
+            f"`tmxcaliber {' '.join(lookup.command)}` reports it."
+        )
+    return text
+
+
+def _summary(route: Route) -> str:
+    """Render a command's one-line help, naming what it cannot run without.
+
+    The parent's help is the first screen a caller sees, so a required option
+    shown only one level down meant the obvious next command failed.
+
+    Args:
+        route: The route the command reaches.
+
+    Returns:
+        The summary, with its required options appended.
+    """
+    needed = sorted(required_parameters(route.path) & set(route.filters))
+    if not needed:
+        return route.summary
+    return f"{route.summary} Requires {', '.join(_option(n) for n in needed)}."
+
+
 def _leaf(parser: ArgumentParser, route: Route) -> None:
     """Add one route's arguments to its parser.
 
@@ -81,13 +141,17 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
         metavar, help_text = POSITIONALS[route.positional]
         parser.add_argument(route.positional, metavar=metavar, help=help_text)
     required = required_parameters(route.path)
+    # argparse files every option under "options" whether or not it is
+    # required, which made a mandatory --framework read as an optional filter.
+    required_group = parser.add_argument_group("required arguments")
     for name in route.filters:
-        parser.add_argument(
+        target = required_group if name in required else parser
+        target.add_argument(
             _option(name),
             dest=name,
             default="",
             required=name in required,
-            help=f"filter by {name.replace('_', ' ')}.",
+            help=_filter_help(route, name, required=name in required),
         )
     if route.paged:
         parser.add_argument(
@@ -99,12 +163,36 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
                 "this only changes how many calls that takes."
             ),
         )
+    if _incompleteness_fields(route):
+        parser.add_argument(
+            "--allow-incomplete",
+            action="store_true",
+            help=(
+                "exit 0 even when the API reports rows it could not resolve. "
+                f"Without it the command still writes what it got, then exits "
+                f"{INCOMPLETE_EXIT}, so a script cannot take a partial answer "
+                "for a whole one."
+            ),
+        )
     parser.add_argument(
         "--output",
         default="",
         help="file to write the result to. Prints to stdout when omitted.",
     )
     parser.set_defaults(api_route=route)
+
+
+def _incompleteness_fields(route: Route) -> tuple[str, ...]:
+    """List the incompleteness fields a route's pages are required to carry.
+
+    Args:
+        route: The route.
+
+    Returns:
+        The names, in ``INCOMPLETENESS_FIELDS`` order.
+    """
+    required = required_page_fields(route.path)
+    return tuple(name for name in INCOMPLETENESS_FIELDS if name in required)
 
 
 def add_api_parsers(subparsers: _SubParsersAction[ArgumentParser]) -> None:
@@ -129,7 +217,9 @@ def add_api_parsers(subparsers: _SubParsersAction[ArgumentParser]) -> None:
                     dest=LEVEL_DEST.format(depth=depth + 1), required=True
                 )
             parent = groups[prefix]
-        leaf = parent.add_parser(route.command[-1], help=route.summary)
+        leaf = parent.add_parser(
+            route.command[-1], help=_summary(route), description=_summary(route)
+        )
         _leaf(leaf, route)
 
 
@@ -174,14 +264,40 @@ def _path_for(route: Route, params: Namespace) -> str:
     return path
 
 
+def _report_envelope(envelope: Mapping[str, Any]) -> None:
+    """Print what a collection said about itself beyond its rows, on stderr.
+
+    The rows stay the whole of stdout, so a script reading them is unaffected,
+    while a person still sees, for example, which ThreatModels a compliance
+    mapping could not resolve. Dropping that would present an incomplete
+    collection as a complete one. An empty value says nothing and is skipped.
+
+    Args:
+        envelope: The page's fields other than the paging ones.
+    """
+    for name, value in envelope.items():
+        if value in (None, "", [], {}):
+            continue
+        print(
+            Fore.YELLOW + f"{name}: {json.dumps(value)}" + Fore.RESET,
+            file=sys.stderr,
+        )
+
+
 def run_api_command(
-    params: Namespace, *, client: TocClient | None = None
+    params: Namespace,
+    *,
+    client: TocClient | None = None,
+    incomplete: list[str] | None = None,
 ) -> tuple[Any, str]:
     """Execute an API command.
 
     Args:
         params: The parsed arguments.
         client: A client to use, built from the environment when omitted.
+        incomplete: When given, receives one line per incompleteness field the
+            API reported as not empty, for the caller to act on after writing
+            the result.
 
     Returns:
         The result and the result type `output_result` expects.
@@ -197,9 +313,23 @@ def run_api_command(
     query = {name: str(getattr(params, name, "") or "") for name in route.filters}
 
     if route.paged:
+        envelope: dict[str, Any] = {}
         rows = list(
-            api.paginate(path, query, page_size=int(getattr(params, "limit", 0) or 0))
+            api.paginate(
+                path,
+                query,
+                page_size=int(getattr(params, "limit", 0) or 0),
+                envelope=envelope,
+                required=required_page_fields(route.path),
+            )
         )
+        _report_envelope(envelope)
+        if incomplete is not None:
+            incomplete.extend(
+                f"{name}: {json.dumps(envelope[name])}"
+                for name in _incompleteness_fields(route)
+                if envelope.get(name)
+            )
         return rows, "json"
     return api.get(path, query), "json"
 
