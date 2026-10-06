@@ -42,6 +42,7 @@ from .lib.remote.config import (
 from .lib.remote.contract import (
     ROUTES,
     Route,
+    required_page_fields,
     required_parameters,
     values_field,
     values_route,
@@ -53,6 +54,17 @@ from .lib.remote.ref import parse_ref
 #:
 #: `operation` is the top level, which the existing commands already use.
 LEVEL_DEST = "api_level_{depth}"
+
+#: Page fields that, when not empty, mean the rows are incomplete.
+#:
+#: The contract says so in each field's description; the code cannot read that,
+#: so the names live here, and a test holds each to a route that requires it.
+#: A command over such a route exits ``INCOMPLETE_EXIT`` when the API reports
+#: missing rows, unless the caller passed ``--allow-incomplete``.
+INCOMPLETENESS_FIELDS: tuple[str, ...] = ("unresolvedTmIds",)
+
+#: The exit status of a command whose answer the API reported incomplete.
+INCOMPLETE_EXIT = 3
 
 #: What a positional holds, and how its help reads.
 POSITIONALS = {
@@ -151,12 +163,36 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
                 "this only changes how many calls that takes."
             ),
         )
+    if _incompleteness_fields(route):
+        parser.add_argument(
+            "--allow-incomplete",
+            action="store_true",
+            help=(
+                "exit 0 even when the API reports rows it could not resolve. "
+                f"Without it the command still writes what it got, then exits "
+                f"{INCOMPLETE_EXIT}, so a script cannot take a partial answer "
+                "for a whole one."
+            ),
+        )
     parser.add_argument(
         "--output",
         default="",
         help="file to write the result to. Prints to stdout when omitted.",
     )
     parser.set_defaults(api_route=route)
+
+
+def _incompleteness_fields(route: Route) -> tuple[str, ...]:
+    """List the incompleteness fields a route's pages are required to carry.
+
+    Args:
+        route: The route.
+
+    Returns:
+        The names, in ``INCOMPLETENESS_FIELDS`` order.
+    """
+    required = required_page_fields(route.path)
+    return tuple(name for name in INCOMPLETENESS_FIELDS if name in required)
 
 
 def add_api_parsers(subparsers: _SubParsersAction[ArgumentParser]) -> None:
@@ -249,13 +285,19 @@ def _report_envelope(envelope: Mapping[str, Any]) -> None:
 
 
 def run_api_command(
-    params: Namespace, *, client: TocClient | None = None
+    params: Namespace,
+    *,
+    client: TocClient | None = None,
+    incomplete: list[str] | None = None,
 ) -> tuple[Any, str]:
     """Execute an API command.
 
     Args:
         params: The parsed arguments.
         client: A client to use, built from the environment when omitted.
+        incomplete: When given, receives one line per incompleteness field the
+            API reported as not empty, for the caller to act on after writing
+            the result.
 
     Returns:
         The result and the result type `output_result` expects.
@@ -278,9 +320,16 @@ def run_api_command(
                 query,
                 page_size=int(getattr(params, "limit", 0) or 0),
                 envelope=envelope,
+                required=required_page_fields(route.path),
             )
         )
         _report_envelope(envelope)
+        if incomplete is not None:
+            incomplete.extend(
+                f"{name}: {json.dumps(envelope[name])}"
+                for name in _incompleteness_fields(route)
+                if envelope.get(name)
+            )
         return rows, "json"
     return api.get(path, query), "json"
 

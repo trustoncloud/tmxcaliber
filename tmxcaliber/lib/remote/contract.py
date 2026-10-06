@@ -311,6 +311,71 @@ def route_for_path(path: str) -> Route | None:
     return None
 
 
+#: What each JSON Schema type is in Python, for checking a page's own fields.
+_JSON_TYPES: Final[dict[str, type | tuple[type, ...]]] = {
+    "array": list,
+    "boolean": bool,
+    "integer": int,
+    "null": type(None),
+    "number": (int, float),
+    "object": dict,
+    "string": str,
+}
+
+
+def paging_fields() -> frozenset[str]:
+    """List the fields every page carries, as the contract's ``Page`` declares.
+
+    Returns:
+        The envelope fields the client walks by, such as ``nextCursor``.
+    """
+    return frozenset(contract()["components"]["schemas"]["Page"]["required"])
+
+
+def required_page_fields(path: str) -> dict[str, tuple[type, ...]]:
+    """List the fields a route's every page must carry beyond the paging ones.
+
+    Read from the contract's 200 schema, so a field the API makes required,
+    such as which ThreatModels a compliance mapping could not resolve, is held
+    to without restating it here. A page that omits one is a contract breach,
+    not an answer with nothing to report.
+
+    Args:
+        path: The OpenAPI path template.
+
+    Returns:
+        Each required field and the Python types its value may have; empty
+        for a route that is not paged or declares none.
+    """
+    schema = (
+        contract()["paths"]
+        .get(path, {})
+        .get("get", {})
+        .get("responses", {})
+        .get("200", {})
+        .get("content", {})
+        .get("application/json", {})
+        .get("schema", {})
+    )
+    fields: dict[str, tuple[type, ...]] = {}
+    for part in schema.get("allOf", []):
+        properties = part.get("properties", {})
+        for name in part.get("required", []):
+            if name in paging_fields():
+                continue
+            declared = properties.get(name, {}).get("type", [])
+            names = declared if isinstance(declared, list) else [declared]
+            accepted: list[type] = []
+            for json_type in names:
+                python = _JSON_TYPES.get(json_type)
+                if isinstance(python, tuple):
+                    accepted.extend(python)
+                elif python is not None:
+                    accepted.append(python)
+            fields[name] = tuple(accepted) or (object,)
+    return fields
+
+
 def query_parameters(path: str) -> frozenset[str]:
     """List a route's query parameters as the contract declares them.
 
