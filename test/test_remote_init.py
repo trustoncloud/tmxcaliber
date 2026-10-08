@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from tmxcaliber.lib.remote.config import load_settings
+from tmxcaliber.lib.remote.config import DEFAULT_BASE_URL, load_settings
 from tmxcaliber.lib.remote.errors import ConfigurationError, NotFound
 from tmxcaliber.remote_cli import run_init
 
@@ -100,7 +100,6 @@ def test_it_writes_a_key_and_verifies_it(
         Namespace(),
         env=env,
         read_secret=lambda _: KEY,
-        read_line=lambda _: "",
         interactive=True,
         client=StubClient(),  # type: ignore[arg-type]
     )
@@ -118,7 +117,6 @@ def test_the_key_is_never_printed(
         Namespace(),
         env=env_for(tmp_path),
         read_secret=lambda _: KEY,
-        read_line=lambda _: "",
         interactive=True,
         client=StubClient(),  # type: ignore[arg-type]
     )
@@ -136,7 +134,6 @@ def test_an_empty_answer_keeps_the_current_key(
         Namespace(),
         env=env,
         read_secret=lambda _: KEY,
-        read_line=lambda _: "",
         interactive=True,
         client=StubClient(),  # type: ignore[arg-type]
     )
@@ -145,7 +142,6 @@ def test_an_empty_answer_keeps_the_current_key(
         Namespace(),
         env=env,
         read_secret=lambda _: "",
-        read_line=lambda _: "",
         interactive=True,
         client=StubClient(),  # type: ignore[arg-type]
     )
@@ -161,7 +157,6 @@ def test_a_first_run_with_no_key_refuses(tmp_path: pathlib.Path) -> None:
             Namespace(),
             env=env_for(tmp_path),
             read_secret=lambda _: "",
-            read_line=lambda _: "",
             interactive=True,
             client=StubClient(),  # type: ignore[arg-type]
         )
@@ -170,22 +165,26 @@ def test_a_first_run_with_no_key_refuses(tmp_path: pathlib.Path) -> None:
 
 def test_a_piped_key_needs_no_prompt(tmp_path: pathlib.Path) -> None:
     # `echo "$KEY" | tmxcaliber init` has to work in CI, where there is no
-    # tty and no one to answer a question about the endpoint.
+    # tty and no one to answer a question, and --api-url reaches it too.
     env = env_for(tmp_path)
+    prompts: list[str] = []
 
-    def refuse(_prompt: str) -> str:
-        raise AssertionError("init asked a question with no tty")
+    def piped(prompt: str) -> str:
+        prompts.append(prompt)
+        return KEY
 
     run_init(
-        Namespace(),
+        Namespace(api_url="https://api.example.com"),
         env=env,
-        read_secret=lambda _: KEY,
-        read_line=refuse,
+        read_secret=piped,
         interactive=False,
         client=StubClient(),  # type: ignore[arg-type]
     )
 
-    assert load_settings(env=env).credentials.api_key == KEY
+    assert prompts == [""], "init asked a question with no tty"
+    settings = load_settings(env=env)
+    assert settings.credentials.api_key == KEY
+    assert settings.base_url == "https://api.example.com"
 
 
 def test_it_warns_when_the_environment_shadows_the_file(
@@ -197,7 +196,6 @@ def test_it_warns_when_the_environment_shadows_the_file(
         Namespace(),
         env=env_for(tmp_path, TOC_API_KEY=OTHER),
         read_secret=lambda _: KEY,
-        read_line=lambda _: "",
         interactive=True,
         client=StubClient(),  # type: ignore[arg-type]
     )
@@ -219,7 +217,6 @@ def test_a_failed_check_does_not_discard_what_was_written(
         Namespace(),
         env=env,
         read_secret=lambda _: KEY,
-        read_line=lambda _: "",
         interactive=True,
         client=StubClient(NotFound("Not found.", code="not_found")),  # type: ignore[arg-type]
     )
@@ -230,19 +227,63 @@ def test_a_failed_check_does_not_discard_what_was_written(
     assert load_settings(env=env).credentials.api_key == KEY
 
 
-def test_an_endpoint_given_at_the_prompt_is_stored(tmp_path: pathlib.Path) -> None:
+def test_an_endpoint_given_as_an_option_is_stored(tmp_path: pathlib.Path) -> None:
     env = env_for(tmp_path)
 
     run_init(
-        Namespace(),
+        Namespace(api_url="https://api.example.com"),
         env=env,
         read_secret=lambda _: KEY,
-        read_line=lambda _: "https://api-staging.example",
         interactive=True,
         client=StubClient(),  # type: ignore[arg-type]
     )
 
-    assert load_settings(env=env).base_url == "https://api-staging.example"
+    assert load_settings(env=env).base_url == "https://api.example.com"
+
+
+def test_rerunning_without_the_option_keeps_the_stored_endpoint(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Re-running init to check or rotate the key must not quietly move a
+    # configured endpoint back to the default.
+    env = env_for(tmp_path)
+    run_init(
+        Namespace(api_url="https://api.example.com"),
+        env=env,
+        read_secret=lambda _: KEY,
+        interactive=True,
+        client=StubClient(),  # type: ignore[arg-type]
+    )
+
+    run_init(
+        Namespace(api_url=None),
+        env=env,
+        read_secret=lambda _: "",
+        interactive=True,
+        client=StubClient(),  # type: ignore[arg-type]
+    )
+
+    assert load_settings(env=env).base_url == "https://api.example.com"
+
+
+def test_init_never_asks_for_the_endpoint(tmp_path: pathlib.Path) -> None:
+    env = env_for(tmp_path)
+    prompts: list[str] = []
+
+    def answer(prompt: str) -> str:
+        prompts.append(prompt)
+        return KEY
+
+    run_init(
+        Namespace(api_url=None),
+        env=env,
+        read_secret=answer,
+        interactive=True,
+        client=StubClient(),  # type: ignore[arg-type]
+    )
+
+    assert len(prompts) == 1 and "API key" in prompts[0]
+    assert load_settings(env=env).base_url == DEFAULT_BASE_URL
 
 
 def test_it_repairs_a_file_the_loader_would_refuse(
@@ -264,7 +305,6 @@ def test_it_repairs_a_file_the_loader_would_refuse(
         Namespace(),
         env=env,
         read_secret=lambda _: "",
-        read_line=lambda _: "",
         interactive=True,
         client=StubClient(),  # type: ignore[arg-type]
     )
@@ -302,7 +342,6 @@ def test_it_verifies_the_key_it_stored_not_the_one_in_the_environment(
         Namespace(),
         env=env_for(tmp_path, TOC_API_KEY=OTHER),
         read_secret=lambda _: KEY,
-        read_line=lambda _: "",
         interactive=True,
     )
 
@@ -312,16 +351,15 @@ def test_it_verifies_the_key_it_stored_not_the_one_in_the_environment(
 def test_an_endpoint_that_would_leak_the_key_is_refused_before_writing(
     tmp_path: pathlib.Path,
 ) -> None:
-    # Validated before the file is touched, so a bad answer at the prompt
-    # does not leave a stored credential pointing somewhere unsafe.
+    # Validated before the file is touched, so a bad --api-url does not
+    # leave a stored credential pointing somewhere unsafe.
     env = env_for(tmp_path)
 
     with pytest.raises(ConfigurationError):
         run_init(
-            Namespace(),
+            Namespace(api_url="http://not-localhost.example"),
             env=env,
             read_secret=lambda _: KEY,
-            read_line=lambda _: "http://not-localhost.example",
             interactive=True,
         )
 
@@ -341,7 +379,6 @@ def test_a_failed_check_exits_non_zero(tmp_path: pathlib.Path) -> None:
         Namespace(),
         env=env,
         read_secret=lambda _: KEY,
-        read_line=lambda _: "",
         interactive=False,
         client=StubClient(NotFound("Not found.", code="not_found")),  # type: ignore[arg-type]
     )
@@ -355,7 +392,6 @@ def test_a_successful_check_exits_zero(tmp_path: pathlib.Path) -> None:
         Namespace(),
         env=env_for(tmp_path),
         read_secret=lambda _: KEY,
-        read_line=lambda _: "",
         interactive=False,
         client=StubClient(),  # type: ignore[arg-type]
     )
@@ -387,7 +423,6 @@ def test_it_verifies_the_endpoint_commands_will_use(
         Namespace(),
         env=env_for(tmp_path, TOC_API_URL="https://api.example.com"),
         read_secret=lambda _: KEY,
-        read_line=lambda _: "",
         interactive=False,
     )
 
