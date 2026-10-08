@@ -30,7 +30,6 @@ from colorama import Fore
 
 from .lib.remote.client import TocClient
 from .lib.remote.config import (
-    DEFAULT_BASE_URL,
     SECTION,
     Settings,
     config_path,
@@ -349,6 +348,13 @@ def add_init_parser(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         "init",
         help="store a TrustOnCloud API key, and check that it works.",
     )
+    parser.add_argument(
+        "--api-url",
+        metavar="URL",
+        default=None,
+        help="store this API endpoint instead of the default; omit to keep the "
+        "current one.",
+    )
     parser.set_defaults(api_init=True)
 
 
@@ -403,21 +409,24 @@ def _current(env: Mapping[str, str]) -> tuple[str, str]:
 
 
 def run_init(
-    _params: Namespace,
+    params: Namespace,
     *,
     env: Mapping[str, str] | None = None,
     read_secret: Callable[[str], str] | None = None,
-    read_line: Callable[[str], str] | None = None,
     interactive: bool | None = None,
     client: TocClient | None = None,
 ) -> int:
     """Store an API key and report whether it works.
 
+    **The endpoint is an option, never a question.** Almost everyone uses
+    the default, so asking on every run was noise, and an option also
+    reaches the piped form that could never ask.
+
     Args:
-        _params: The parsed arguments, unused.
+        params: The parsed arguments; `api_url` replaces the stored
+            endpoint when given.
         env: The environment to read.
         read_secret: How to read the key without echoing it.
-        read_line: How to read a visible answer.
         interactive: Whether to prompt, defaulting to whether stdin is a tty.
         client: A client to verify with, built from the new settings when
             omitted.
@@ -430,26 +439,22 @@ def run_init(
     """
     environ = os.environ if env is None else env
     secret = read_secret or _read_secret
-    line = read_line or (lambda prompt: input(prompt).strip())
     prompting = sys.stdin.isatty() if interactive is None else interactive
 
     existing, current_url = _current(environ)
-    # Blank means keep, for the endpoint exactly as for the key. Those two
-    # answers meaning opposite things in one command is what discarded a
-    # configured endpoint.
-    api_url = current_url
+    # Omitted means keep, for the endpoint exactly as for the key. Those two
+    # meaning opposite things in one command is what discarded a configured
+    # endpoint.
+    api_url = (getattr(params, "api_url", None) or "").strip() or current_url
 
     if prompting:
         if existing:
             print(f"Current key: {masked(existing)}")
         suffix = " (press enter to keep the current one)" if existing else ""
         key = secret(f"TrustOnCloud API key{suffix}: ") or existing
-        shown = current_url or DEFAULT_BASE_URL
-        api_url = line(f"API endpoint (enter to keep {shown}): ") or current_url
     else:
         # Piped, so one line and no questions: `echo "$KEY" | tmxcaliber init`
-        # works in CI without a tty. The endpoint is carried over untouched,
-        # because nothing here could have asked about it.
+        # works in CI without a tty.
         key = secret("")
 
     if not key:
