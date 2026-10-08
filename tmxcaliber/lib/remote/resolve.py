@@ -14,7 +14,7 @@ every existing invocation meaning what it meant.
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from .assemble import fetch_document
 from .cache import DEFAULT_MAX_AGE, PINNED_MAX_AGE, cached_path, read, write
@@ -42,6 +42,7 @@ def fetch_to_cache(
     ref: TmRef,
     *,
     client: TocClient | None = None,
+    connect: Callable[[], TocClient] | None = None,
     refresh: bool = False,
     env: Mapping[str, str] | None = None,
 ) -> str:
@@ -55,7 +56,10 @@ def fetch_to_cache(
 
     Args:
         ref: The ThreatModel, optionally pinned to a release.
-        client: A client to use, built from the environment when omitted.
+        client: A client to use. Wins over ``connect``.
+        connect: Builds the client when ``client`` is omitted, so a caller
+            can see the resolved settings before any request. Resolved from
+            ``env`` when both are omitted.
         refresh: Fetch even when a cached copy would do.
         env: The environment to read.
 
@@ -65,7 +69,7 @@ def fetch_to_cache(
     Raises:
         RemoteError: On any transport, credential or server failure.
     """
-    api = client or _client(env)
+    api = client or (connect() if connect is not None else _client(env))
 
     if ref.release:
         path = cached_path(ref, ref.release, api.base_url, api.key_id, env)
@@ -96,6 +100,7 @@ def resolve_source(
     source: str,
     *,
     client: TocClient | None = None,
+    connect: Callable[[], TocClient] | None = None,
     refresh: bool = False,
     env: Mapping[str, str] | None = None,
 ) -> str:
@@ -103,7 +108,10 @@ def resolve_source(
 
     Args:
         source: A filesystem path, a directory, or a ThreatModel reference.
-        client: A client to use, built from the environment when omitted.
+        client: A client to use. Wins over ``connect``.
+        connect: Builds the client when ``client`` is omitted and the source
+            is a reference. Never called for a path, so a local file still
+            needs no credential. Resolved from ``env`` when both are omitted.
         refresh: Fetch even when a cached copy would do.
         env: The environment to read.
 
@@ -123,4 +131,6 @@ def resolve_source(
         # Not a path and not a reference. Left exactly as it came, so the
         # caller's own validation produces the message it always produced.
         return source
-    return fetch_to_cache(parse_ref(source), client=client, refresh=refresh, env=env)
+    return fetch_to_cache(
+        parse_ref(source), client=client, connect=connect, refresh=refresh, env=env
+    )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+from dataclasses import dataclass
 
 import pytest
 
@@ -36,6 +37,72 @@ def write_config(path: pathlib.Path, body: str) -> pathlib.Path:
     path.write_text(body, encoding="utf-8")
     path.chmod(0o600)
     return path
+
+
+#: An endpoint other than the default, as `init` would have stored it.
+STORED_URL = "https://api.example.com"
+
+
+@dataclass(frozen=True)
+class EndpointCase:
+    """Where the key and the endpoint come from in one test.
+
+    Attributes:
+        environment_key: Whether TOC_API_KEY is set.
+        environment_url: TOC_API_URL's value, or empty to leave it unset.
+        stored_url: The api_url the credentials file holds, or empty for none.
+    """
+
+    environment_key: bool
+    environment_url: str
+    stored_url: str
+
+    def environment(self, tmp_path: pathlib.Path) -> dict[str, str]:
+        """Write the credentials file and build the environment for this case.
+
+        The file always holds a key, and a different one from the
+        environment's, so a test can tell which of the two was used.
+
+        Args:
+            tmp_path: Where to write the credentials file.
+
+        Returns:
+            The environment to resolve settings from.
+        """
+        body = f"[default]\napi_key = {OTHER}\n"
+        if self.stored_url:
+            body += f"api_url = {self.stored_url}\n"
+        config = write_config(tmp_path / "credentials", body)
+        env = {"TOC_CONFIG_FILE": str(config)}
+        if self.environment_key:
+            env["TOC_API_KEY"] = KEY
+        if self.environment_url:
+            env["TOC_API_URL"] = self.environment_url
+        return env
+
+
+#: A key from the environment going to an endpoint from the file, which is
+#: the one combination a reader is told about.
+HAZARD = EndpointCase(True, "", STORED_URL)
+
+#: The hazard, and the same with a blank TOC_API_URL, which counts as unset.
+NOTED_CASES = [
+    pytest.param(HAZARD, id="TOC_API_URL unset"),
+    pytest.param(EndpointCase(True, "   ", STORED_URL), id="TOC_API_URL blank"),
+]
+
+#: An endpoint the caller chose, or the default, so there is nothing to say.
+QUIET_CASES = [
+    pytest.param(
+        EndpointCase(True, "https://other.example", STORED_URL), id="TOC_API_URL set"
+    ),
+    pytest.param(EndpointCase(False, "", STORED_URL), id="key from the file"),
+    pytest.param(EndpointCase(True, "", ""), id="no endpoint stored"),
+    pytest.param(EndpointCase(True, "", DEFAULT_BASE_URL), id="stored default"),
+    pytest.param(
+        EndpointCase(True, "", DEFAULT_BASE_URL + "/"), id="stored default with slash"
+    ),
+]
 
 
 def test_the_environment_supplies_the_key() -> None:
@@ -329,3 +396,51 @@ def test_an_environment_endpoint_still_wins_over_the_stored_one(
     )
 
     assert found.base_url == "https://other.example"
+
+
+@pytest.mark.parametrize("case", NOTED_CASES)
+def test_an_environment_key_going_to_a_stored_endpoint_is_flagged(
+    tmp_path: pathlib.Path, case: EndpointCase
+) -> None:
+    """The hazard the CLI warns about, recorded rather than printed.
+
+    A key exported for another API goes to the endpoint `init` stored,
+    because the endpoint is resolved independently of the key. The
+    precedence stays; the settings say where the endpoint came from.
+    """
+    env = case.environment(tmp_path)
+
+    found = load_settings(env=env)
+
+    assert found.credentials.api_key == KEY
+    assert found.base_url == STORED_URL
+    assert found.endpoint_source == env["TOC_CONFIG_FILE"]
+    assert found.sends_environment_key_to_stored_endpoint is True
+
+
+@pytest.mark.parametrize("case", QUIET_CASES)
+def test_an_endpoint_the_caller_chose_or_expects_is_not_flagged(
+    tmp_path: pathlib.Path, case: EndpointCase
+) -> None:
+    found = load_settings(env=case.environment(tmp_path))
+
+    assert found.sends_environment_key_to_stored_endpoint is False
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        (EndpointCase(True, "https://other.example", STORED_URL), "TOC_API_URL"),
+        (EndpointCase(True, "", STORED_URL), "file"),
+        (EndpointCase(True, "", ""), ""),
+    ],
+)
+def test_the_endpoint_records_where_it_came_from(
+    tmp_path: pathlib.Path, case: EndpointCase, expected: str
+) -> None:
+    env = case.environment(tmp_path)
+
+    found = load_settings(env=env)
+
+    wanted = env["TOC_CONFIG_FILE"] if expected == "file" else expected
+    assert found.endpoint_source == wanted

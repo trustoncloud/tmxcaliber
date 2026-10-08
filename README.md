@@ -140,6 +140,11 @@ The environment wins over the file, which is also why there are no profiles:
 one stored key, and an environment variable for the "a different one, right
 now" case.
 
+The key and the endpoint are each looked up on their own. If `init` stored an
+endpoint other than the default, a key you export in `TOC_API_KEY` is sent to
+that stored endpoint unless you also set `TOC_API_URL`. Commands print a note
+on stderr when that happens, naming the endpoint and the file it came from.
+
 The key is a TrustOnCloud credential rather than a tmxcaliber one, which is
 why it is named and stored this way: the same key works with `curl` or any
 other client. There is deliberately no `--api-key` flag, so the secret never
