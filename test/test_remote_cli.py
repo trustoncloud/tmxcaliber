@@ -7,16 +7,26 @@ import pathlib
 import sys
 from argparse import Namespace
 from collections.abc import Iterator, Mapping
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
 from tmxcaliber import cli as cli_module
+from tmxcaliber import remote_cli
+from tmxcaliber.lib.remote.config import Settings
 from tmxcaliber.lib.remote.contract import route_for
+from tmxcaliber.lib.remote.errors import AuthenticationError
 from tmxcaliber.lib.remote.resolve import resolve_source
-from tmxcaliber.remote_cli import run_api_command
+from tmxcaliber.remote_cli import connect, resolve_command_source, run_api_command
 
 from .test_remote_assemble import DETAIL, DFD, PARTS, _at_release
+from .test_remote_config import (
+    HAZARD,
+    NOTED_CASES,
+    QUIET_CASES,
+    STORED_URL,
+    EndpointCase,
+)
 
 
 class StubClient:
@@ -445,3 +455,196 @@ def test_an_unpinned_fetch_satisfies_a_later_pinned_request(
 
     assert pinned.calls == [], "the pinned request repeated the assembly"
     assert path.endswith("1611187200.json")
+
+
+#: How the stored-endpoint note starts, wherever a test only needs to find it.
+NOTE = "Note: the key in TOC_API_KEY will be sent to"
+
+
+@pytest.fixture(autouse=True)
+def fresh_notes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Forget the stored-endpoint notes earlier tests wrote.
+
+    The CLI says it once per process, which is once per invocation in real
+    use but once per whole session under pytest.
+
+    Args:
+        monkeypatch: Replaces the record for this test only.
+    """
+    monkeypatch.setattr(remote_cli, "_noted", set())
+
+
+class SettingsStub(StubClient):
+    """A StubClient built the way `connect` builds a real client."""
+
+    def __init__(self, settings: Settings) -> None:
+        """Keep the settings `connect` resolved.
+
+        Args:
+            settings: The resolved settings.
+        """
+        super().__init__()
+        self.settings = settings
+
+
+class RefusingClient(SettingsStub):
+    """Refuses every call, as an API that does not know the key would."""
+
+    def get(self, path: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
+        """Refuse the call.
+
+        Args:
+            path: The path.
+            params: The query.
+
+        Raises:
+            AuthenticationError: Always.
+        """
+        raise AuthenticationError("The API key was not accepted.", status=401)
+
+
+def _use_environment(
+    monkeypatch: pytest.MonkeyPatch, env: Mapping[str, str], tmp_path: pathlib.Path
+) -> None:
+    """Make `env` the whole of the credential environment, for the real CLI.
+
+    Args:
+        monkeypatch: Sets and clears the variables.
+        env: The variables to set.
+        tmp_path: Holds the document cache and is the working directory, so
+            a reference cannot collide with a file of the same name.
+    """
+    for name in ("TOC_API_KEY", "TOC_API_URL", "TOC_CONFIG_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("TMXCALIBER_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.chdir(tmp_path)
+
+
+@pytest.mark.parametrize("case", NOTED_CASES)
+def test_a_stored_endpoint_under_an_environment_key_is_noted_on_stderr(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    case: EndpointCase,
+) -> None:
+    env = case.environment(tmp_path)
+    monkeypatch.setattr(remote_cli, "TocClient", SettingsStub)
+
+    connect(env=env)
+
+    captured = capsys.readouterr()
+    assert (
+        f"Note: the key in TOC_API_KEY will be sent to {STORED_URL}, the "
+        f"endpoint stored in {env['TOC_CONFIG_FILE']}. Set TOC_API_URL to "
+        "choose a different endpoint."
+    ) in captured.err
+    assert captured.out == ""
+
+
+@pytest.mark.parametrize("case", QUIET_CASES)
+def test_nothing_is_said_about_an_endpoint_the_caller_chose_or_expects(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    case: EndpointCase,
+) -> None:
+    monkeypatch.setattr(remote_cli, "TocClient", SettingsStub)
+
+    connect(env=case.environment(tmp_path))
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out == ""
+
+
+def test_an_api_command_notes_on_stderr_and_leaves_stdout_to_the_json(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _use_environment(monkeypatch, HAZARD.environment(tmp_path), tmp_path)
+    monkeypatch.setattr(remote_cli, "TocClient", SettingsStub)
+    monkeypatch.setattr(sys, "argv", ["tmxcaliber", "me"])
+
+    cli_module.main()
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["tenantId"] == "t-1"
+    assert NOTE in captured.err
+
+
+def test_the_note_is_written_even_when_the_request_then_fails(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The caller most needs to know which API refused the key.
+    _use_environment(monkeypatch, HAZARD.environment(tmp_path), tmp_path)
+    monkeypatch.setattr(remote_cli, "TocClient", RefusingClient)
+    monkeypatch.setattr(sys, "argv", ["tmxcaliber", "me"])
+
+    with pytest.raises(SystemExit) as caught:
+        cli_module.main()
+
+    captured = capsys.readouterr()
+    assert caught.value.code == 1
+    assert NOTE in captured.err
+    assert NOTE not in captured.out
+
+
+def test_a_reference_given_as_a_document_source_is_noted_too(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _use_environment(monkeypatch, HAZARD.environment(tmp_path), tmp_path)
+    monkeypatch.setattr(remote_cli, "TocClient", SettingsStub)
+    argv = ["tmxcaliber", "list", "feature-classes", "aws-s3", "--format", "json"]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    cli_module.main()
+
+    captured = capsys.readouterr()
+    assert isinstance(json.loads(captured.out), list)
+    assert NOTE in captured.err
+
+
+def test_the_note_is_written_once_per_run(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # `create-change-log` resolves two references in one run.
+    _use_environment(monkeypatch, HAZARD.environment(tmp_path), tmp_path)
+    monkeypatch.setattr(remote_cli, "TocClient", SettingsStub)
+
+    resolve_command_source("aws-s3")
+    resolve_command_source("aws-s3")
+
+    assert capsys.readouterr().err.count(NOTE) == 1
+
+
+def test_a_local_file_never_resolves_a_credential(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Laziness is what lets a caller work on a file with no key configured.
+    _use_environment(monkeypatch, HAZARD.environment(tmp_path), tmp_path)
+    model = tmp_path / "aws-s3"
+    model.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(remote_cli, "connect", _never_called)
+
+    assert resolve_command_source(str(model)) == str(model)
+    assert capsys.readouterr().err == ""
+
+
+def _never_called() -> NoReturn:
+    """Stand in for `connect` where a source must not reach the API.
+
+    Raises:
+        AssertionError: Always.
+    """
+    raise AssertionError("a local source reached for a credential")

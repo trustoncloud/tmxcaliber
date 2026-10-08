@@ -22,7 +22,6 @@ from .lib.filter import Filter
 from .lib.filter_applier import FilterApplier
 from .lib.remote.errors import RemoteError
 from .lib.remote.ref import is_remote_ref
-from .lib.remote.resolve import resolve_source
 from .lib.scf import get_scf_data
 from .lib.threatmodel_data import (
     ThreatModelData,
@@ -44,6 +43,7 @@ from .remote_cli import (
     INCOMPLETE_EXIT,
     add_api_parsers,
     add_init_parser,
+    resolve_command_source,
     run_api_command,
     run_init,
     selected_route,
@@ -376,7 +376,7 @@ def get_recursive_json_file_paths(source: str) -> list[str]:
 def get_service_rows(source: str) -> list[dict[str, str]]:
     service_rows: list[dict[str, str]] = []
 
-    for json_file_path in get_recursive_json_file_paths(resolve_source(source)):
+    for json_file_path in get_recursive_json_file_paths(resolve_command_source(source)):
         data = load_json_data(json_file_path)
         metadata_block = data.get("metadata", {})
         if not isinstance(metadata_block, dict):
@@ -405,7 +405,7 @@ def get_service_rows(source: str) -> list[dict[str, str]]:
 
 
 def get_feature_class_rows(source: str) -> list[dict[str, str]]:
-    data = load_json_data(resolve_source(source))
+    data = load_json_data(resolve_command_source(source))
     feature_classes = data.get("feature_classes", {})
     if not isinstance(feature_classes, dict):
         return []
@@ -449,7 +449,7 @@ def get_input_data(
         # A reference becomes a cached path here; a path is handed back
         # unchanged, so every existing invocation reaches the same code it
         # always did.
-        source = resolve_source(source)
+        source = resolve_command_source(source)
         if not os.path.exists(source):
             print(f"File or directory not found: {source}")
             sys.exit(1)
