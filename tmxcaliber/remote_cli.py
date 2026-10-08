@@ -48,6 +48,7 @@ from .lib.remote.contract import (
 )
 from .lib.remote.errors import ConfigurationError, RemoteError
 from .lib.remote.ref import parse_ref
+from .lib.remote.resolve import resolve_source
 
 #: The namespace key each nesting level of the command tree parks its word in.
 #:
@@ -283,6 +284,77 @@ def _report_envelope(envelope: Mapping[str, Any]) -> None:
         )
 
 
+#: Stored-endpoint notes this process has already written. A process is one
+#: invocation, and `create-change-log` can resolve two references in it;
+#: the same note twice would read like two different problems.
+_noted: set[tuple[str, str]] = set()
+
+
+def _note_stored_endpoint(settings: Settings) -> None:
+    """Say, on stderr, that an environment key is going to a stored endpoint.
+
+    The endpoint is resolved independently of the key, so a key exported in
+    TOC_API_KEY goes to whatever endpoint `init` stored unless TOC_API_URL
+    names another. That precedence is deliberate and stays; this only makes
+    it visible. Written before any request, so the reader learns it even
+    when the call then fails, and on stderr, so JSON on stdout is untouched.
+
+    Args:
+        settings: The settings a command is about to use.
+    """
+    if not settings.sends_environment_key_to_stored_endpoint:
+        return
+    said = (settings.base_url, settings.endpoint_source)
+    if said in _noted:
+        return
+    _noted.add(said)
+    print(
+        Fore.YELLOW
+        + f"Note: the key in TOC_API_KEY will be sent to {settings.base_url}, "
+        f"the endpoint stored in {settings.endpoint_source}. Set TOC_API_URL "
+        "to choose a different endpoint." + Fore.RESET,
+        file=sys.stderr,
+    )
+
+
+def connect(env: Mapping[str, str] | None = None) -> TocClient:
+    """Build the client a command uses when none was given.
+
+    **Every command that resolves settings from the environment and the file
+    comes through here**, the API commands and a ThreatModel reference given
+    as a document source alike, so what the reader is told about those
+    settings is said in one place. `init` is the deliberate exception: it
+    verifies the key it just stored rather than what resolution would pick.
+
+    Args:
+        env: The environment to read, defaulting to the real one.
+
+    Returns:
+        A client over the resolved settings.
+
+    Raises:
+        ConfigurationError: If no usable credential is configured.
+    """
+    settings = load_settings(env=env)
+    _note_stored_endpoint(settings)
+    return TocClient(settings)
+
+
+def resolve_command_source(source: str) -> str:
+    """Resolve a document command's source, reaching the API through `connect`.
+
+    Args:
+        source: A filesystem path, a directory, or a ThreatModel reference.
+
+    Returns:
+        A path. The input unchanged when it was already one.
+
+    Raises:
+        RemoteError: On any transport, credential or server failure.
+    """
+    return resolve_source(source, connect=connect)
+
+
 def run_api_command(
     params: Namespace,
     *,
@@ -307,7 +379,7 @@ def run_api_command(
     """
     route = selected_route(params)
     assert route is not None, "run_api_command called for a non-API command"
-    api = client or TocClient(load_settings())
+    api = client or connect()
     path = _path_for(route, params)
     query = {name: str(getattr(params, name, "") or "") for name in route.filters}
 

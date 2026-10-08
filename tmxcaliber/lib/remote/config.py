@@ -28,6 +28,12 @@ from .errors import ConfigurationError
 #: The API this client talks to, unless the environment or the file says otherwise.
 DEFAULT_BASE_URL: Final[str] = "https://api.trustoncloud.com"
 
+#: The environment variable holding a key, and the source a key from it reports.
+KEY_VARIABLE: Final[str] = "TOC_API_KEY"
+
+#: The environment variable holding an endpoint, and the source it reports.
+URL_VARIABLE: Final[str] = "TOC_API_URL"
+
 #: Seconds to wait on a single request before giving up.
 #:
 #: `lib/cache.py` sets no timeout at all, which is the mistake not to repeat:
@@ -103,11 +109,37 @@ class Settings:
         credentials: The resolved API key.
         base_url: The API root, without a trailing slash.
         timeout: Seconds to wait on one request.
+        endpoint_source: Where ``base_url`` came from, for diagnostics:
+            ``TOC_API_URL``, the credentials file's path, or empty for the
+            default.
     """
 
     credentials: Credentials
     base_url: str = DEFAULT_BASE_URL
     timeout: float = DEFAULT_TIMEOUT
+    endpoint_source: str = ""
+
+    @property
+    def sends_environment_key_to_stored_endpoint(self) -> bool:
+        """Whether a key from the environment goes to an endpoint from the file.
+
+        The key and the endpoint are resolved independently (see
+        `load_settings`), so exporting ``TOC_API_KEY`` without ``TOC_API_URL``
+        keeps an endpoint that `init` stored earlier. That is deliberate, and
+        also easy to miss when the key was meant for another API, so this is
+        the condition a caller should be told about. A stored endpoint equal to
+        the default is excluded: ``base_url`` carries no trailing slash, so
+        ``https://api.trustoncloud.com/`` compares equal to the default.
+
+        Returns:
+            True when the key came from ``TOC_API_KEY``, the endpoint came
+            from the credentials file, and that endpoint is not the default.
+        """
+        return (
+            self.credentials.source == KEY_VARIABLE
+            and self.endpoint_source not in ("", URL_VARIABLE)
+            and self.base_url != DEFAULT_BASE_URL
+        )
 
 
 def config_path(env: Mapping[str, str]) -> pathlib.Path:
@@ -305,16 +337,27 @@ def load_settings(
     # silently moved a configured custom endpoint back to the default, so
     # a caller could verify one API and then call another.
     stored = _from_file(environ)
-    url = environ.get("TOC_API_URL", "").strip() or (stored[1] if stored else "")
+    url = environ.get(URL_VARIABLE, "").strip()
+    endpoint_source = URL_VARIABLE if url else ""
+    if not url and stored is not None and stored[1]:
+        # Where the endpoint came from is recorded rather than printed, so
+        # the CLI can name the file that chose it. See `Settings`.
+        url, endpoint_source = stored[1], stored[2]
 
-    key = environ.get("TOC_API_KEY", "").strip()
-    source = "TOC_API_KEY"
+    key = environ.get(KEY_VARIABLE, "").strip()
+    source = KEY_VARIABLE
     if not key:
         if stored is None:
             raise ConfigurationError(_HELP, code="no_credential")
         key, _, source = stored
 
-    return settings_for(key, api_url=url, source=source, timeout=timeout)
+    return settings_for(
+        key,
+        api_url=url,
+        source=source,
+        endpoint_source=endpoint_source,
+        timeout=timeout,
+    )
 
 
 def settings_for(
@@ -322,6 +365,7 @@ def settings_for(
     *,
     api_url: str = "",
     source: str = "",
+    endpoint_source: str = "",
     timeout: float = DEFAULT_TIMEOUT,
 ) -> Settings:
     """Build settings from a credential given explicitly.
@@ -335,6 +379,8 @@ def settings_for(
         api_key: The key.
         api_url: The endpoint, or empty for the default.
         source: Where the key came from, for diagnostics.
+        endpoint_source: Where the endpoint came from, for diagnostics, or
+            empty when ``api_url`` is.
         timeout: Seconds to wait on one request.
 
     Returns:
@@ -358,6 +404,7 @@ def settings_for(
         credentials=Credentials(api_key=api_key, source=source),
         base_url=base_url,
         timeout=timeout,
+        endpoint_source=endpoint_source,
     )
 
 
