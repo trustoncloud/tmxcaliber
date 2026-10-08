@@ -116,7 +116,10 @@ tmxcaliber init
 It asks for the key without echoing it, stores it in
 `~/.trustoncloud/credentials` readable only by you, and then calls the API to
 confirm it works and tell you which tenant it belongs to. Run it again any
-time to see what is currently set, or to change the endpoint.
+time to see what is currently set.
+
+If TrustOnCloud has given you a different endpoint, store it with
+`tmxcaliber init --api-url <url>`. It is kept until you pass the option again.
 
 In CI, where there is no terminal to prompt, pipe the key in:
 
