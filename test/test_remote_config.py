@@ -415,7 +415,7 @@ def test_an_environment_key_going_to_a_stored_endpoint_is_flagged(
     assert found.credentials.api_key == KEY
     assert found.base_url == STORED_URL
     assert found.endpoint_source == env["TOC_CONFIG_FILE"]
-    assert found.sends_environment_key_to_stored_endpoint is True
+    assert found.sends_key_to_stored_endpoint is True
 
 
 @pytest.mark.parametrize("case", QUIET_CASES)
@@ -424,7 +424,7 @@ def test_an_endpoint_the_caller_chose_or_expects_is_not_flagged(
 ) -> None:
     found = load_settings(env=case.environment(tmp_path))
 
-    assert found.sends_environment_key_to_stored_endpoint is False
+    assert found.sends_key_to_stored_endpoint is False
 
 
 @pytest.mark.parametrize(
