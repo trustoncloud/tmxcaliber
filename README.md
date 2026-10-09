@@ -206,6 +206,30 @@ curl -H "Authorization: Bearer $TOC_API_KEY" https://api.trustoncloud.com/v1/api
 A document pulled with your key is licensed to your organization and carries
 its attribution. It is not a file to redistribute.
 
+### Use the API from Python
+
+The same commands are available as a library. Each command becomes a call by
+turning its spaces into dots: the positional stays positional, and each
+option becomes a keyword argument.
+
+```python
+from tmxcaliber import Client
+
+api = Client()
+api.me()
+api.threatmodels.list(provider="aws")
+api.threatmodels.threats("aws-s3", feature_class="S3.FC1")
+api.compliance.mappings.list(framework="nist-800-53-r5")
+```
+
+`Client()` finds the key and endpoint exactly as the CLI does. To use a key
+kept somewhere else, pass it: `Client(api_key=..., api_url=...)`. A collection
+comes back as a list of every row. An incomplete answer raises
+`IncompleteAnswer`, which carries the rows that did arrive, unless you pass
+`allow_incomplete=True`. Every failure is a `RemoteError` subclass, such as
+`AuthenticationError` or `NotFound`, importable from `tmxcaliber`.
+`api.get(path)` and `api.paginate(path)` remain available for a raw path.
+
 ## Command Overview
 
 | Command | Purpose | Typical output |

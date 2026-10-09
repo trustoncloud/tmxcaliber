@@ -34,6 +34,12 @@ KEY_VARIABLE: Final[str] = "TOC_API_KEY"
 #: The environment variable holding an endpoint, and the source it reports.
 URL_VARIABLE: Final[str] = "TOC_API_URL"
 
+#: The source a key reports when a library caller passed it to `Client`.
+KEY_ARGUMENT: Final[str] = "api_key"
+
+#: The source an endpoint reports when a library caller passed it to `Client`.
+URL_ARGUMENT: Final[str] = "api_url"
+
 #: Seconds to wait on a single request before giving up.
 #:
 #: `lib/cache.py` sets no timeout at all, which is the mistake not to repeat:
@@ -110,8 +116,8 @@ class Settings:
         base_url: The API root, without a trailing slash.
         timeout: Seconds to wait on one request.
         endpoint_source: Where ``base_url`` came from, for diagnostics:
-            ``TOC_API_URL``, the credentials file's path, or empty for the
-            default.
+            ``api_url``, ``TOC_API_URL``, the credentials file's path, or
+            empty for the default.
     """
 
     credentials: Credentials
@@ -120,25 +126,48 @@ class Settings:
     endpoint_source: str = ""
 
     @property
-    def sends_environment_key_to_stored_endpoint(self) -> bool:
-        """Whether a key from the environment goes to an endpoint from the file.
+    def sends_key_to_stored_endpoint(self) -> bool:
+        """Whether a key given for this call goes to an endpoint from the file.
 
         The key and the endpoint are resolved independently (see
-        `load_settings`), so exporting ``TOC_API_KEY`` without ``TOC_API_URL``
-        keeps an endpoint that `init` stored earlier. That is deliberate, and
-        also easy to miss when the key was meant for another API, so this is
-        the condition a caller should be told about. A stored endpoint equal to
-        the default is excluded: ``base_url`` carries no trailing slash, so
+        `load_settings`), so exporting ``TOC_API_KEY``, or passing ``api_key``
+        to `Client`, without also naming an endpoint keeps one that `init`
+        stored earlier. That is deliberate, and also easy to miss when the key
+        was meant for another API, so this is the condition a caller should be
+        told about. A stored endpoint equal to the default is excluded:
+        ``base_url`` carries no trailing slash, so
         ``https://api.trustoncloud.com/`` compares equal to the default.
 
         Returns:
-            True when the key came from ``TOC_API_KEY``, the endpoint came
-            from the credentials file, and that endpoint is not the default.
+            True when the key came from ``TOC_API_KEY`` or the ``api_key``
+            argument, the endpoint came from the credentials file, and that
+            endpoint is not the default.
         """
         return (
-            self.credentials.source == KEY_VARIABLE
-            and self.endpoint_source not in ("", URL_VARIABLE)
+            self.credentials.source in (KEY_VARIABLE, KEY_ARGUMENT)
+            and self.endpoint_source not in ("", URL_VARIABLE, URL_ARGUMENT)
             and self.base_url != DEFAULT_BASE_URL
+        )
+
+    @property
+    def stored_endpoint_note(self) -> str:
+        """What to tell a caller when `sends_key_to_stored_endpoint` holds.
+
+        One wording for both surfaces: the CLI prints it on stderr and
+        `Client` raises it as a warning.
+
+        Returns:
+            The note, naming where the key came from and how to override
+            the endpoint in the same terms.
+        """
+        if self.credentials.source == KEY_ARGUMENT:
+            given, override = "passed as api_key", "Pass api_url"
+        else:
+            given, override = f"in {KEY_VARIABLE}", f"Set {URL_VARIABLE}"
+        return (
+            f"Note: the key {given} will be sent to {self.base_url}, the "
+            f"endpoint stored in {self.endpoint_source}. {override} to choose "
+            "a different endpoint."
         )
 
 
@@ -314,15 +343,21 @@ def load_settings(
     *,
     env: Mapping[str, str] | None = None,
     timeout: float = DEFAULT_TIMEOUT,
+    api_key: str = "",
+    api_url: str = "",
 ) -> Settings:
     """Resolve the credential and endpoint.
 
     The environment wins over the file, so a one-off override needs no edit
-    and no profile.
+    and no profile. An explicit argument wins over both, which is how a
+    library caller hands over a key it keeps elsewhere.
 
     Args:
         env: The environment to read, defaulting to the real one.
         timeout: Seconds to wait on one request.
+        api_key: A key to use instead of the environment's or the file's.
+        api_url: An endpoint to use instead of the environment's or the
+            file's.
 
     Returns:
         The resolved settings.
@@ -336,16 +371,22 @@ def load_settings(
     # file only when the key was absent meant that setting TOC_API_KEY
     # silently moved a configured custom endpoint back to the default, so
     # a caller could verify one API and then call another.
-    stored = _from_file(environ)
-    url = environ.get(URL_VARIABLE, "").strip()
-    endpoint_source = URL_VARIABLE if url else ""
+    # A caller who passed both has said everything the file could, so the
+    # file is not read, nor refused for its permissions.
+    explicit = bool(api_key.strip() and api_url.strip())
+    stored = None if explicit else _from_file(environ)
+    url, endpoint_source = api_url.strip(), URL_ARGUMENT
+    if not url:
+        url = environ.get(URL_VARIABLE, "").strip()
+        endpoint_source = URL_VARIABLE if url else ""
     if not url and stored is not None and stored[1]:
         # Where the endpoint came from is recorded rather than printed, so
         # the CLI can name the file that chose it. See `Settings`.
         url, endpoint_source = stored[1], stored[2]
 
-    key = environ.get(KEY_VARIABLE, "").strip()
-    source = KEY_VARIABLE
+    key, source = api_key.strip(), KEY_ARGUMENT
+    if not key:
+        key, source = environ.get(KEY_VARIABLE, "").strip(), KEY_VARIABLE
     if not key:
         if stored is None:
             raise ConfigurationError(_HELP, code="no_credential")

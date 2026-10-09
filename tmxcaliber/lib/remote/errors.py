@@ -3,13 +3,15 @@
 One class per error code the API publishes, so a caller can branch on the
 failure rather than on a string. The codes themselves are owned by the API
 (`app/containers/public-api/src/errors.ts`); this module maps them and adds
-two local failures the server never sends.
+three local failures the server never sends.
 
 Every message carries the server's `requestId` when there is one, because the
 API's own contract is that a caller quotes it to support.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 
 class RemoteError(Exception):
@@ -123,6 +125,31 @@ class ContractViolation(RemoteError):
 
 class ConfigurationError(RemoteError):
     """No usable credential was found, so no call was attempted."""
+
+
+class IncompleteAnswer(RemoteError):
+    """The API answered, and said the answer is missing rows.
+
+    Local rather than served: the call succeeded, and its page named rows it
+    could not resolve. Raised so a caller cannot take a partial collection
+    for a whole one; the rows it did get travel with it.
+
+    Args:
+        message: Which fields reported missing rows, and their values.
+        result: The rows the API did return.
+        envelope: The page's fields other than the paging ones.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        result: list[dict[str, Any]],
+        envelope: dict[str, Any],
+    ) -> None:
+        super().__init__(message, code="incomplete")
+        self.result = result
+        self.envelope = envelope
 
 
 #: Each published error code, mapped to the class that carries it.
