@@ -151,8 +151,8 @@ def test_the_mappings_route_requires_its_completeness_field() -> None:
 
 
 def test_every_incompleteness_field_is_required_by_some_route() -> None:
-    """A name the CLI watches for must be one the contract actually requires."""
-    from tmxcaliber.remote_cli import INCOMPLETENESS_FIELDS
+    """A name the CLI and Client watch for must be one the contract requires."""
+    from tmxcaliber.lib.remote.operations import INCOMPLETENESS_FIELDS
 
     required = {
         name

@@ -41,27 +41,18 @@ from .lib.remote.config import (
 from .lib.remote.contract import (
     ROUTES,
     Route,
-    required_page_fields,
     required_parameters,
     values_field,
     values_route,
 )
 from .lib.remote.errors import ConfigurationError, RemoteError
-from .lib.remote.ref import parse_ref
+from .lib.remote.operations import call_route, incompleteness_fields
 from .lib.remote.resolve import resolve_source
 
 #: The namespace key each nesting level of the command tree parks its word in.
 #:
 #: `operation` is the top level, which the existing commands already use.
 LEVEL_DEST = "api_level_{depth}"
-
-#: Page fields that, when not empty, mean the rows are incomplete.
-#:
-#: The contract says so in each field's description; the code cannot read that,
-#: so the names live here, and a test holds each to a route that requires it.
-#: A command over such a route exits ``INCOMPLETE_EXIT`` when the API reports
-#: missing rows, unless the caller passed ``--allow-incomplete``.
-INCOMPLETENESS_FIELDS: tuple[str, ...] = ("unresolvedTmIds",)
 
 #: The exit status of a command whose answer the API reported incomplete.
 INCOMPLETE_EXIT = 3
@@ -163,7 +154,7 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
                 "this only changes how many calls that takes."
             ),
         )
-    if _incompleteness_fields(route):
+    if incompleteness_fields(route):
         parser.add_argument(
             "--allow-incomplete",
             action="store_true",
@@ -180,19 +171,6 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
         help="file to write the result to. Prints to stdout when omitted.",
     )
     parser.set_defaults(api_route=route)
-
-
-def _incompleteness_fields(route: Route) -> tuple[str, ...]:
-    """List the incompleteness fields a route's pages are required to carry.
-
-    Args:
-        route: The route.
-
-    Returns:
-        The names, in ``INCOMPLETENESS_FIELDS`` order.
-    """
-    required = required_page_fields(route.path)
-    return tuple(name for name in INCOMPLETENESS_FIELDS if name in required)
 
 
 def add_api_parsers(subparsers: _SubParsersAction[ArgumentParser]) -> None:
@@ -236,34 +214,6 @@ def selected_route(params: Namespace) -> Route | None:
     return route if isinstance(route, Route) else None
 
 
-def _path_for(route: Route, params: Namespace) -> str:
-    """Fill a route's path parameters from the parsed command.
-
-    Args:
-        route: The route.
-        params: The parsed arguments.
-
-    Returns:
-        The concrete path.
-
-    Raises:
-        ValueError: If a ThreatModel reference cannot be parsed.
-    """
-    path = route.path
-    if route.positional == "tm_id":
-        ref = parse_ref(params.tm_id)
-        path = path.replace("{provider}", ref.provider).replace(
-            "{service}", ref.service
-        )
-        # `@release` is sugar for the query parameter, so a caller can pin
-        # either way and only one of them reaches the wire.
-        if ref.release and not getattr(params, "release", ""):
-            params.release = ref.release
-    elif route.positional == "release_key":
-        path = path.replace("{releaseKey}", params.release_key)
-    return path
-
-
 def _report_envelope(envelope: Mapping[str, Any]) -> None:
     """Print what a collection said about itself beyond its rows, on stderr.
 
@@ -302,19 +252,13 @@ def _note_stored_endpoint(settings: Settings) -> None:
     Args:
         settings: The settings a command is about to use.
     """
-    if not settings.sends_environment_key_to_stored_endpoint:
+    if not settings.sends_key_to_stored_endpoint:
         return
     said = (settings.base_url, settings.endpoint_source)
     if said in _noted:
         return
     _noted.add(said)
-    print(
-        Fore.YELLOW
-        + f"Note: the key in TOC_API_KEY will be sent to {settings.base_url}, "
-        f"the endpoint stored in {settings.endpoint_source}. Set TOC_API_URL "
-        "to choose a different endpoint." + Fore.RESET,
-        file=sys.stderr,
-    )
+    print(Fore.YELLOW + settings.stored_endpoint_note + Fore.RESET, file=sys.stderr)
 
 
 def connect(env: Mapping[str, str] | None = None) -> TocClient:
@@ -379,30 +323,18 @@ def run_api_command(
     """
     route = selected_route(params)
     assert route is not None, "run_api_command called for a non-API command"
-    api = client or connect()
-    path = _path_for(route, params)
-    query = {name: str(getattr(params, name, "") or "") for name in route.filters}
-
+    answer = call_route(
+        client or connect(),
+        route,
+        str(getattr(params, route.positional, "") or "") if route.positional else "",
+        {name: str(getattr(params, name, "") or "") for name in route.filters},
+        limit=int(getattr(params, "limit", 0) or 0),
+    )
     if route.paged:
-        envelope: dict[str, Any] = {}
-        rows = list(
-            api.paginate(
-                path,
-                query,
-                page_size=int(getattr(params, "limit", 0) or 0),
-                envelope=envelope,
-                required=required_page_fields(route.path),
-            )
-        )
-        _report_envelope(envelope)
-        if incomplete is not None:
-            incomplete.extend(
-                f"{name}: {json.dumps(envelope[name])}"
-                for name in _incompleteness_fields(route)
-                if envelope.get(name)
-            )
-        return rows, "json"
-    return api.get(path, query), "json"
+        _report_envelope(answer.envelope)
+    if incomplete is not None:
+        incomplete.extend(answer.missing)
+    return answer.result, "json"
 
 
 def add_init_parser(subparsers: _SubParsersAction[ArgumentParser]) -> None:

@@ -9,6 +9,7 @@ working on local files is never asked for a credential.
 
 from __future__ import annotations
 
+from .api import Client
 from .assemble import fetch_document, load_remote
 from .client import TocClient
 from .config import Credentials, Settings, load_settings
@@ -18,6 +19,7 @@ from .errors import (
     AuthenticationError,
     ConfigurationError,
     ContractViolation,
+    IncompleteAnswer,
     InvalidCursor,
     InvalidRequest,
     NotFound,
@@ -33,9 +35,11 @@ __all__ = [
     "ROUTES",
     "AddressNotAllowed",
     "AuthenticationError",
+    "Client",
     "ConfigurationError",
     "ContractViolation",
     "Credentials",
+    "IncompleteAnswer",
     "InvalidCursor",
     "InvalidRequest",
     "NotFound",
