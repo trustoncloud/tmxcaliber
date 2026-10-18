@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import json
 import pathlib
+import sys
 import urllib.parse
 import warnings
 from typing import Any
@@ -11,6 +13,7 @@ from typing import Any
 import pytest
 
 import tmxcaliber
+from tmxcaliber import cli as cli_module
 from tmxcaliber.lib.remote import api as api_module
 from tmxcaliber.lib.remote.api import CcrFetch, Client, Group, Operation
 from tmxcaliber.lib.remote.ccr import FetchResult
@@ -27,8 +30,9 @@ from tmxcaliber.lib.remote.errors import (
     IncompleteAnswer,
 )
 from tmxcaliber.lib.remote.operations import incompleteness_fields, request_for
+from tmxcaliber.remote_cli import run_ccr_fetch
 
-from .test_remote_ccr import PackClient, two_packs
+from .test_remote_ccr import MANIFEST, PackClient, two_packs
 from .test_remote_client import FakeBytesResponse, FakeOpener, FakeResponse
 from .test_remote_config import HAZARD, KEY, OTHER, STORED_URL, write_config
 
@@ -395,6 +399,90 @@ def test_fetch_lists_the_selected_rules_through_the_api() -> None:
     assert isinstance(result, FetchResult)
     assert [row["ruleId"] for row in result.rows] == ["S3.C20"]
     assert result.written == []
+
+
+def pack_backed_client(monkeypatch: pytest.MonkeyPatch) -> Client:
+    """A real `Client` whose API calls are answered from fixture packs.
+
+    The aws-s3 pack's rules ship different modes, and one matcher or both, so
+    each filter keeps its own rows and files. Nothing is written, so no archive
+    is read and that pack needs none.
+
+    Args:
+        monkeypatch: Replaces the client's three transport calls.
+
+    Returns:
+        The client.
+    """
+    fake = PackClient(
+        {"aws-s3": (b"", MANIFEST), "gcp-bigquery": two_packs()["gcp-bigquery"]}
+    )
+    client = Client()
+    for name in ("get", "get_bytes", "paginate"):
+        monkeypatch.setattr(client, name, getattr(fake, name))
+    return client
+
+
+#: The words after `ccr fetch`, and the same request through the library: its
+#: release keys and its options.
+SAME_REQUEST = [
+    pytest.param(("aws-s3",), ("aws-s3",), {}, id="named pack"),
+    pytest.param(("--provider", "gcp"), (), {"provider": ["gcp"]}, id="provider"),
+    pytest.param(("--service", "s3"), (), {"service": ["s3"]}, id="service"),
+    pytest.param(("--control", "S3.C21"), (), {"control": ["S3.C21"]}, id="control"),
+    pytest.param(("--mode", "universal"), (), {"mode": ["universal"]}, id="mode"),
+    pytest.param(("--matcher", "cloud"), (), {"matcher": ["cloud"]}, id="matcher"),
+    pytest.param(
+        ("--file", "*/remediation.md"), (), {"file": ["*/remediation.md"]}, id="file"
+    ),
+    pytest.param(
+        (
+            "aws-s3",
+            "--control",
+            "S3.C20",
+            "--control",
+            "S3.C22",
+            "--mode",
+            "allowlist",
+            "--matcher",
+            "terraform",
+            "--file",
+            "*.rego",
+        ),
+        ("aws-s3",),
+        {
+            "control": ["S3.C20", "S3.C22"],
+            "mode": ["allowlist"],
+            "matcher": ["terraform"],
+            "file": ["*.rego"],
+        },
+        id="combined",
+    ),
+]
+
+
+@pytest.mark.parametrize(("words", "release_keys", "options"), SAME_REQUEST)
+def test_fetch_returns_the_rows_the_command_prints(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    words: tuple[str, ...],
+    release_keys: tuple[str, ...],
+    options: dict[str, list[str]],
+) -> None:
+    # Both entry points map their arguments onto `fetch` separately, so one of
+    # them can wire a filter to the wrong field while the other stays right.
+    client = pack_backed_client(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["tmxcaliber", "ccr", "fetch", *words])
+    status = run_ccr_fetch(cli_module.get_params(), client=client)
+    printed = json.loads(capsys.readouterr().out)
+
+    result = client.ccr.fetch(*release_keys, **options)
+
+    assert status == 0
+    assert printed == result.rows
+    # A request that kept every row would match even if one side ignored it.
+    assert result.rows
+    assert result.rows != client.ccr.fetch().rows
 
 
 def test_a_route_the_api_adds_at_ccr_fetch_is_refused(
