@@ -274,23 +274,25 @@ def test_a_matching_archive_verifies() -> None:
 
 
 @pytest.mark.parametrize(
-    "block",
+    ("block", "code"),
     [
-        {"sha256": "0" * 64},
-        {"bytes": 1},
-        None,
+        ({"sha256": "0" * 64}, "archive_mismatch"),
+        ({"bytes": 1}, "archive_mismatch"),
+        (None, "bad_manifest"),
     ],
     ids=["digest", "size", "absent"],
 )
-def test_an_archive_unlike_its_manifest_is_refused(block: Any) -> None:
+def test_an_archive_unlike_its_manifest_is_refused(block: Any, code: str) -> None:
     data, manifest = pack(ENTRIES)
     if block is None:
         del manifest["bundle"]
     else:
         manifest["bundle"] = {**manifest["bundle"], **block}
 
-    with pytest.raises(ContractViolation):
+    with pytest.raises(ContractViolation) as caught:
         verify_archive(data, manifest, "aws-s3")
+
+    assert caught.value.code == code
 
 
 def test_only_the_selected_files_are_written(tmp_path: pathlib.Path) -> None:
@@ -649,6 +651,8 @@ def with_invalid_utf8_name(data: bytes, header: str) -> bytes:
     "damaged",
     [
         b"this is not a zip",
+        archive_of(ENTRIES)[:-30],
+        archive_of(ENTRIES)[:70],
         archive_of(ENTRIES).replace(b"package a", b"package b"),
         retagged(archive_of(ENTRIES), flags=0x1),
         retagged(archive_of(ENTRIES), method=99),
@@ -661,6 +665,8 @@ def with_invalid_utf8_name(data: bytes, header: str) -> bytes:
     ],
     ids=[
         "not-a-zip",
+        "cut-in-the-end-record",
+        "cut-in-the-first-entry",
         "bad-crc",
         "encrypted",
         "unsupported",
