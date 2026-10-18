@@ -606,14 +606,19 @@ def test_a_bytes_request_refuses_a_body_of_another_media_type(served: str) -> No
     assert raised.value.code == "bad_body"
 
 
-def test_a_refused_media_type_names_what_was_served_and_the_request() -> None:
-    opener = FakeOpener(
-        [
-            FakeBytesResponse(
-                b"{}", {"Content-Type": "application/json", "X-Request-Id": "req-9"}
-            )
-        ]
-    )
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Content-Type": "application/json", "X-Request-Id": "req-9"},
+        {"content-type": "application/json", "x-request-id": "req-9"},
+    ],
+)
+def test_a_refused_media_type_names_what_was_served_and_the_request(
+    headers: dict[str, str],
+) -> None:
+    # The request id is what support asks for, so it must survive a distribution
+    # in front of the origin that lowercases every header name.
+    opener = FakeOpener([FakeBytesResponse(b"{}", headers)])
     client = TocClient(settings(), opener=opener)
 
     with pytest.raises(errors.ContractViolation) as raised:
