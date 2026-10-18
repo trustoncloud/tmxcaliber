@@ -269,6 +269,10 @@ def _add_ccr_fetch(ccr: _SubParsersAction[ArgumentParser]) -> None:
 def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
     """Execute `ccr fetch`.
 
+    The files written for the packs that completed are printed even when
+    another pack failed, and each failed pack gets one line on stderr saying
+    at which stage it failed and why.
+
     Args:
         params: The parsed arguments.
         client: A client to use, built from the environment when omitted.
@@ -277,7 +281,8 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
         The exit status: 0, 1 when a pack failed, 2 for a usage error.
 
     Raises:
-        RemoteError: On a credential, transport or server failure.
+        RemoteError: On a failure that is not one pack's alone, such as a
+            credential failure.
     """
     if params.release_keys and (params.provider or params.service):
         print(
@@ -310,8 +315,8 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
             Fore.YELLOW + "No rule matched the filters given." + Fore.RESET,
             file=sys.stderr,
         )
-    for key, reason in result.failed.items():
-        print(Fore.RED + f"{key}: {reason}" + Fore.RESET, file=sys.stderr)
+    for key, failure in result.failed.items():
+        print(Fore.RED + f"{key}: {failure}" + Fore.RESET, file=sys.stderr)
     return 1 if result.failed else 0
 
 

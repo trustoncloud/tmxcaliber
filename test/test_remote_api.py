@@ -17,12 +17,14 @@ from tmxcaliber import cli as cli_module
 from tmxcaliber.lib.remote import api as api_module
 from tmxcaliber.lib.remote.api import CcrFetch, Client, Group, Operation
 from tmxcaliber.lib.remote.ccr import FetchResult
+from tmxcaliber.lib.remote.client import MAX_ATTEMPTS
 from tmxcaliber.lib.remote.config import DEFAULT_BASE_URL
 from tmxcaliber.lib.remote.contract import (
     ROUTES,
     Route,
     required_page_fields,
     required_parameters,
+    route_for,
 )
 from tmxcaliber.lib.remote.errors import (
     ConfigurationError,
@@ -33,7 +35,12 @@ from tmxcaliber.lib.remote.operations import incompleteness_fields, request_for
 from tmxcaliber.remote_cli import run_ccr_fetch
 
 from .test_remote_ccr import MANIFEST, PackClient, two_packs
-from .test_remote_client import FakeBytesResponse, FakeOpener, FakeResponse
+from .test_remote_client import (
+    FakeBytesResponse,
+    FakeOpener,
+    FakeResponse,
+    http_error,
+)
 from .test_remote_config import HAZARD, KEY, OTHER, STORED_URL, write_config
 
 #: A value for each kind of positional the route table uses.
@@ -399,6 +406,58 @@ def test_fetch_lists_the_selected_rules_through_the_api() -> None:
     assert isinstance(result, FetchResult)
     assert [row["ruleId"] for row in result.rows] == ["S3.C20"]
     assert result.written == []
+
+
+def test_fetch_goes_on_past_an_archive_the_api_keeps_refusing(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    packs = two_packs()
+    listing = route_for(("ccr", "packs", "list"))
+    assert listing is not None
+    refused = {
+        "error": {
+            "code": "unavailable",
+            "message": "The source archive of aws-s3 does not match its "
+            "published digest.",
+            "requestId": "r-9",
+        }
+    }
+    opener = FakeOpener(
+        [
+            FakeResponse(
+                page(
+                    listing, [{"releaseKey": "aws-s3"}, {"releaseKey": "gcp-bigquery"}]
+                )
+            ),
+            FakeResponse(packs["aws-s3"][1]),
+            # The client retries a 503 until its attempts are spent. Each answer
+            # is its own error, because an error's body can be read only once.
+            *(http_error(503, refused) for _ in range(MAX_ATTEMPTS)),
+            FakeResponse(packs["gcp-bigquery"][1]),
+            FakeBytesResponse(
+                packs["gcp-bigquery"][0], {"Content-Type": "application/zip"}
+            ),
+        ]
+    )
+    client = Client(opener=opener)
+    monkeypatch.setattr(client, "_sleep", lambda _: None)
+
+    result = client.ccr.fetch(out=tmp_path)
+
+    failure = result.failed["aws-s3"]
+    assert (failure.stage, failure.code, failure.status, failure.request_id) == (
+        "archive",
+        "unavailable",
+        503,
+        "r-9",
+    )
+    assert failure.release_id == "d07d6aee"
+    # The server's words, without the request id that the error's text adds.
+    assert failure.message == refused["error"]["message"]
+    assert result.written == [
+        tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json"
+    ]
+    assert opener.answers == []
 
 
 def pack_backed_client(monkeypatch: pytest.MonkeyPatch) -> Client:

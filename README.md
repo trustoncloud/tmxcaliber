@@ -233,8 +233,8 @@ api.me()
 api.threatmodels.list(provider="aws")
 api.threatmodels.threats("aws-s3", feature_class="S3.FC1")
 result = api.ccr.fetch("aws-s3", control=["S3.C20"], out="rules")
-if result.failed:
-    raise RuntimeError(f"Packs not fetched: {result.failed}")
+for key, failure in result.failed.items():
+    print(key, failure.stage, failure.code, failure.status, failure.request_id)
 api.compliance.mappings.list(framework="nist-800-53-r5")
 ```
 
@@ -249,15 +249,22 @@ raw path.
 
 `api.ccr.fetch` composes several routes, so it answers differently. It returns
 a `FetchResult` with `rows` (one per selected rule), `written` (the files it
-wrote) and `failed` (each pack it could not read, by release key, with the
-reason). A pack that is unknown, outside your subscription, republished twice
-during the read, or whose archive cannot be verified or written is named in
-`failed` and does not raise, while the other packs still complete, so check
-`failed` before relying on the files. The command line makes that check for
-you: it names each failed pack on stderr and exits 1. A credential, transport
-or server failure still raises a `RemoteError`. Each option that repeats on
-the command line (`provider`, `service`, `control`, `mode`, `matcher` and
-`file`) takes one string or a list of strings.
+wrote) and `failed` (each pack it could not fetch, by release key, as a
+`PackFailure`). A pack that is unknown, outside your subscription, republished
+twice during the read, whose archive the API still refuses after the client's
+retries, or whose archive cannot be verified or written is named in `failed`
+and does not raise, while the other packs still complete, so check `failed`
+before relying on the files. A `PackFailure` carries the `stage` that failed
+(`manifest`, `archive`, `verify` or `extract`), the `code`, the server's
+`message`, the HTTP `status`, the `request_id`, the `release_id` and a `hint`
+on what to do. The stage, code and message tell a damaged archive (stage
+`archive`, where the server says the archive does not match its published
+digest) apart from an outage, and the request id is what support will ask
+for. The command line makes that check for you: it prints one line per failed
+pack on stderr and exits 1. A credential or rate limit failure, or an outage
+that reaches the pack list or a manifest, still raises a `RemoteError`. Each
+option that repeats on the command line (`provider`, `service`, `control`,
+`mode`, `matcher` and `file`) takes one string or a list of strings.
 
 ## Command Overview
 

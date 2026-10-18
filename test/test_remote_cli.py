@@ -15,7 +15,7 @@ from tmxcaliber import cli as cli_module
 from tmxcaliber import remote_cli
 from tmxcaliber.lib.remote.config import Settings
 from tmxcaliber.lib.remote.contract import route_for
-from tmxcaliber.lib.remote.errors import AuthenticationError
+from tmxcaliber.lib.remote.errors import AuthenticationError, ServiceUnavailable
 from tmxcaliber.lib.remote.resolve import resolve_source
 from tmxcaliber.remote_cli import (
     connect,
@@ -876,8 +876,40 @@ def test_a_failed_pack_exits_non_zero_and_names_it(
 
     status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
 
+    err = capsys.readouterr().err
     assert status == 1
-    assert "aws-nothing" in capsys.readouterr().err
+    assert "aws-nothing: manifest failed: " in err
+    assert "not_found" in err
+    # Nothing matched because the pack failed, which the line above says, so
+    # a note about the filters would point the reader the wrong way.
+    assert "No rule matched" not in err
+
+
+def test_a_refused_archive_is_reported_and_the_other_packs_are_written(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = PackClient(two_packs())
+    client.archive_errors["aws-s3"] = ServiceUnavailable(
+        "The source archive of aws-s3 does not match its published digest.",
+        code="unavailable",
+        status=503,
+        request_id="r-1",
+    )
+    params = _fetch_params(monkeypatch, "--out", str(tmp_path))
+
+    status = run_ccr_fetch(params, client=client)  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    written = tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json"
+    assert status == 1
+    assert captured.out.split() == [str(written)]
+    [line] = captured.err.splitlines()
+    assert "aws-s3: archive failed: " in line
+    assert "unavailable" in line
+    assert "request r-1" in line
+    assert "No rule matched" not in captured.err
 
 
 def test_main_runs_fetch_and_exits_with_its_status(

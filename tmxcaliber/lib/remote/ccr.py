@@ -31,7 +31,13 @@ from typing import Any, Final
 
 from .client import TocClient
 from .contract import Route, route_for
-from .errors import ContractViolation, NotFound, ReleaseSuperseded
+from .errors import (
+    ContractViolation,
+    NotFound,
+    ReleaseSuperseded,
+    RemoteError,
+    ServiceUnavailable,
+)
 from .operations import call_route
 
 #: The modes a rule can ship, as ccr_factory names them.
@@ -39,6 +45,11 @@ MODES: Final[tuple[str, ...]] = ("universal", "allowlist", "denylist")
 
 #: The matchers a rule can implement: live Wiz resources, and Terraform.
 MATCHERS: Final[tuple[str, ...]] = ("cloud", "terraform")
+
+#: The steps of fetching one pack, in the order they run, as `PackFailure`
+#: names them: reading the manifest and selecting from it, downloading the
+#: archive, checking the archive against the manifest, and writing its files.
+STAGES: Final[tuple[str, ...]] = ("manifest", "archive", "verify", "extract")
 
 
 @dataclass(frozen=True)
@@ -730,19 +741,146 @@ def _route(command: tuple[str, ...]) -> Route:
     return found
 
 
+#: Archive-stage codes for a download the transport gave up on, as `TocClient`
+#: names them. There is no server message or request id to go on then.
+_LOST: Final[tuple[str, ...]] = ("unreachable", "timeout", "connection_lost")
+
+#: What to do about a failed pack, by its stage and code. A code of None stands
+#: for every code of that stage without a line of its own.
+_HINTS: Final[Mapping[tuple[str, str | None], str]] = {
+    ("manifest", "not_found"): (
+        "The pack is unknown or not in this tenant's subscription; "
+        "`tmxcaliber ccr packs list` shows the packs this key can read."
+    ),
+    ("archive", "not_found"): (
+        "The pack was withdrawn, or left this tenant's subscription, after its "
+        "manifest was read; `tmxcaliber ccr packs list` shows the packs this key "
+        "can read."
+    ),
+    ("archive", "unavailable"): (
+        "The API refused the archive after this client retried, for the reason in "
+        "the message; run the command again later, and if it keeps failing, report "
+        "the request id."
+    ),
+    **{
+        ("archive", code): (
+            "The archive could not be downloaded after this client retried; check "
+            "the connection and run the command again."
+        )
+        for code in _LOST
+    },
+    ("archive", "release_superseded"): (
+        "The pack was republished while it was being read; run the command again."
+    ),
+    ("verify", None): (
+        "The downloaded archive does not match its manifest, so nothing from this "
+        "pack was written; run the command again, and if it persists, report the "
+        "request id or the release."
+    ),
+    ("extract", "archive_unwritable"): (
+        "A file could not be written under the output folder; check its "
+        "permissions and free space."
+    ),
+    ("extract", None): (
+        "The archive holds entries this client refuses to write, so nothing from "
+        "this pack was written; report the release id."
+    ),
+}
+
+#: What to do about a failure no line of `_HINTS` covers.
+_GENERAL_HINT: Final[str] = (
+    "The message says what went wrong; if it persists, report the request id."
+)
+
+
+@dataclass(frozen=True)
+class PackFailure:
+    """One pack that could not be fetched, and why.
+
+    A damaged archive and an outage both reach this client as a 503, so the
+    stage, the code and the server's own message are what tell them apart,
+    and the request id is what support will ask for. Each is a field of its
+    own, so a script can branch on it without parsing the line people read.
+
+    Attributes:
+        release_key: The pack.
+        stage: The step that failed, one of `STAGES`.
+        code: The API's error code, such as ``unavailable``, or this client's
+            own, such as ``archive_mismatch``. Never empty: an error that
+            carries no code is named by its class instead.
+        message: The server's words for an API error, or this client's for a
+            local one, without the request id that the error's text appends.
+        status: The HTTP status, when the failure reached one.
+        request_id: The server's identifier for the request, when it sent one.
+        release_id: The release the manifest named, when the manifest was read.
+    """
+
+    release_key: str
+    stage: str
+    code: str
+    message: str
+    status: int | None = None
+    request_id: str | None = None
+    release_id: str | None = None
+
+    @property
+    def hint(self) -> str:
+        """Say, in one sentence, what to do about the failure.
+
+        Returns:
+            The sentence for this stage and code, else the one for this stage
+            whatever the code, else a general one.
+        """
+        return (
+            _HINTS.get((self.stage, self.code))
+            or _HINTS.get((self.stage, None))
+            or _GENERAL_HINT
+        )
+
+    def __str__(self) -> str:
+        """Render the failure as the line ``ccr fetch`` prints for it.
+
+        Returns:
+            ``<stage> failed: <message> [<code>, HTTP <status>, request <id>,
+            release <id>]. <hint>``, leaving out each detail that is not known,
+            and the brackets when none is. The release id is cut to seven
+            characters, which tell releases apart as a short commit hash does.
+        """
+        details = [
+            detail
+            for detail in (
+                self.code,
+                f"HTTP {self.status}" if self.status is not None else "",
+                f"request {self.request_id}" if self.request_id else "",
+                f"release {self.release_id[:7]}" if self.release_id else "",
+            )
+            if detail
+        ]
+        if details:
+            return (
+                f"{self.stage} failed: {self.message} [{', '.join(details)}]. "
+                f"{self.hint}"
+            )
+        # The message is a sentence of its own, so a second full stop after it
+        # would read as a typing slip.
+        stop = "" if self.message.endswith((".", "!", "?")) else "."
+        return f"{self.stage} failed: {self.message}{stop} {self.hint}"
+
+
 @dataclass
 class FetchResult:
     """What a fetch found and wrote.
 
     Attributes:
-        rows: One row per selected rule, across every pack read.
+        rows: One row per selected rule, across every pack that completed.
         written: Every file written, when a folder was given.
-        failed: Each pack that could not be read, and why.
+        failed: Each pack that could not be fetched, by release key, with the
+            stage it reached and why.
     """
 
     rows: list[dict[str, Any]] = field(default_factory=list)
     written: list[Path] = field(default_factory=list)
-    failed: dict[str, str] = field(default_factory=dict)
+    failed: dict[str, PackFailure] = field(default_factory=dict)
 
 
 def _pack_keys(
@@ -778,15 +916,64 @@ def _pack_keys(
     return keys
 
 
+#: The errors that end only the pack they arise in, by the stage they arise at.
+#: Anything else stops the whole fetch, because it would fail every later pack
+#: the same way: a credential or permission failure, a rate limit, or an outage
+#: that reaches the pack list or a manifest. An outage on the archive alone
+#: belongs to its pack, because the API also answers 503 for an archive it will
+#: not serve, such as one that no longer matches its published digest, while it
+#: still serves every other pack. `TocClient` has retried it by then.
+_PACK_ERRORS: Final[Mapping[str, tuple[type[RemoteError], ...]]] = {
+    "manifest": (NotFound, ContractViolation),
+    "archive": (NotFound, ReleaseSuperseded, ServiceUnavailable, ContractViolation),
+    "verify": (ContractViolation,),
+    "extract": (ContractViolation,),
+}
+
+
+def _failure(
+    release_key: str, stage: str, exc: RemoteError, release_id: str
+) -> PackFailure:
+    """Describe the error that ended one pack.
+
+    Args:
+        release_key: The pack.
+        stage: The step that failed, one of `STAGES`.
+        exc: The error.
+        release_id: The release the manifest named, or empty when no manifest
+            was read.
+
+    Returns:
+        The failure.
+    """
+    return PackFailure(
+        release_key=release_key,
+        stage=stage,
+        # A bare status from whatever sits in front of the API arrives without
+        # a code, and an empty code would tell a script nothing.
+        code=exc.code or type(exc).__name__,
+        # `RemoteError.__str__` appends the request id, which has a field of
+        # its own here, so the message is taken without it.
+        message=Exception.__str__(exc),
+        status=exc.status,
+        request_id=exc.request_id,
+        release_id=release_id or None,
+    )
+
+
 def _fetch_pack(
     client: TocClient, key: str, wanted: RuleFilter, out: Path | None
-) -> tuple[list[dict[str, Any]], list[Path]]:
+) -> tuple[list[dict[str, Any]], list[Path]] | PackFailure:
     """Select from one pack, and write its files when a folder is given.
 
     **One release throughout.** The archive is asked for the release the
     manifest names, so the files written are the ones the rules were chosen
     from. A pack republished between the two reads answers 410, and its
     manifest is read once more.
+
+    **Each failure names its stage.** The stage decides whether an error ends
+    this pack or the whole fetch (`_PACK_ERRORS`), and it tells the reader of a
+    failed pack where to look.
 
     Args:
         client: The client.
@@ -795,33 +982,49 @@ def _fetch_pack(
         out: The folder to write under, or None to write nothing.
 
     Returns:
-        The pack's rows and the files written.
+        The pack's rows and the files written, or what ended the pack when the
+        error belongs to it alone: an unknown or unentitled pack, a release
+        that changed twice in a row, an archive the API kept refusing, or one
+        that is not what its manifest describes or cannot be written.
 
     Raises:
-        NotFound: If the pack is unknown or not entitled.
-        ReleaseSuperseded: If the release changed twice in a row.
-        ContractViolation: If the archive is not the one its manifest describes.
+        RemoteError: On any other failure, which would end every later pack too.
     """
-    for attempt in (1, 2):
-        manifest = call_route(client, _route(("ccr", "packs", "get")), key, {}).result
-        release_id = str(manifest.get("release_id") or "")
-        chosen = select_rules(manifest, wanted)
-        rows = [rule_row(key, release_id, selected) for selected in chosen]
-        if out is None or not chosen:
-            return rows, []
-        try:
-            data = call_route(
-                client,
-                _route(("ccr", "packs", "archive")),
-                key,
-                {"kind": "source", "release": release_id},
+    stage = "manifest"
+    release_id = ""
+    try:
+        for attempt in (1, 2):
+            # A second manifest names a release of its own, so the first one's
+            # id no longer describes the pack until it has been read.
+            stage, release_id = "manifest", ""
+            manifest = call_route(
+                client, _route(("ccr", "packs", "get")), key, {}
             ).result
-        except ReleaseSuperseded:
-            if attempt == 2:
-                raise
-            continue
-        verify_archive(data, manifest, key)
-        return rows, extract(data, manifest, key, chosen, out)
+            release_id = str(manifest.get("release_id") or "")
+            chosen = select_rules(manifest, wanted)
+            rows = [rule_row(key, release_id, selected) for selected in chosen]
+            if out is None or not chosen:
+                return rows, []
+            stage = "archive"
+            try:
+                data = call_route(
+                    client,
+                    _route(("ccr", "packs", "archive")),
+                    key,
+                    {"kind": "source", "release": release_id},
+                ).result
+            except ReleaseSuperseded:
+                if attempt == 2:
+                    raise
+                continue
+            stage = "verify"
+            verify_archive(data, manifest, key)
+            stage = "extract"
+            return rows, extract(data, manifest, key, chosen, out)
+    except RemoteError as exc:
+        if not isinstance(exc, _PACK_ERRORS[stage]):
+            raise
+        return _failure(key, stage, exc, release_id)
     raise AssertionError("unreachable: the loop returns or raises")
 
 
@@ -836,9 +1039,14 @@ def fetch(
 ) -> FetchResult:
     """Select CCR rules across packs, and write their files when asked.
 
-    A pack that cannot be read is recorded in ``failed`` and the others still
-    complete. A credential or transport failure is not a pack's failure and
-    propagates.
+    A pack that cannot be fetched is recorded in ``failed``, with the stage it
+    reached, and the others still complete. That covers a pack that is unknown
+    or not entitled, a release that changes twice during the read, an archive
+    the API still refuses once the client has retried, and an archive that is
+    not what its manifest describes or cannot be written. A failure that would
+    end every pack the same way propagates instead: a credential, permission
+    or rate limit failure, and an outage that reaches the pack list or a
+    manifest.
 
     Args:
         client: The client.
@@ -853,20 +1061,17 @@ def fetch(
 
     Raises:
         ValueError: If packs are named and also narrowed by provider or service.
-        RemoteError: On a credential, transport or server failure.
+        RemoteError: On a failure that is not one pack's alone.
     """
     if release_keys and (providers or services):
         raise ValueError("Name packs, or narrow by provider and service, not both.")
     result = FetchResult()
     for key in _pack_keys(client, release_keys, providers, services):
-        try:
-            rows, written = _fetch_pack(client, key, wanted, out)
-        except NotFound:
-            result.failed[key] = "unknown, or not in this tenant's subscription."
+        outcome = _fetch_pack(client, key, wanted, out)
+        if isinstance(outcome, PackFailure):
+            result.failed[key] = outcome
             continue
-        except (ReleaseSuperseded, ContractViolation) as exc:
-            result.failed[key] = str(exc)
-            continue
+        rows, written = outcome
         result.rows.extend(rows)
         result.written.extend(written)
     return result

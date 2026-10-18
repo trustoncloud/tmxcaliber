@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from tmxcaliber.lib.remote.ccr import (
+    PackFailure,
     RuleFilter,
     _is_safe,
     extract,
@@ -31,7 +32,10 @@ from tmxcaliber.lib.remote.errors import (
     AuthenticationError,
     ContractViolation,
     NotFound,
+    RateLimited,
     ReleaseSuperseded,
+    RemoteError,
+    ServiceUnavailable,
 )
 
 
@@ -1342,6 +1346,9 @@ class PackClient:
         self.calls: list[tuple[str, dict[str, str]]] = []
         #: Release keys whose next archive call answers 410 once.
         self.supersede_once: set[str] = set()
+        #: Release keys whose archive call raises this error, as the client
+        #: raises it once its own retries are spent.
+        self.archive_errors: dict[str, RemoteError] = {}
 
     def paginate(
         self, path: str, params: Mapping[str, str] | None = None, **_: Any
@@ -1353,15 +1360,19 @@ class PackClient:
         self.calls.append((path, dict(params or {})))
         key = path.rsplit("/", 1)[-1]
         if key not in self.packs:
-            raise NotFound("No such pack.", status=404)
+            raise NotFound("No such pack.", code="not_found", status=404)
         return self.packs[key][1]
 
     def get_bytes(self, path: str, params: Mapping[str, str] | None = None) -> bytes:
         self.calls.append((path, dict(params or {})))
         key = path.split("/")[-2]
+        if key in self.archive_errors:
+            raise self.archive_errors[key]
         if key in self.supersede_once:
             self.supersede_once.discard(key)
-            raise ReleaseSuperseded("Superseded.", status=410)
+            raise ReleaseSuperseded(
+                "Superseded.", code="release_superseded", status=410
+            )
         return self.packs[key][0]
 
 
@@ -1444,6 +1455,9 @@ def test_one_failed_pack_does_not_stop_the_others(tmp_path: pathlib.Path) -> Non
     result = fetch(client, out=tmp_path)  # type: ignore[arg-type]
 
     assert set(result.failed) == {"aws-s3"}
+    failure = result.failed["aws-s3"]
+    assert (failure.stage, failure.code) == ("verify", "archive_mismatch")
+    assert failure.release_id == "d07d6aee"
     assert (tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json").exists()
     assert not (tmp_path / "aws-s3").exists()
 
@@ -1451,7 +1465,95 @@ def test_one_failed_pack_does_not_stop_the_others(tmp_path: pathlib.Path) -> Non
 def test_an_unknown_named_pack_is_reported_not_raised() -> None:
     result = fetch(PackClient(two_packs()), release_keys=("aws-nothing",))  # type: ignore[arg-type]
 
-    assert "aws-nothing" in result.failed
+    failure = result.failed["aws-nothing"]
+    assert (failure.stage, failure.code, failure.status) == (
+        "manifest",
+        "not_found",
+        404,
+    )
+    # The manifest was never read, so there is no release to name.
+    assert failure.release_id is None
+
+
+def test_an_unsafe_entry_fails_its_pack_at_extraction(tmp_path: pathlib.Path) -> None:
+    packs = two_packs()
+    data = archive_of({**ENTRIES, "../escape.rego": b"package x"})
+    packs["aws-s3"] = (data, manifest_for(data, pack(ENTRIES)[1]["rules"]))
+
+    result = fetch(PackClient(packs), out=tmp_path)  # type: ignore[arg-type]
+
+    failure = result.failed["aws-s3"]
+    assert (failure.stage, failure.code) == ("extract", "archive_unsafe")
+    assert (tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json").exists()
+    assert not (tmp_path / "aws-s3").exists()
+
+
+#: What the API says about a pack whose stored archive no longer matches the
+#: digest it published, once the client has retried and given up.
+DAMAGED = "The source archive of aws-s3 does not match its published digest."
+
+
+def test_a_refused_archive_fails_only_its_pack(tmp_path: pathlib.Path) -> None:
+    client = PackClient(two_packs())
+    client.archive_errors["aws-s3"] = ServiceUnavailable(
+        DAMAGED, code="unavailable", status=503, request_id="r-1"
+    )
+
+    result = fetch(client, out=tmp_path)  # type: ignore[arg-type]
+
+    assert result.failed == {
+        "aws-s3": PackFailure(
+            release_key="aws-s3",
+            stage="archive",
+            code="unavailable",
+            message=DAMAGED,
+            status=503,
+            request_id="r-1",
+            release_id="d07d6aee",
+        )
+    }
+    assert result.written == [
+        tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json"
+    ]
+    assert not (tmp_path / "aws-s3").exists()
+
+
+def test_an_outage_reading_a_manifest_stops_the_fetch(tmp_path: pathlib.Path) -> None:
+    # The API itself is struggling when it cannot serve a manifest, so every
+    # later pack would most likely fail the same way.
+    class Struggling(PackClient):
+        def get(
+            self, path: str, params: Mapping[str, str] | None = None
+        ) -> dict[str, Any]:
+            raise ServiceUnavailable("Try later.", code="unavailable", status=503)
+
+    with pytest.raises(ServiceUnavailable):
+        fetch(Struggling(two_packs()), out=tmp_path)  # type: ignore[arg-type]
+
+
+def test_a_rate_limit_on_an_archive_stops_the_fetch(tmp_path: pathlib.Path) -> None:
+    client = PackClient(two_packs())
+    client.archive_errors["aws-s3"] = RateLimited(
+        "Slow down.", retry_after=3600, code="rate_limited", status=429
+    )
+
+    with pytest.raises(RateLimited):
+        fetch(client, out=tmp_path)  # type: ignore[arg-type]
+
+
+def test_a_failure_without_a_code_is_named_by_its_class(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A bare 502 from whatever sits in front of the API carries no envelope,
+    # so it has no code of its own.
+    client = PackClient(two_packs())
+    client.archive_errors["aws-s3"] = ServiceUnavailable(
+        "The API answered 502.", status=502
+    )
+
+    result = fetch(client, release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
+
+    assert result.failed["aws-s3"].code == "ServiceUnavailable"
 
 
 class AlwaysSuperseded(PackClient):
@@ -1459,7 +1561,7 @@ class AlwaysSuperseded(PackClient):
 
     def get_bytes(self, path: str, params: Mapping[str, str] | None = None) -> bytes:
         self.calls.append((path, dict(params or {})))
-        raise ReleaseSuperseded("Superseded.", status=410)
+        raise ReleaseSuperseded("Superseded.", code="release_superseded", status=410)
 
 
 def test_a_release_that_changes_twice_in_a_row_fails_the_pack(
@@ -1470,6 +1572,8 @@ def test_a_release_that_changes_twice_in_a_row_fails_the_pack(
     result = fetch(client, release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
 
     assert set(result.failed) == {"aws-s3"}
+    failure = result.failed["aws-s3"]
+    assert (failure.stage, failure.code) == ("archive", "release_superseded")
     # One retry and no more: the manifest is read twice, and the archive twice.
     assert [p for p, _ in client.calls].count("/v1/ccr/packs/aws-s3") == 2
     assert [p for p, _ in client.calls].count("/v1/ccr/packs/aws-s3/archive") == 2
@@ -1485,3 +1589,77 @@ def test_a_credential_failure_is_not_a_packs_failure() -> None:
 
     with pytest.raises(AuthenticationError):
         fetch(Unauthorised(two_packs()), release_keys=("aws-s3",))  # type: ignore[arg-type]
+
+
+#: The hint for an archive the API refused, as people read it on stderr.
+REFUSED_HINT = (
+    "The API refused the archive after this client retried, for the reason in "
+    "the message; run the command again later, and if it keeps failing, report "
+    "the request id."
+)
+
+#: The hint for a pack the key cannot read.
+UNKNOWN_HINT = (
+    "The pack is unknown or not in this tenant's subscription; "
+    "`tmxcaliber ccr packs list` shows the packs this key can read."
+)
+
+
+def test_a_pack_failure_reads_as_one_line() -> None:
+    failure = PackFailure(
+        release_key="aws-s3",
+        stage="archive",
+        code="unavailable",
+        message=DAMAGED,
+        status=503,
+        request_id="r-1",
+        release_id="d07d6aee0123",
+    )
+
+    assert str(failure) == (
+        f"archive failed: {DAMAGED} [unavailable, HTTP 503, request r-1, "
+        f"release d07d6ae]. {REFUSED_HINT}"
+    )
+
+
+def test_a_pack_failure_leaves_out_what_it_does_not_know() -> None:
+    failure = PackFailure(
+        release_key="aws-nothing",
+        stage="manifest",
+        code="not_found",
+        message="No such pack.",
+        status=404,
+    )
+
+    assert str(failure) == (
+        f"manifest failed: No such pack. [not_found, HTTP 404]. {UNKNOWN_HINT}"
+    )
+
+
+def test_a_pack_failure_with_nothing_to_bracket_has_no_brackets() -> None:
+    failure = PackFailure(
+        release_key="aws-s3", stage="manifest", code="", message="Gone."
+    )
+
+    # The message already ends its sentence, so no second full stop follows.
+    assert str(failure) == f"manifest failed: Gone. {failure.hint}"
+
+
+@pytest.mark.parametrize(
+    ("stage", "code", "expected"),
+    [
+        ("archive", "unavailable", REFUSED_HINT),
+        ("manifest", "not_found", UNKNOWN_HINT),
+        ("archive", "not_found", "withdrawn"),
+        ("archive", "timeout", "could not be downloaded"),
+        ("archive", "release_superseded", "republished while it was being read"),
+        ("verify", "bad_manifest", "does not match its manifest"),
+        ("extract", "archive_unwritable", "permissions and free space"),
+        ("extract", "archive_unreadable", "report the release id"),
+        ("manifest", "bad_body", "report the request id"),
+    ],
+)
+def test_a_pack_failure_says_what_to_do(stage: str, code: str, expected: str) -> None:
+    failure = PackFailure(release_key="aws-s3", stage=stage, code=code, message="x")
+
+    assert expected in failure.hint

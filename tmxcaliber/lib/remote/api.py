@@ -213,8 +213,11 @@ class CcrFetch:
         """Select CCR rules, as `tmxcaliber ccr fetch` does.
 
         Each option that repeats on the command line takes one string or a list
-        of strings. A pack that could not be read is named in the result's
-        ``failed`` and does not raise, so a caller checks it.
+        of strings. A pack that could not be fetched does not raise, so a
+        caller checks the result's ``failed``. It maps each such pack to a
+        `PackFailure`, which says at which stage the pack failed, with the
+        API's code and message, the HTTP status, the request id and the
+        release, and a hint on what to do.
 
         Args:
             *release_keys: Packs to read. Every entitled pack when none.
@@ -231,7 +234,9 @@ class CcrFetch:
 
         Raises:
             ValueError: If packs are named and also narrowed.
-            RemoteError: On a credential, transport or server failure.
+            RemoteError: On a failure that is not one pack's alone, such as a
+                credential failure, a rate limit, or an outage that reaches the
+                pack list or a manifest.
         """
         return fetch(
             self._client,
