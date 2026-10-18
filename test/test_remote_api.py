@@ -610,28 +610,60 @@ def test_a_route_the_api_adds_at_ccr_fetch_is_refused(
         Client()
 
 
+def selected(result: FetchResult) -> list[tuple[str, str]]:
+    """Name the rules a fetch selected.
+
+    Args:
+        result: The fetch's result.
+
+    Returns:
+        Each row's pack and rule id, in the order they were selected.
+    """
+    return [(row["releaseKey"], row["ruleId"]) for row in result.rows]
+
+
+#: Every rule the fixture packs hold, which is what a fetch that ignored its
+#: option would select.
+EVERY_RULE = [
+    ("aws-s3", "S3.C20"),
+    ("aws-s3", "S3.C21"),
+    ("aws-s3", "S3.C22"),
+    ("gcp-bigquery", "Bigquery.C102"),
+]
+
+
 @pytest.mark.parametrize(
-    ("option", "text"),
+    ("option", "text", "expected"),
     [
-        ("control", "S3.C20"),
-        ("mode", "allowlist"),
-        ("matcher", "terraform"),
-        ("provider", "gcp"),
-        ("service", "bigquery"),
+        ("control", "S3.C21", [("aws-s3", "S3.C21")]),
+        ("mode", "universal", [("aws-s3", "S3.C20")]),
+        (
+            "matcher",
+            "cloud",
+            [("aws-s3", "S3.C20"), ("gcp-bigquery", "Bigquery.C102")],
+        ),
+        ("provider", "gcp", [("gcp-bigquery", "Bigquery.C102")]),
+        ("service", "s3", EVERY_RULE[:3]),
+        ("file", "*/remediation.md", [("aws-s3", "S3.C22")]),
     ],
 )
 def test_one_string_for_an_option_selects_as_a_list_of_one_does(
-    option: str, text: str
+    option: str, text: str, expected: list[tuple[str, str]]
 ) -> None:
     # A str is a Sequence[str], so `tuple("gcp")` would be ("g", "c", "p") and
     # the answer would be an empty success that reads as "nothing matches".
-    api = CcrFetch(PackClient(two_packs()))  # type: ignore[arg-type]
+    # Each spelling is held to a selection narrower than every rule, so a
+    # fetch that dropped the option would fail here instead of matching itself.
+    api = CcrFetch(
+        PackClient(  # type: ignore[arg-type]
+            {"aws-s3": (b"", MANIFEST), "gcp-bigquery": two_packs()["gcp-bigquery"]}
+        )
+    )
 
-    as_text = api(**{option: text})
-    as_list = api(**{option: [text]})
-
-    assert as_list.rows
-    assert as_text == as_list
+    assert selected(api()) == EVERY_RULE
+    assert expected != EVERY_RULE
+    assert selected(api(**{option: text})) == expected
+    assert selected(api(**{option: [text]})) == expected
 
 
 def test_one_glob_string_writes_what_a_list_of_one_glob_writes(
