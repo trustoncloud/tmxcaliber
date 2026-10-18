@@ -13,12 +13,15 @@ chosen.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
+import lzma
 import os
 import shutil
 import tempfile
 import zipfile
+import zlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
@@ -195,6 +198,32 @@ def verify_archive(data: bytes, manifest: Mapping[str, Any], release_key: str) -
         )
 
 
+#: What reading a damaged or unsupported archive from memory can raise. Each one
+#: is a verdict on the bytes, because nothing here touches the disk:
+#: ``RuntimeError`` covers an encrypted entry and, through its subclass
+#: ``NotImplementedError``, a compression method zipfile cannot decode, and
+#: ``OSError`` is how the bzip2 decoder reports a corrupt stream.
+_UNREADABLE: Final[tuple[type[Exception], ...]] = (
+    zipfile.BadZipFile,
+    EOFError,
+    RuntimeError,
+    OSError,
+    zlib.error,
+    lzma.LZMAError,
+)
+
+#: Characters Windows refuses in a file name. The colon is left out because
+#: `_is_safe` already refuses it.
+_WINDOWS_INVALID: Final[frozenset[str]] = frozenset('<>"|?*')
+
+#: Names Windows reserves for devices, whatever extension follows them.
+_WINDOWS_DEVICES: Final[frozenset[str]] = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{n}" for n in range(1, 10)}
+    | {f"lpt{n}" for n in range(1, 10)}
+)
+
+
 def _is_safe(name: str) -> bool:
     """Decide whether an archive entry name stays inside its pack folder.
 
@@ -210,6 +239,208 @@ def _is_safe(name: str) -> bool:
     return all(part not in ("", ".", "..") for part in name.split("/"))
 
 
+def _is_portable(name: str) -> bool:
+    """Decide whether a file can be written on Windows as well as elsewhere.
+
+    A pack is built on Linux, where ``what?.md`` and ``x.rego.`` are ordinary
+    names. The same selection has to lay out the same way on every machine that
+    fetches it, and Windows either refuses such a name or quietly writes a
+    different one, so the check holds on every platform.
+
+    Args:
+        name: A path relative to the pack folder, with ``/`` separators.
+
+    Returns:
+        False when a segment holds a character Windows forbids or a control
+        character, ends in a dot or a space, or is a reserved device name such
+        as ``nul`` or ``con.txt``. The ``.`` and ``..`` segments are left to
+        `_is_safe`.
+    """
+    for part in name.split("/"):
+        if part in (".", ".."):
+            continue
+        if any(char in _WINDOWS_INVALID or ord(char) < 32 for char in part):
+            return False
+        if part.endswith((".", " ")):
+            return False
+        if part.split(".", 1)[0].rstrip(" ").casefold() in _WINDOWS_DEVICES:
+            return False
+    return True
+
+
+def _refuse_unwritable(wanted: Sequence[str], release_key: str) -> None:
+    """Refuse a selection that cannot be laid out as separate files.
+
+    Run before anything is written, so a refused pack leaves ``out`` as it was.
+    Without it a repeated path would be staged once per mention and then moved
+    only once, and two names that land on one path would overwrite each other
+    or fail part way through the moves.
+
+    Args:
+        wanted: The selected paths, each ``<rule id>/<file>``.
+        release_key: The pack, for the message.
+
+    Raises:
+        ContractViolation: If the manifest lists a path twice (code
+            ``bad_manifest``), or a path is one Windows cannot write, equals
+            another once case is ignored, or is both a file and a folder of
+            another (code ``archive_unsafe``).
+    """
+    seen: set[str] = set()
+    for name in wanted:
+        if name in seen:
+            raise ContractViolation(
+                f"{release_key}'s manifest lists {name} more than once.",
+                code="bad_manifest",
+            )
+        seen.add(name)
+    by_folded: dict[str, str] = {}
+    for name in wanted:
+        if not _is_portable(name):
+            raise ContractViolation(
+                f"{release_key}'s manifest declares {name!r}, which cannot be "
+                "written as a file on Windows.",
+                code="archive_unsafe",
+            )
+        other = by_folded.setdefault(name.casefold(), name)
+        if other != name:
+            raise ContractViolation(
+                f"{release_key}'s manifest declares {other} and {name}, which are "
+                "one file wherever case does not matter.",
+                code="archive_unsafe",
+            )
+    for folded, name in by_folded.items():
+        parts = folded.split("/")
+        for depth in range(1, len(parts)):
+            parent = by_folded.get("/".join(parts[:depth]))
+            if parent is not None:
+                raise ContractViolation(
+                    f"{release_key}'s manifest declares {parent} as a file and "
+                    f"{name} inside it as a folder.",
+                    code="archive_unsafe",
+                )
+
+
+def _read_member(archive: zipfile.ZipFile, name: str, release_key: str) -> bytes:
+    """Read one entry, naming the pack when the archive cannot give it up.
+
+    Args:
+        archive: The open archive.
+        name: The entry.
+        release_key: The pack, for the message.
+
+    Returns:
+        The entry's content.
+
+    Raises:
+        ContractViolation: If the entry is damaged, encrypted, or compressed
+            with a method this client cannot decode.
+    """
+    try:
+        return archive.read(name)
+    except _UNREADABLE as exc:
+        raise ContractViolation(
+            f"{release_key}'s archive cannot give up {name}: {exc}",
+            code="archive_mismatch",
+        ) from exc
+
+
+def _make_folder(folder: Path, created: list[Path]) -> None:
+    """Create a folder, and record each level this call had to create.
+
+    Args:
+        folder: The folder to create, with any parents it needs.
+        created: Receives each level that did not exist, outermost first, so a
+            failure can remove exactly what this call added.
+    """
+    missing = [level for level in (folder, *folder.parents) if not level.exists()]
+    for level in reversed(missing):
+        try:
+            level.mkdir()
+        except FileExistsError:
+            # Another process made it first, so this call must leave it alone.
+            continue
+        created.append(level)
+
+
+def _put_back(placed: Sequence[tuple[Path, Path | None]]) -> bool:
+    """Undo moves into place, newest first.
+
+    Args:
+        placed: Each final path that was moved to, and where the file that was
+            already there went, or None when the path was free.
+
+    Returns:
+        True when every file that had been replaced is back where it was. This
+        is best effort, because it runs while another failure is propagating.
+    """
+    restored = True
+    for final, displaced in reversed(placed):
+        with contextlib.suppress(OSError):
+            final.unlink(missing_ok=True)
+        if displaced is not None:
+            try:
+                os.replace(displaced, final)
+            except OSError:
+                restored = False
+    return restored
+
+
+def _install(
+    archive: zipfile.ZipFile,
+    wanted: Sequence[str],
+    release_key: str,
+    out: Path,
+    created: list[Path],
+) -> list[Path]:
+    """Stage the selected files, then move them into ``out/<release_key>``.
+
+    A file already at its final path is set aside inside the staging folder
+    first. If any step then fails, the files already moved are taken out again
+    and the ones they replaced are put back, so a failed pack never leaves a mix
+    of old and new files. When even that cannot be done, the staging folder is
+    kept, because it holds the only copy of what could not be put back.
+
+    Args:
+        archive: The open archive.
+        wanted: The paths to write, each ``<rule id>/<file>``.
+        release_key: The pack.
+        out: The folder to write under.
+        created: Receives each folder this call makes, outermost first.
+
+    Returns:
+        Every file written, in the order of ``wanted``.
+    """
+    _make_folder(out, created)
+    staging = Path(tempfile.mkdtemp(prefix=f".{release_key}-", dir=out))
+    placed: list[tuple[Path, Path | None]] = []
+    keep_staging = False
+    try:
+        for name in wanted:
+            staged = staging.joinpath("new", *name.split("/"))
+            staged.parent.mkdir(parents=True, exist_ok=True)
+            staged.write_bytes(_read_member(archive, name, release_key))
+        written: list[Path] = []
+        for index, name in enumerate(wanted):
+            final = out.joinpath(release_key, *name.split("/"))
+            _make_folder(final.parent, created)
+            displaced: Path | None = None
+            if os.path.lexists(final):
+                displaced = staging / "old" / str(index)
+                displaced.parent.mkdir(exist_ok=True)
+                os.replace(final, displaced)
+            placed.append((final, displaced))
+            os.replace(staging.joinpath("new", *name.split("/")), final)
+            written.append(final)
+        return written
+    except BaseException:
+        keep_staging = not _put_back(placed)
+        raise
+    finally:
+        if not keep_staging:
+            shutil.rmtree(staging, ignore_errors=True)
+
+
 def extract(
     data: bytes,
     manifest: Mapping[str, Any],
@@ -219,9 +450,12 @@ def extract(
 ) -> list[Path]:
     """Write the selected files of a verified archive under ``out/<release_key>``.
 
-    **All or nothing per pack.** Every check runs, and every file is written to
-    a staging folder inside ``out``, before anything reaches its final place,
-    so a refused pack leaves ``out`` as it was.
+    **All or nothing per pack.** Every check runs, and every selected file is
+    read and written to a staging folder inside ``out``, before anything
+    reaches its final place, so a refused pack leaves ``out`` as it was. If a
+    move into place then fails, the files already moved are taken back out, any
+    file they replaced is restored, and the folders this call made are removed,
+    so that failure leaves ``out`` as it was too.
 
     Args:
         data: The archive, already verified with `verify_archive`.
@@ -234,8 +468,12 @@ def extract(
         Every file written, in selection order.
 
     Raises:
-        ContractViolation: If any entry is unsafe or undeclared, or a selected
-            file is missing from the archive.
+        ContractViolation: If the archive cannot be read, any entry is unsafe or
+            undeclared, a selected file is missing from the archive, or the
+            selection lists a path twice or names files that cannot sit side by
+            side on every platform.
+        OSError: If the disk refuses a write or a move, after ``out`` has been
+            put back as it was.
     """
     declared = {
         f"{rule.get('id')}/{file}"
@@ -244,7 +482,14 @@ def extract(
         for file in rule.get("files") or []
     }
     wanted = [f"{s.rule.get('id')}/{file}" for s in chosen for file in s.files]
-    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except _UNREADABLE as exc:
+        raise ContractViolation(
+            f"{release_key}'s archive is not a readable zip: {exc}",
+            code="archive_mismatch",
+        ) from exc
+    with archive:
         entries = {name for name in archive.namelist() if not name.endswith("/")}
         unsafe = sorted(name for name in entries if not _is_safe(name))
         if unsafe:
@@ -266,19 +511,14 @@ def extract(
                 "declares.",
                 code="archive_mismatch",
             )
-        out.mkdir(parents=True, exist_ok=True)
-        staging = Path(tempfile.mkdtemp(prefix=f".{release_key}-", dir=out))
+        _refuse_unwritable(wanted, release_key)
+        created: list[Path] = []
         try:
-            for name in wanted:
-                staged = staging.joinpath(*name.split("/"))
-                staged.parent.mkdir(parents=True, exist_ok=True)
-                staged.write_bytes(archive.read(name))
-            written: list[Path] = []
-            for name in wanted:
-                final = out.joinpath(release_key, *name.split("/"))
-                final.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(staging.joinpath(*name.split("/")), final)
-                written.append(final)
-            return written
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
+            return _install(archive, wanted, release_key, out, created)
+        except BaseException:
+            # Whatever the install put in these folders is gone by now, so the
+            # ones left are empty and removing them restores ``out``.
+            for folder in reversed(created):
+                with contextlib.suppress(OSError):
+                    folder.rmdir()
+            raise
