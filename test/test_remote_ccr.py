@@ -139,6 +139,18 @@ def test_a_matcher_keeps_its_folder_mode_level_files_and_the_root() -> None:
     )
 
 
+def test_a_matcher_drops_the_other_matchers_files() -> None:
+    [chosen] = select_rules(
+        MANIFEST, RuleFilter(controls=("S3.C20",), matchers=("terraform",))
+    )
+
+    assert chosen.files == (
+        "metadata.json",
+        "allowlist/terraform/check.rego",
+        "universal/terraform/check.rego",
+    )
+
+
 def test_a_file_glob_matches_across_folders() -> None:
     chosen = select_rules(MANIFEST, RuleFilter(files=("*/terraform/*.rego",)))
 
