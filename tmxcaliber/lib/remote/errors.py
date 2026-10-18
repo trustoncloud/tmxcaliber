@@ -75,6 +75,16 @@ class NotFound(RemoteError):
     """
 
 
+class ReleaseSuperseded(RemoteError):
+    """The release a read was pinned to is no longer the one published.
+
+    The API serves only a pack's current release. A pin naming any other,
+    because the pack was republished or rolled back between two reads, is
+    refused rather than answered from a different release, so the caller can
+    read the manifest again and retry.
+    """
+
+
 class InvalidRequest(RemoteError):
     """The server refused a parameter."""
 
@@ -161,6 +171,7 @@ BY_CODE: dict[str, type[RemoteError]] = {
     "ip_not_allowed": AddressNotAllowed,
     "forbidden": PermissionDenied,
     "not_found": NotFound,
+    "release_superseded": ReleaseSuperseded,
     "invalid_request": InvalidRequest,
     "invalid_cursor": InvalidCursor,
     "rate_limited": RateLimited,
@@ -177,6 +188,7 @@ BY_STATUS: dict[int, type[RemoteError]] = {
     401: AuthenticationError,
     403: PermissionDenied,
     404: NotFound,
+    410: ReleaseSuperseded,
     400: InvalidRequest,
     429: RateLimited,
     500: ServiceUnavailable,

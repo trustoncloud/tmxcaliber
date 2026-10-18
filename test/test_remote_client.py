@@ -151,6 +151,7 @@ def test_the_user_agent_names_no_caller() -> None:
         ("ip_not_allowed", 403, errors.AddressNotAllowed),
         ("forbidden", 403, errors.PermissionDenied),
         ("not_found", 404, errors.NotFound),
+        ("release_superseded", 410, errors.ReleaseSuperseded),
         ("invalid_request", 400, errors.InvalidRequest),
         ("invalid_cursor", 400, errors.InvalidCursor),
         ("unavailable", 503, errors.ServiceUnavailable),

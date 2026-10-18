@@ -45,6 +45,7 @@ class Route:
         filters: Query parameters other than ``limit`` and ``cursor``.
         positional: What the command's positional argument holds, if any.
         summary: One line, for the command's help.
+        binary: Whether the response is bytes rather than JSON, such as a pack archive.
     """
 
     path: str
@@ -53,6 +54,7 @@ class Route:
     filters: tuple[str, ...]
     positional: str | None
     summary: str
+    binary: bool = False
 
 
 #: Every route, bound to the command that reaches it.
@@ -169,6 +171,15 @@ ROUTES: Final[tuple[Route, ...]] = (
         positional="release_key",
         summary="One CCR pack.",
     ),
+    Route(
+        path="/v1/ccr/packs/{releaseKey}/archive",
+        command=("ccr", "packs", "archive"),
+        paged=False,
+        filters=("kind", "release"),
+        positional="release_key",
+        summary="One CCR pack's archive.",
+        binary=True,
+    ),
 )
 
 
@@ -235,6 +246,29 @@ def page_maximum(path: str) -> int | None:
             maximum = parameter.get("schema", {}).get("maximum")
             return int(maximum) if maximum is not None else None
     return None
+
+
+def response_media_type(path: str) -> str | None:
+    """Name the media type a route's 200 is served as.
+
+    Read from the contract, because whether a route answers with JSON or with
+    bytes is the API's decision, and a client that guessed would decode a zip.
+
+    Args:
+        path: The OpenAPI path template.
+
+    Returns:
+        The media type, or None when the contract declares no 200 content.
+    """
+    content = (
+        contract()["paths"]
+        .get(path, {})
+        .get("get", {})
+        .get("responses", {})
+        .get("200", {})
+        .get("content", {})
+    )
+    return next(iter(content), None)
 
 
 def required_parameters(path: str) -> frozenset[str]:

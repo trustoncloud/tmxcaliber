@@ -165,3 +165,23 @@ def test_every_incompleteness_field_is_required_by_some_route() -> None:
 def test_paging_fields_come_from_the_page_schema() -> None:
     """The client walks by these, so they are read from the contract, not restated."""
     assert contract.paging_fields() == {"items", "nextCursor", "pageSize"}
+
+
+@pytest.mark.parametrize("route", contract.ROUTES, ids=lambda r: r.path)
+def test_binary_matches_the_contract(route: contract.Route) -> None:
+    """A route is binary exactly when the contract serves its 200 as a zip."""
+    served = contract.response_media_type(route.path)
+    assert route.binary is (served == "application/zip")
+
+
+def test_the_pack_archive_is_a_binary_command() -> None:
+    route = contract.route_for(("ccr", "packs", "archive"))
+
+    assert route is not None
+    assert route.binary is True
+    assert route.filters == ("kind", "release")
+    assert route.positional == "release_key"
+
+
+def test_a_pack_row_names_its_release() -> None:
+    assert "releaseId" in _row_properties("/v1/ccr/packs")

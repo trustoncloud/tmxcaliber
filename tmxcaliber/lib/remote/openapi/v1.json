@@ -86,6 +86,14 @@
       },
       "CcrPacksRow": {
         "properties": {
+          "releaseId": {
+            "description": "The release this pack currently publishes: the ccr_factory commit it was built from. Null while a stage's mirror has not moved to release folders.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
           "releaseKey": {
             "type": [
               "string",
@@ -111,7 +119,8 @@
         "required": [
           "releaseKey",
           "service",
-          "ruleCount"
+          "ruleCount",
+          "releaseId"
         ],
         "type": "object"
       },
@@ -796,7 +805,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -885,7 +894,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1011,7 +1020,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1044,7 +1053,7 @@
             "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
           }
         },
-        "summary": "Wiz Custom Configuration Rule packs.",
+        "summary": "Wiz Cloud Configuration Rule packs.",
         "x-required-permission": "api.ccr.read"
       }
     },
@@ -1110,7 +1119,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1144,6 +1153,132 @@
           }
         },
         "summary": "One CCR pack.",
+        "x-required-permission": "api.ccr.read"
+      }
+    },
+    "/v1/ccr/packs/{releaseKey}/archive": {
+      "get": {
+        "operationId": "ccrPacksReleaseKeyArchive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "releaseKey",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "release",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "contentMediaType": "application/zip",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The archive, exactly as published."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A parameter this operation does not accept."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The release named in `release` is no longer the one this resource publishes: it was replaced, or withdrawn by a rollback. Read the resource again without `release` to learn the current one."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "One CCR pack's archive.",
         "x-required-permission": "api.ccr.read"
       }
     },
@@ -1237,7 +1372,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1388,7 +1523,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1478,7 +1613,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1613,7 +1748,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1748,7 +1883,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1863,7 +1998,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -2022,7 +2157,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -2181,7 +2316,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -2296,7 +2431,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -2455,7 +2590,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
