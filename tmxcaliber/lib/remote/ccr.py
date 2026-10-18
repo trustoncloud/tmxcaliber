@@ -201,13 +201,17 @@ def verify_archive(data: bytes, manifest: Mapping[str, Any], release_key: str) -
 #: What reading a damaged or unsupported archive from memory can raise. Each one
 #: is a verdict on the bytes, because nothing here touches the disk:
 #: ``RuntimeError`` covers an encrypted entry and, through its subclass
-#: ``NotImplementedError``, a compression method zipfile cannot decode, and
-#: ``OSError`` is how the bzip2 decoder reports a corrupt stream.
+#: ``NotImplementedError``, a compression method zipfile cannot decode,
+#: ``OSError`` is how the bzip2 decoder reports a corrupt stream, and
+#: ``ValueError`` covers a header that points before the start of the archive
+#: (``negative seek value``) and, through its subclass ``UnicodeDecodeError``, an
+#: entry name flagged as UTF-8 that is not valid UTF-8.
 _UNREADABLE: Final[tuple[type[Exception], ...]] = (
     zipfile.BadZipFile,
     EOFError,
     RuntimeError,
     OSError,
+    ValueError,
     zlib.error,
     lzma.LZMAError,
 )

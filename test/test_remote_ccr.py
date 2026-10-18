@@ -546,6 +546,51 @@ def with_data_byte(data: bytes, at: int, value: bytes) -> bytes:
     return data[:start] + value + data[start + 1 :]
 
 
+def with_central_directory_moved(data: bytes, by: int) -> bytes:
+    """Make the end record overstate where the central directory starts.
+
+    ``zipfile`` takes the gap between that offset and the real one for bytes
+    prepended to the archive, so every entry then looks to start before the
+    first byte and reading one seeks to a negative position.
+
+    Args:
+        data: The zip.
+        by: How many bytes to add to the declared offset.
+
+    Returns:
+        The zip, with its end record changed.
+    """
+    out = bytearray(data)
+    end = out.rfind(b"PK\x05\x06")
+    (offset,) = struct.unpack_from("<I", out, end + 16)
+    struct.pack_into("<I", out, end + 16, offset + by)
+    return bytes(out)
+
+
+def with_invalid_utf8_name(data: bytes, header: str) -> bytes:
+    """Declare the first entry's name to be UTF-8 and make it invalid.
+
+    Args:
+        data: The zip.
+        header: ``local`` to change the header that precedes the entry's data,
+            or ``central`` to change its record in the central directory.
+
+    Returns:
+        The zip, with the flag set and the first byte of that name replaced by
+        ``0xFF``, which no UTF-8 text can start with.
+    """
+    signature, flags_at, name_at = {
+        "local": (b"PK\x03\x04", 6, 30),
+        "central": (b"PK\x01\x02", 8, 46),
+    }[header]
+    out = bytearray(data)
+    at = out.find(signature)
+    (current,) = struct.unpack_from("<H", out, at + flags_at)
+    struct.pack_into("<H", out, at + flags_at, current | 0x800)
+    out[at + name_at] = 0xFF
+    return bytes(out)
+
+
 @pytest.mark.parametrize(
     "damaged",
     [
@@ -556,6 +601,9 @@ def with_data_byte(data: bytes, at: int, value: bytes) -> bytes:
         with_data_byte(archive_of(ENTRIES, zipfile.ZIP_DEFLATED), 0, b"\xff"),
         with_data_byte(archive_of(ENTRIES, zipfile.ZIP_BZIP2), 0, b"\x00"),
         with_data_byte(archive_of(ENTRIES, zipfile.ZIP_LZMA), 4, b"\xff"),
+        with_central_directory_moved(archive_of(ENTRIES), 10),
+        with_invalid_utf8_name(archive_of(ENTRIES), "central"),
+        with_invalid_utf8_name(archive_of(ENTRIES), "local"),
     ],
     ids=[
         "not-a-zip",
@@ -565,6 +613,9 @@ def with_data_byte(data: bytes, at: int, value: bytes) -> bytes:
         "deflate",
         "bzip2",
         "lzma",
+        "central-directory-offset",
+        "central-name-encoding",
+        "local-name-encoding",
     ],
 )
 def test_an_archive_the_client_cannot_read_refuses_the_pack(
