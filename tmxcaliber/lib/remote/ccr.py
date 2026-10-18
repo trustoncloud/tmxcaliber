@@ -18,7 +18,7 @@ import hashlib
 import io
 import lzma
 import os
-import shutil
+import stat
 import tempfile
 import zipfile
 import zlib
@@ -232,7 +232,9 @@ def _is_safe(name: str) -> bool:
     """Decide whether an archive entry name stays inside its pack folder.
 
     Args:
-        name: The entry name.
+        name: The entry name as the archive stores it. A name as zipfile reports
+            it is no use here on Windows, where it has already lost its
+            backslashes.
 
     Returns:
         False for an absolute name, a backslash, a drive or other colon, or an
@@ -325,6 +327,36 @@ def _refuse_unwritable(wanted: Sequence[str], release_key: str) -> None:
                 )
 
 
+def _refuse_folders_in_the_way(
+    wanted: Sequence[str], release_key: str, out: Path
+) -> None:
+    """Refuse a selection when a folder sits where one of its files belongs.
+
+    A file already at its final path is set aside and put back if the pack
+    fails, and is dropped once the pack succeeds. That is right for the file an
+    earlier fetch wrote, and wrong for a folder, which holds whatever else
+    someone keeps there and would go with it. Nothing this client writes is a
+    folder at a file's path, so the folder is not ours to replace.
+
+    Args:
+        wanted: The paths to write, each ``<rule id>/<file>``.
+        release_key: The pack.
+        out: The folder to write under.
+
+    Raises:
+        ContractViolation: If a folder, or a link to one, is at a final path
+            (code ``archive_unwritable``).
+    """
+    for name in wanted:
+        final = out.joinpath(release_key, *name.split("/"))
+        if final.is_dir():
+            raise ContractViolation(
+                f"{release_key}'s file {name} cannot be written, because {final} "
+                "is a folder.",
+                code="archive_unwritable",
+            )
+
+
 def _read_member(archive: zipfile.ZipFile, name: str, release_key: str) -> bytes:
     """Read one entry, naming the pack when the archive cannot give it up.
 
@@ -345,7 +377,7 @@ def _read_member(archive: zipfile.ZipFile, name: str, release_key: str) -> bytes
     except _UNREADABLE as exc:
         raise ContractViolation(
             f"{release_key}'s archive cannot give up {name}: {exc}",
-            code="archive_mismatch",
+            code="archive_unreadable",
         ) from exc
 
 
@@ -390,6 +422,32 @@ def _put_back(placed: Sequence[tuple[Path, Path | None]]) -> bool:
     return restored
 
 
+def _remove_tree(folder: Path) -> None:
+    """Delete a folder and everything in it, read-only files included.
+
+    ``shutil.rmtree`` cannot delete a read-only file on Windows. The staging
+    folder holds the old copy of every file a pack replaced, and an earlier
+    fetch may have left that copy read-only, so with ``rmtree`` a hidden folder
+    of stale files would stay in the output folder after a pack that succeeded.
+    The attribute is cleared only when a delete is refused. This is best effort,
+    because it also runs while another failure is propagating.
+
+    Args:
+        folder: The folder to delete.
+    """
+    for parent, _, files in os.walk(folder, topdown=False):
+        for name in files:
+            path = os.path.join(parent, name)
+            try:
+                os.unlink(path)
+            except PermissionError:
+                with contextlib.suppress(OSError):
+                    os.chmod(path, stat.S_IWRITE)
+                    os.unlink(path)
+        with contextlib.suppress(OSError):
+            os.rmdir(parent)
+
+
 def _install(
     archive: zipfile.ZipFile,
     wanted: Sequence[str],
@@ -414,6 +472,13 @@ def _install(
 
     Returns:
         Every file written, in the order of ``wanted``.
+
+    Raises:
+        ContractViolation: If an entry cannot be read, or the disk refuses a
+            write or a move (code ``archive_unwritable``). The disk's error is
+            the cause. It is reported as a failed pack, as an unreadable entry
+            is, because ``fetch`` has to be able to go on to the next pack when
+            one file is held open by another program.
     """
     _make_folder(out, created)
     staging = Path(tempfile.mkdtemp(prefix=f".{release_key}-", dir=out))
@@ -437,12 +502,24 @@ def _install(
             os.replace(staging.joinpath("new", *name.split("/")), final)
             written.append(final)
         return written
+    except OSError as exc:
+        restored = _put_back(placed)
+        keep_staging = not restored
+        outcome = (
+            "Nothing was changed."
+            if restored
+            else f"Files it replaced could not be put back, and are kept in {staging}."
+        )
+        raise ContractViolation(
+            f"{release_key}'s files could not be written under {out}: {exc} {outcome}",
+            code="archive_unwritable",
+        ) from exc
     except BaseException:
         keep_staging = not _put_back(placed)
         raise
     finally:
         if not keep_staging:
-            shutil.rmtree(staging, ignore_errors=True)
+            _remove_tree(staging)
 
 
 def extract(
@@ -472,12 +549,13 @@ def extract(
         Every file written, in selection order.
 
     Raises:
-        ContractViolation: If the archive cannot be read, any entry is unsafe or
-            undeclared, a selected file is missing from the archive, or the
-            selection lists a path twice or names files that cannot sit side by
-            side on every platform.
-        OSError: If the disk refuses a write or a move, after ``out`` has been
-            put back as it was.
+        ContractViolation: If the archive cannot be read (code
+            ``archive_unreadable``), any entry is unsafe or undeclared, a
+            selected file is missing from the archive, or the selection lists a
+            path twice or names files that cannot sit side by side on every
+            platform. Also, with code ``archive_unwritable``, if a folder is
+            where a file belongs or the disk refuses a write or a move, in which
+            case ``out`` has been put back as it was.
     """
     declared = {
         f"{rule.get('id')}/{file}"
@@ -491,11 +569,20 @@ def extract(
     except _UNREADABLE as exc:
         raise ContractViolation(
             f"{release_key}'s archive is not a readable zip: {exc}",
-            code="archive_mismatch",
+            code="archive_unreadable",
         ) from exc
     with archive:
-        entries = {name for name in archive.namelist() if not name.endswith("/")}
-        unsafe = sorted(name for name in entries if not _is_safe(name))
+        # The name is judged as stored, because on Windows zipfile has already
+        # turned every backslash in the name it reports into a slash, which
+        # would let an entry through there that Linux refuses. The name zipfile
+        # reports is still the one to compare with the manifest and to read by.
+        stored = [
+            info for info in archive.infolist() if not info.orig_filename.endswith("/")
+        ]
+        entries = {info.filename for info in stored}
+        unsafe = sorted(
+            info.orig_filename for info in stored if not _is_safe(info.orig_filename)
+        )
         if unsafe:
             raise ContractViolation(
                 f"{release_key}'s archive holds an unsafe entry: {unsafe[0]!r}.",
@@ -516,6 +603,7 @@ def extract(
                 code="archive_mismatch",
             )
         _refuse_unwritable(wanted, release_key)
+        _refuse_folders_in_the_way(wanted, release_key, out)
         created: list[Path] = []
         try:
             return _install(archive, wanted, release_key, out, created)

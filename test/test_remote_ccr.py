@@ -6,7 +6,9 @@ import hashlib
 import io
 import os
 import pathlib
+import stat
 import struct
+import sys
 import zipfile
 from collections.abc import Callable
 from typing import Any
@@ -303,22 +305,12 @@ def test_only_the_selected_files_are_written(tmp_path: pathlib.Path) -> None:
     assert sorted(p.name for p in tmp_path.iterdir()) == ["aws-s3"]
 
 
-# zipfile rewrites os.sep to "/" in every entry name it reads, so on Windows a
-# backslash never reaches the name guard and the entry is refused as undeclared.
-BACKSLASH_CODE = "archive_mismatch" if os.sep == "\\" else "archive_unsafe"
-
-
 @pytest.mark.parametrize(
-    ("extra", "code"),
-    [
-        ("../escape.rego", "archive_unsafe"),
-        ("/abs/escape.rego", "archive_unsafe"),
-        ("S3.C20\\evil.rego", BACKSLASH_CODE),
-        ("S3.C20//x.rego", "archive_unsafe"),
-    ],
+    "extra",
+    ["../escape.rego", "/abs/escape.rego", "S3.C20//x.rego"],
 )
 def test_an_unsafe_entry_refuses_the_whole_pack(
-    tmp_path: pathlib.Path, extra: str, code: str
+    tmp_path: pathlib.Path, extra: str
 ) -> None:
     data, manifest = pack(ENTRIES)
     data = archive_of({**ENTRIES, extra: b"x"})
@@ -331,8 +323,70 @@ def test_an_unsafe_entry_refuses_the_whole_pack(
     with pytest.raises(ContractViolation) as caught:
         extract(data, manifest, "aws-s3", chosen, tmp_path)
 
-    assert caught.value.code == code
+    assert caught.value.code == "archive_unsafe"
     assert list(tmp_path.iterdir()) == []
+
+
+def with_raw_name(data: bytes, name: str, raw: str) -> bytes:
+    """Store an entry under a name that ``zipfile`` would not write itself.
+
+    ``zipfile`` rewrites ``os.sep`` to ``/`` in a name it is handed, so on
+    Windows `archive_of` cannot produce a backslash. Replacing the bytes of the
+    name can, on every platform. The name is stored twice, in the entry's local
+    header and in the central directory, and both must change. The two names
+    have the same length, so no offset in the zip moves.
+
+    Args:
+        data: The zip.
+        name: The entry's name as `archive_of` wrote it.
+        raw: The name to store instead, as long as ``name``.
+
+    Returns:
+        The zip, with the entry under its new name.
+    """
+    assert len(raw) == len(name)
+    assert data.count(name.encode()) == 2
+    return data.replace(name.encode(), raw.encode())
+
+
+@pytest.mark.parametrize(
+    ("name", "raw"),
+    [
+        ("S3.C20/allowlist/cloud/check.rego", "S3.C20\\allowlist\\cloud\\check.rego"),
+        ("S3.C20/allowlist/cloud/check.rego", "S3.C20/allowlist\\cloud/check.rego"),
+        ("S3.C20/sub/", "S3.C20\\sub\\"),
+    ],
+    ids=["every-separator", "one-separator", "folder-entry"],
+)
+def test_a_backslash_in_a_stored_name_refuses_the_pack_on_every_platform(
+    tmp_path: pathlib.Path, name: str, raw: str
+) -> None:
+    # On Windows zipfile reads a backslash back as "/", so a guard that looks at
+    # the decoded name sees a declared file and writes it, while on Linux the
+    # same bytes are refused. The stored name is the one to judge.
+    entries = {**ENTRIES, "S3.C20/sub/": b""} if name.endswith("/") else ENTRIES
+    data = with_raw_name(archive_of(entries), name, raw)
+    manifest = manifest_for(data, pack(ENTRIES)[1]["rules"])
+    chosen = select_rules(manifest, RuleFilter())
+
+    with pytest.raises(ContractViolation) as caught:
+        extract(data, manifest, "aws-s3", chosen, tmp_path / "out")
+
+    assert caught.value.code == "archive_unsafe"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_folder_entry_in_the_archive_is_not_a_file_to_write(
+    tmp_path: pathlib.Path,
+) -> None:
+    _, manifest = pack(ENTRIES)
+    data = archive_of({"S3.C20/": b"", "S3.C20/allowlist/": b"", **ENTRIES})
+    chosen = select_rules(manifest, RuleFilter())
+
+    written = extract(data, manifest, "aws-s3", chosen, tmp_path)
+
+    assert len(written) == len(ENTRIES)
+    assert all(path.is_file() for path in written)
 
 
 def test_an_entry_the_manifest_does_not_declare_refuses_the_pack(
@@ -627,7 +681,7 @@ def test_an_archive_the_client_cannot_read_refuses_the_pack(
     with pytest.raises(ContractViolation) as caught:
         extract(damaged, manifest, "aws-s3", chosen, tmp_path / "out")
 
-    assert caught.value.code == "archive_mismatch"
+    assert caught.value.code == "archive_unreadable"
     assert list(tmp_path.iterdir()) == []
 
 
@@ -646,7 +700,7 @@ def test_an_entry_that_ends_early_refuses_the_pack(
     with pytest.raises(ContractViolation) as caught:
         extract(data, manifest, "aws-s3", chosen, tmp_path / "out")
 
-    assert caught.value.code == "archive_mismatch"
+    assert caught.value.code == "archive_unreadable"
     assert list(tmp_path.iterdir()) == []
 
 
@@ -669,18 +723,20 @@ def tree(root: pathlib.Path) -> dict[str, bytes | None]:
 def fail_moves(
     monkeypatch: pytest.MonkeyPatch,
     refuses: Callable[[pathlib.Path, pathlib.Path], bool],
+    error: type[BaseException] = PermissionError,
 ) -> None:
     """Make os.replace fail for the moves a test picks.
 
     Args:
         monkeypatch: The test's monkeypatch.
         refuses: Decides from a move's source and target whether it fails.
+        error: What the failing move raises.
     """
     real = os.replace
 
     def replace(src: Any, dst: Any) -> None:
         if refuses(pathlib.Path(src), pathlib.Path(dst)):
-            raise PermissionError(13, "The file is in use", str(dst))
+            raise error(13, "The file is in use", str(dst))
         real(src, dst)
 
     monkeypatch.setattr(os, "replace", replace)
@@ -703,9 +759,11 @@ def test_a_move_that_fails_part_way_leaves_nothing_behind(
     chosen = select_rules(manifest, RuleFilter())
     fail_placing(monkeypatch, "aws-s3", "S3.C21", "metadata.json")
 
-    with pytest.raises(PermissionError):
+    with pytest.raises(ContractViolation) as caught:
         extract(data, manifest, "aws-s3", chosen, tmp_path / "out")
 
+    assert caught.value.code == "archive_unwritable"
+    assert isinstance(caught.value.__cause__, PermissionError)
     assert list(tmp_path.iterdir()) == []
 
 
@@ -722,7 +780,78 @@ def test_a_move_that_fails_part_way_restores_what_was_there(
     chosen = select_rules(manifest, RuleFilter())
     fail_placing(monkeypatch, "aws-s3", "S3.C21", "metadata.json")
 
-    with pytest.raises(PermissionError):
+    with pytest.raises(ContractViolation) as caught:
+        extract(data, manifest, "aws-s3", chosen, out)
+
+    assert caught.value.code == "archive_unwritable"
+    assert tree(out) == before
+
+
+def test_a_read_only_file_from_an_earlier_fetch_is_replaced_without_a_trace(
+    tmp_path: pathlib.Path,
+) -> None:
+    out = tmp_path / "out"
+    target = out / "aws-s3" / "S3.C20" / "allowlist" / "cloud" / "check.rego"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"from an earlier fetch")
+    target.chmod(stat.S_IREAD)
+    data, manifest = pack(ENTRIES)
+    chosen = select_rules(manifest, RuleFilter(controls=("S3.C20",)))
+
+    extract(data, manifest, "aws-s3", chosen, out)
+
+    # The old copy is set aside in the staging folder, which Windows cannot
+    # delete while the copy is read-only, so a hidden folder of stale files
+    # would be left in the output folder after a fetch that succeeded.
+    assert target.read_bytes() == b"package a"
+    assert sorted(path.name for path in out.iterdir()) == ["aws-s3"]
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Only Windows refuses to move a file that another program has open.",
+)
+def test_a_file_another_program_holds_open_refuses_the_pack(
+    tmp_path: pathlib.Path,
+) -> None:
+    out = tmp_path / "out"
+    earlier = out / "aws-s3" / "S3.C20"
+    (earlier / "allowlist" / "cloud").mkdir(parents=True)
+    (earlier / "metadata.json").write_bytes(b"from an earlier fetch")
+    held = earlier / "allowlist" / "cloud" / "check.rego"
+    held.write_bytes(b"open in an editor")
+    before = tree(out)
+    data, manifest = pack(ENTRIES)
+    chosen = select_rules(manifest, RuleFilter())
+
+    with held.open("rb"), pytest.raises(ContractViolation) as caught:
+        extract(data, manifest, "aws-s3", chosen, out)
+
+    # The first file was already replaced when the second could not be moved.
+    assert caught.value.code == "archive_unwritable"
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert tree(out) == before
+
+
+def test_an_interrupt_part_way_through_the_moves_restores_what_was_there(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "out"
+    earlier = out / "aws-s3" / "S3.C20"
+    earlier.mkdir(parents=True)
+    (earlier / "metadata.json").write_bytes(b"from an earlier fetch")
+    before = tree(out)
+    data, manifest = pack(ENTRIES)
+    chosen = select_rules(manifest, RuleFilter())
+    fail_moves(
+        monkeypatch,
+        lambda src, dst: dst.parts[-3:] == ("aws-s3", "S3.C21", "metadata.json"),
+        error=KeyboardInterrupt,
+    )
+
+    # An interrupt propagates as itself and never becomes a failed pack, and it
+    # must leave the pack as it was all the same.
+    with pytest.raises(KeyboardInterrupt):
         extract(data, manifest, "aws-s3", chosen, out)
 
     assert tree(out) == before
@@ -747,8 +876,78 @@ def test_a_failed_restore_keeps_the_only_copy_of_the_file_it_replaced(
         ),
     )
 
-    with pytest.raises(PermissionError):
+    with pytest.raises(ContractViolation) as caught:
         extract(data, manifest, "aws-s3", chosen, out)
 
     (staging,) = [path for path in out.iterdir() if path.name.startswith(".aws-s3-")]
     assert (staging / "old" / "0").read_bytes() == b"from an earlier fetch"
+    assert caught.value.code == "archive_unwritable"
+    assert str(staging) in str(caught.value)
+
+
+def test_a_folder_where_a_file_belongs_refuses_the_pack(
+    tmp_path: pathlib.Path,
+) -> None:
+    out = tmp_path / "out"
+    earlier = out / "aws-s3" / "S3.C20"
+    earlier.mkdir(parents=True)
+    (earlier / "metadata.json").write_bytes(b"from an earlier fetch")
+    blocked = out / "aws-s3" / "S3.C21" / "metadata.json"
+    blocked.mkdir(parents=True)
+    (blocked / "notes.txt").write_bytes(b"kept by someone else")
+    before = tree(out)
+    data, manifest = pack(ENTRIES)
+    chosen = select_rules(manifest, RuleFilter())
+
+    with pytest.raises(ContractViolation) as caught:
+        extract(data, manifest, "aws-s3", chosen, out)
+
+    assert caught.value.code == "archive_unwritable"
+    assert "S3.C21" in str(caught.value)
+    assert tree(out) == before
+
+
+def test_a_file_where_a_folder_belongs_refuses_the_pack(
+    tmp_path: pathlib.Path,
+) -> None:
+    out = tmp_path / "out"
+    earlier = out / "aws-s3" / "S3.C20"
+    earlier.mkdir(parents=True)
+    (earlier / "metadata.json").write_bytes(b"from an earlier fetch")
+    (out / "aws-s3" / "S3.C21").write_bytes(b"a file where a folder belongs")
+    before = tree(out)
+    data, manifest = pack(ENTRIES)
+    chosen = select_rules(manifest, RuleFilter())
+
+    with pytest.raises(ContractViolation) as caught:
+        extract(data, manifest, "aws-s3", chosen, out)
+
+    # The disk's own refusal comes from the first move into the missing folder,
+    # after the rule before it has already been laid out, so putting it all back
+    # is what leaves the earlier fetch intact.
+    assert caught.value.code == "archive_unwritable"
+    assert isinstance(caught.value.__cause__, OSError)
+    assert tree(out) == before
+
+
+def test_a_member_that_fails_after_good_ones_leaves_the_folder_as_it_was(
+    tmp_path: pathlib.Path,
+) -> None:
+    out = tmp_path / "out"
+    earlier = out / "aws-s3" / "S3.C20"
+    earlier.mkdir(parents=True)
+    (earlier / "metadata.json").write_bytes(b"from an earlier fetch")
+    before = tree(out)
+    entries = {**ENTRIES, "S3.C21/metadata.json": b"21 is fine"}
+    _, manifest = pack(entries)
+    # The same length, so only the entry's CRC no longer matches its content.
+    data = archive_of(entries).replace(b"21 is fine", b"21 is FINE")
+    chosen = select_rules(manifest, RuleFilter())
+
+    with pytest.raises(ContractViolation) as caught:
+        extract(data, manifest, "aws-s3", chosen, out)
+
+    # Two members were already staged when the third failed to read, so this
+    # fails if the staging folder is left behind or a file reaches its place.
+    assert caught.value.code == "archive_unreadable"
+    assert tree(out) == before
