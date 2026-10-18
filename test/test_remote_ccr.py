@@ -1475,6 +1475,148 @@ def test_an_unknown_named_pack_is_reported_not_raised() -> None:
     assert failure.release_id is None
 
 
+#: A release id as the API issues it, which is the commit the pack was built
+#: from (``GITHUB_SHA``), so 40 characters where most fixtures here use 8.
+FULL_RELEASE = "d07d6aee5f3c9b1e8a4d2c6b0f7e9a1d3c5b7e2f"
+
+
+def with_first_rule(manifest: dict[str, Any], **fields: Any) -> dict[str, Any]:
+    """Change some fields of a manifest's first rule.
+
+    Args:
+        manifest: The manifest.
+        **fields: The fields to set on the first rule.
+
+    Returns:
+        A manifest whose first rule carries those fields.
+    """
+    first, *rest = manifest["rules"]
+    return {**manifest, "rules": [{**first, **fields}, *rest]}
+
+
+def without_first_rule_id(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Drop the id of a manifest's first rule.
+
+    Args:
+        manifest: The manifest.
+
+    Returns:
+        A manifest whose first rule has no ``id`` at all.
+    """
+    first, *rest = manifest["rules"]
+    return {
+        **manifest,
+        "rules": [{k: v for k, v in first.items() if k != "id"}, *rest],
+    }
+
+
+#: Each wrong shape a manifest can take, and the field its refusal must name.
+MALFORMED = [
+    pytest.param(lambda m: [m], "manifest", id="manifest is a list"),
+    pytest.param(
+        lambda m: {**m, "rules": {"S3.C20": m["rules"][0]}}, "rules", id="rules dict"
+    ),
+    pytest.param(lambda m: {**m, "rules": ["S3.C20"]}, "rules[0]", id="rule string"),
+    pytest.param(without_first_rule_id, "rules[0].id", id="id absent"),
+    pytest.param(lambda m: with_first_rule(m, id=""), "rules[0].id", id="id empty"),
+    pytest.param(lambda m: with_first_rule(m, id=20), "rules[0].id", id="id number"),
+    pytest.param(
+        lambda m: with_first_rule(m, modes="allowlist"),
+        "rules[0].modes",
+        id="modes string",
+    ),
+    pytest.param(
+        lambda m: with_first_rule(m, files="metadata.json"),
+        "rules[0].files",
+        id="files string",
+    ),
+    pytest.param(
+        lambda m: with_first_rule(m, files=["metadata.json", 7]),
+        "rules[0].files",
+        id="files holds a number",
+    ),
+    pytest.param(
+        lambda m: with_first_rule(m, matchers=["cloud"]),
+        "rules[0].matchers",
+        id="matchers list",
+    ),
+    pytest.param(
+        lambda m: with_first_rule(m, matchers={"cloud": True}),
+        "rules[0].matchers",
+        id="matcher not an object",
+    ),
+    pytest.param(
+        lambda m: {**m, "release_id": "D07D6AEE"}, "release_id", id="release upper"
+    ),
+    pytest.param(
+        lambda m: {**m, "release_id": "v1.2.3"}, "release_id", id="release not hex"
+    ),
+    pytest.param(
+        lambda m: {**m, "release_id": "d07d6a"}, "release_id", id="release too short"
+    ),
+    pytest.param(
+        lambda m: {**m, "release_id": "a" * 65}, "release_id", id="release too long"
+    ),
+    pytest.param(
+        lambda m: {**m, "release_id": "d07d6aee\n"},
+        "release_id",
+        id="release with a newline",
+    ),
+    pytest.param(
+        lambda m: {**m, "release_id": 1234567}, "release_id", id="release number"
+    ),
+]
+
+
+@pytest.mark.parametrize(("malform", "field"), MALFORMED)
+def test_a_malformed_manifest_fails_only_its_own_pack(
+    tmp_path: pathlib.Path,
+    malform: Callable[[dict[str, Any]], Any],
+    field: str,
+) -> None:
+    packs = two_packs()
+    data, manifest = packs["aws-s3"]
+    packs["aws-s3"] = (data, malform(manifest))
+    client = PackClient(packs)
+
+    result = fetch(client, out=tmp_path)  # type: ignore[arg-type]
+
+    failure = result.failed["aws-s3"]
+    assert (failure.stage, failure.code) == ("manifest", "bad_manifest")
+    assert failure.message.startswith("aws-s3's manifest")
+    assert field in failure.message
+    # A release id outside the API's form would draw a 400 that ends the whole
+    # fetch, so the archive of a refused manifest is never asked for.
+    assert "/v1/ccr/packs/aws-s3/archive" not in [path for path, _ in client.calls]
+    assert result.written == [
+        tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json"
+    ]
+    assert not (tmp_path / "aws-s3").exists()
+
+
+@pytest.mark.parametrize(
+    "release",
+    [
+        pytest.param({"release_id": FULL_RELEASE}, id="a commit sha"),
+        pytest.param({"release_id": ""}, id="empty"),
+        pytest.param({"release_id": None}, id="null"),
+        pytest.param({}, id="absent"),
+    ],
+)
+def test_a_manifest_with_a_full_release_id_or_none_is_fetched(
+    tmp_path: pathlib.Path, release: dict[str, Any]
+) -> None:
+    packs = two_packs()
+    data, manifest = packs["aws-s3"]
+    unpinned = {name: value for name, value in manifest.items() if name != "release_id"}
+    packs["aws-s3"] = (data, {**unpinned, **release})
+
+    result = fetch(PackClient(packs), release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
+
+    assert result.failed == {}
+    assert len(result.written) == len(ENTRIES)
+
+
 def test_an_unsafe_entry_fails_its_pack_at_extraction(tmp_path: pathlib.Path) -> None:
     packs = two_packs()
     data = archive_of({**ENTRIES, "../escape.rego": b"package x"})

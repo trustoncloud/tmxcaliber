@@ -727,6 +727,99 @@ def extract(
             raise
 
 
+#: The form of a release id, which is the API's own rule: 7 to 64 lowercase hex
+#: characters, as a commit hash is written. The archive request is pinned to
+#: the id, and the API answers any other form with a 400 that would end every
+#: later pack too. It is matched with ``fullmatch`` because ``$`` also accepts a
+#: trailing newline.
+_RELEASE_ID: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{7,64}")
+
+
+def _malformed(release_key: str, field: str, expected: str) -> ContractViolation:
+    """Describe one manifest field that is not the shape this module reads.
+
+    Args:
+        release_key: The pack.
+        field: Where the field sits, such as ``rules[0].modes``.
+        expected: What the field should have been.
+
+    Returns:
+        The error, with code ``bad_manifest``.
+    """
+    return ContractViolation(
+        f"{release_key}'s manifest field {field} is not {expected}.",
+        code="bad_manifest",
+    )
+
+
+def _is_strings(value: Any) -> bool:
+    """Decide whether a value is a list of strings.
+
+    Args:
+        value: The value.
+
+    Returns:
+        True for a list whose every item is a string, the empty list included.
+    """
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _refuse_malformed_manifest(manifest: Any, release_key: str) -> None:
+    """Refuse a manifest whose fields are not the shapes this module reads.
+
+    Selection and extraction trust the manifest's field types. Unchecked, a
+    field of another type ends the whole fetch with a raw ``TypeError`` or
+    ``AttributeError``, or is read character by character as a string is, and
+    a release id outside the API's form is sent as the archive's pin and draws
+    a 400, which ends every later pack as well. Checked once, as soon as the
+    manifest is read, each of these fails this pack alone. A field given as
+    null reads as absent, as the rest of this module reads it.
+
+    Args:
+        manifest: The manifest, as the API answered it.
+        release_key: The pack, for the message.
+
+    Raises:
+        ContractViolation: If the manifest is not an object, its ``release_id``
+            is neither empty nor in the API's form, its ``rules`` is not a list
+            of objects, a rule's ``id`` is not a non-empty string, a rule's
+            ``modes`` or ``files`` is not a list of strings, or a rule's
+            ``matchers`` is not an object of objects (code ``bad_manifest``).
+    """
+    if not isinstance(manifest, Mapping):
+        raise ContractViolation(
+            f"{release_key}'s manifest is not an object.", code="bad_manifest"
+        )
+    release_id = manifest.get("release_id")
+    # An empty id names no release, and the archive is then asked for unpinned.
+    if release_id not in (None, "") and not (
+        isinstance(release_id, str) and _RELEASE_ID.fullmatch(release_id)
+    ):
+        raise _malformed(release_key, "release_id", "7 to 64 lowercase hex digits")
+    rules = manifest.get("rules")
+    if rules is None:
+        return
+    if not isinstance(rules, list):
+        raise _malformed(release_key, "rules", "a list")
+    for index, rule in enumerate(rules):
+        where = f"rules[{index}]"
+        if not isinstance(rule, Mapping):
+            raise _malformed(release_key, where, "an object")
+        rule_id = rule.get("id")
+        if not isinstance(rule_id, str) or not rule_id:
+            raise _malformed(release_key, f"{where}.id", "a non-empty string")
+        for name in ("modes", "files"):
+            value = rule.get(name)
+            if value is not None and not _is_strings(value):
+                raise _malformed(release_key, f"{where}.{name}", "a list of strings")
+        matchers = rule.get("matchers")
+        if matchers is not None and not (
+            isinstance(matchers, Mapping)
+            and all(isinstance(matcher, Mapping) for matcher in matchers.values())
+        ):
+            raise _malformed(release_key, f"{where}.matchers", "an object of objects")
+
+
 def _route(command: tuple[str, ...]) -> Route:
     """Find a CCR route by its command.
 
@@ -986,9 +1079,10 @@ def _fetch_pack(
 
     Returns:
         The pack's rows and the files written, or what ended the pack when the
-        error belongs to it alone: an unknown or unentitled pack, a release
-        that changed twice in a row, an archive the API kept refusing, or one
-        that is not what its manifest describes or cannot be written.
+        error belongs to it alone: an unknown or unentitled pack, a manifest
+        of the wrong shape, a release that changed twice in a row, an archive
+        the API kept refusing, or one that is not what its manifest describes
+        or cannot be written.
 
     Raises:
         RemoteError: On any other failure, which would end every later pack too.
@@ -1003,6 +1097,10 @@ def _fetch_pack(
             manifest = call_route(
                 client, _route(("ccr", "packs", "get")), key, {}
             ).result
+            # Before anything reads a field, so a wrong type fails this pack
+            # alone, and a release id the API would refuse is never sent as a
+            # pin.
+            _refuse_malformed_manifest(manifest, key)
             release_id = str(manifest.get("release_id") or "")
             chosen = select_rules(manifest, wanted)
             rows = [rule_row(key, release_id, selected) for selected in chosen]
@@ -1044,12 +1142,12 @@ def fetch(
 
     A pack that cannot be fetched is recorded in ``failed``, with the stage it
     reached, and the others still complete. That covers a pack that is unknown
-    or not entitled, a release that changes twice during the read, an archive
-    the API still refuses once the client has retried, and an archive that is
-    not what its manifest describes or cannot be written. A failure that would
-    end every pack the same way propagates instead: a credential, permission
-    or rate limit failure, and an outage that reaches the pack list or a
-    manifest.
+    or not entitled, a manifest of the wrong shape, a release that changes
+    twice during the read, an archive the API still refuses once the client
+    has retried, and an archive that is not what its manifest describes or
+    cannot be written. A failure that would end every pack the same way
+    propagates instead: a credential, permission or rate limit failure, and an
+    outage that reaches the pack list or a manifest.
 
     Args:
         client: The client.
