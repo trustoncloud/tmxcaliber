@@ -1593,9 +1593,10 @@ def test_a_credential_failure_is_not_a_packs_failure() -> None:
 
 #: The hint for an archive the API refused, as people read it on stderr.
 REFUSED_HINT = (
-    "The API refused the archive after this client retried, for the reason in "
-    "the message; run the command again later, and if it keeps failing, report "
-    "the request id."
+    "The API refused the archive after this client retried, and its message "
+    "says why. A damaged archive stays refused until the pack is republished; "
+    "for anything else, run the command again later. If it keeps failing, "
+    "report the request id."
 )
 
 #: The hint for a pack the key cannot read.

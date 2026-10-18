@@ -758,9 +758,12 @@ _HINTS: Final[Mapping[tuple[str, str | None], str]] = {
         "can read."
     ),
     ("archive", "unavailable"): (
-        "The API refused the archive after this client retried, for the reason in "
-        "the message; run the command again later, and if it keeps failing, report "
-        "the request id."
+        # The server's message already says whether retrying can help, so the
+        # hint defers to it rather than promising that a later run will work.
+        "The API refused the archive after this client retried, and its message "
+        "says why. A damaged archive stays refused until the pack is republished; "
+        "for anything else, run the command again later. If it keeps failing, "
+        "report the request id."
     ),
     **{
         ("archive", code): (
