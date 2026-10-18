@@ -1563,69 +1563,147 @@ def without_first_rule_id(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-#: Each wrong shape a manifest can take, and the field its refusal must name.
+#: The release the fixture manifest names. A refusal of anything but the release
+#: id itself must still report it, because it tells support which published
+#: release is broken.
+NAMED_RELEASE = "d07d6aee"
+
+
+def without_release(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Drop the release id of a manifest.
+
+    Args:
+        manifest: The manifest.
+
+    Returns:
+        A manifest that names no release at all.
+    """
+    return {name: value for name, value in manifest.items() if name != "release_id"}
+
+
+#: Each wrong shape a manifest can take, the field its refusal must name, and the
+#: release the failure must carry. That is the release the manifest names when
+#: the manifest is an object and its release id is sound, and none otherwise.
 MALFORMED = [
-    pytest.param(lambda m: [m], "manifest", id="manifest is a list"),
+    pytest.param(lambda m: [m], "manifest", None, id="manifest is a list"),
     pytest.param(
-        lambda m: {**m, "rules": {"S3.C20": m["rules"][0]}}, "rules", id="rules dict"
+        lambda m: {**m, "rules": {"S3.C20": m["rules"][0]}},
+        "rules",
+        NAMED_RELEASE,
+        id="rules dict",
     ),
-    pytest.param(lambda m: {**m, "rules": ["S3.C20"]}, "rules[0]", id="rule string"),
-    pytest.param(without_first_rule_id, "rules[0].id", id="id absent"),
-    pytest.param(lambda m: with_first_rule(m, id=""), "rules[0].id", id="id empty"),
-    pytest.param(lambda m: with_first_rule(m, id=20), "rules[0].id", id="id number"),
+    pytest.param(
+        lambda m: {**m, "rules": ["S3.C20"]},
+        "rules[0]",
+        NAMED_RELEASE,
+        id="rule string",
+    ),
+    pytest.param(
+        lambda m: {**m, "release_id": FULL_RELEASE, "rules": ["S3.C20"]},
+        "rules[0]",
+        FULL_RELEASE,
+        id="rule string under a commit sha",
+    ),
+    pytest.param(
+        lambda m: {**without_release(m), "rules": ["S3.C20"]},
+        "rules[0]",
+        None,
+        id="rule string, no release named",
+    ),
+    pytest.param(without_first_rule_id, "rules[0].id", NAMED_RELEASE, id="id absent"),
+    pytest.param(
+        lambda m: with_first_rule(m, id=""),
+        "rules[0].id",
+        NAMED_RELEASE,
+        id="id empty",
+    ),
+    pytest.param(
+        lambda m: with_first_rule(m, id=20),
+        "rules[0].id",
+        NAMED_RELEASE,
+        id="id number",
+    ),
     pytest.param(
         lambda m: with_first_rule(m, modes="allowlist"),
         "rules[0].modes",
+        NAMED_RELEASE,
         id="modes string",
     ),
     pytest.param(
         lambda m: with_first_rule(m, files="metadata.json"),
         "rules[0].files",
+        NAMED_RELEASE,
         id="files string",
     ),
     pytest.param(
         lambda m: with_first_rule(m, files=["metadata.json", 7]),
         "rules[0].files",
+        NAMED_RELEASE,
         id="files holds a number",
     ),
     pytest.param(
         lambda m: with_first_rule(m, matchers=["cloud"]),
         "rules[0].matchers",
+        NAMED_RELEASE,
         id="matchers list",
     ),
     pytest.param(
         lambda m: with_first_rule(m, matchers={"cloud": True}),
         "rules[0].matchers",
+        NAMED_RELEASE,
         id="matcher not an object",
     ),
     pytest.param(
-        lambda m: {**m, "release_id": "D07D6AEE"}, "release_id", id="release upper"
+        lambda m: {**m, "release_id": "D07D6AEE"},
+        "release_id",
+        None,
+        id="release upper",
     ),
     pytest.param(
-        lambda m: {**m, "release_id": "v1.2.3"}, "release_id", id="release not hex"
+        lambda m: {**m, "release_id": "v1.2.3"},
+        "release_id",
+        None,
+        id="release not hex",
     ),
     pytest.param(
-        lambda m: {**m, "release_id": "d07d6a"}, "release_id", id="release too short"
+        lambda m: {**m, "release_id": "d07d6a"},
+        "release_id",
+        None,
+        id="release too short",
     ),
     pytest.param(
-        lambda m: {**m, "release_id": "a" * 65}, "release_id", id="release too long"
+        lambda m: {**m, "release_id": "a" * 65},
+        "release_id",
+        None,
+        id="release too long",
     ),
     pytest.param(
         lambda m: {**m, "release_id": "d07d6aee\n"},
         "release_id",
+        None,
         id="release with a newline",
     ),
     pytest.param(
-        lambda m: {**m, "release_id": 1234567}, "release_id", id="release number"
+        lambda m: {**m, "release_id": 1234567},
+        "release_id",
+        None,
+        id="release number",
+    ),
+    pytest.param(
+        lambda m: {**m, "release_id": "D07D6AEE", "rules": ["S3.C20"]},
+        "release_id",
+        None,
+        id="release refused before the rules are read",
     ),
 ]
 
 
-@pytest.mark.parametrize(("malform", "field"), MALFORMED)
+@pytest.mark.parametrize(("malform", "field", "release"), MALFORMED)
 def test_a_malformed_manifest_fails_only_its_own_pack(
     tmp_path: pathlib.Path,
     malform: Callable[[dict[str, Any]], Any],
     field: str,
+    release: str | None,
 ) -> None:
     packs = two_packs()
     data, manifest = packs["aws-s3"]
@@ -1638,6 +1716,12 @@ def test_a_malformed_manifest_fails_only_its_own_pack(
     assert (failure.stage, failure.code) == ("manifest", "bad_manifest")
     assert failure.message.startswith("aws-s3's manifest")
     assert field in failure.message
+    # A refusal that follows the release id says which published release is
+    # broken. Only a manifest that is no object, or whose id is itself refused,
+    # has no release to name.
+    assert failure.release_id == release
+    if release:
+        assert f", release {release[:7]}]" in str(failure)
     # A release id outside the API's form would draw a 400 that ends the whole
     # fetch, so the archive of a refused manifest is never asked for.
     assert "/v1/ccr/packs/aws-s3/archive" not in [path for path, _ in client.calls]
@@ -1645,6 +1729,52 @@ def test_a_malformed_manifest_fails_only_its_own_pack(
         tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json"
     ]
     assert not (tmp_path / "aws-s3").exists()
+
+
+@pytest.mark.parametrize(
+    ("second", "release"),
+    [
+        pytest.param(
+            {"release_id": FULL_RELEASE, "rules": ["S3.C20"]},
+            FULL_RELEASE,
+            id="its own release",
+        ),
+        pytest.param(
+            {"release_id": "D07D6AEE", "rules": ["S3.C20"]},
+            None,
+            id="no release, when its id is refused",
+        ),
+    ],
+)
+def test_a_republished_manifest_that_is_malformed_reports_its_own_release(
+    tmp_path: pathlib.Path, second: dict[str, Any], release: str | None
+) -> None:
+    packs = two_packs()
+    data, first = packs["aws-s3"]
+
+    class Republished(PackClient):
+        """Publishes a malformed manifest while the archive is being asked for."""
+
+        def get_bytes(
+            self, path: str, params: Mapping[str, str] | None = None
+        ) -> bytes:
+            try:
+                return super().get_bytes(path, params)
+            except ReleaseSuperseded:
+                self.packs["aws-s3"] = (data, {**first, **second})
+                raise
+
+    client = Republished(packs)
+    client.supersede_once.add("aws-s3")
+
+    result = fetch(client, release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
+
+    failure = result.failed["aws-s3"]
+    assert (failure.stage, failure.code) == ("manifest", "bad_manifest")
+    # The first manifest's release no longer describes the pack once a second
+    # one has been read.
+    assert failure.release_id == release
+    assert result.written == []
 
 
 @pytest.mark.parametrize(

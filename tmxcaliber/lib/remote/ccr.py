@@ -787,38 +787,63 @@ def _is_strings(value: Any) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
-def _refuse_malformed_manifest(manifest: Any, release_key: str) -> None:
-    """Refuse a manifest whose fields are not the shapes this module reads.
+def _manifest_release_id(manifest: Any, release_key: str) -> str:
+    """Take the release id from a manifest, refusing one the API would refuse.
 
-    Selection and extraction trust the manifest's field types. Unchecked, a
-    field of another type ends the whole fetch with a raw ``TypeError`` or
-    ``AttributeError``, or is read character by character as a string is, and
-    a release id outside the API's form is sent as the archive's pin and draws
-    a 400, which ends every later pack as well. Checked once, as soon as the
-    manifest is read, each of these fails this pack alone. A field given as
-    null reads as absent, as the rest of this module reads it.
+    This is the first check on a manifest, and it hands the id back so the
+    caller can hold it before any later check can raise. A failure that follows
+    it then names the release that is broken, which is what support asks for,
+    and only a manifest that is no object, or whose id is itself refused, has
+    none to name. A release id outside the API's form would also be sent as the
+    archive's pin and draw a 400 that ends every later pack as well.
 
     Args:
         manifest: The manifest, as the API answered it.
         release_key: The pack, for the message.
 
+    Returns:
+        The release id, or the empty string when the manifest names none, as
+        when the field is absent, null or empty. The archive is then asked for
+        unpinned.
+
     Raises:
-        ContractViolation: If the manifest is not an object, its ``release_id``
-            is neither empty nor in the API's form, its ``rules`` is not a list
-            of objects, a rule's ``id`` is not a non-empty string, a rule's
-            ``modes`` or ``files`` is not a list of strings, or a rule's
-            ``matchers`` is not an object of objects (code ``bad_manifest``).
+        ContractViolation: If the manifest is not an object, or its
+            ``release_id`` is neither empty nor in the API's form (code
+            ``bad_manifest``).
     """
     if not isinstance(manifest, Mapping):
         raise ContractViolation(
             f"{release_key}'s manifest is not an object.", code="bad_manifest"
         )
     release_id = manifest.get("release_id")
-    # An empty id names no release, and the archive is then asked for unpinned.
-    if release_id not in (None, "") and not (
-        isinstance(release_id, str) and _RELEASE_ID.fullmatch(release_id)
-    ):
+    if release_id in (None, ""):
+        return ""
+    if not (isinstance(release_id, str) and _RELEASE_ID.fullmatch(release_id)):
         raise _malformed(release_key, "release_id", "7 to 64 lowercase hex digits")
+    return release_id
+
+
+def _refuse_malformed_rules(manifest: Mapping[str, Any], release_key: str) -> None:
+    """Refuse a manifest whose rules are not the shapes this module reads.
+
+    Selection and extraction trust the types of the rules' fields. Unchecked, a
+    field of another type ends the whole fetch with a raw ``TypeError`` or
+    ``AttributeError``, or is read character by character as a string is.
+    Checked once, before selection reads them, each of these fails this pack
+    alone. A field given as null reads as absent, as the rest of this module
+    reads it. The manifest is checked as a whole by `_manifest_release_id`
+    first, so this takes an object whose release id is already sound.
+
+    Args:
+        manifest: The manifest, once `_manifest_release_id` has accepted it.
+        release_key: The pack, for the message.
+
+    Raises:
+        ContractViolation: If ``rules`` is not a list of objects, a rule's
+            ``id`` is not a non-empty string, a rule's ``modes`` or ``files`` is
+            not a list of strings, or a rule's ``matchers`` is not an object of
+            objects (code ``bad_manifest``).
+    """
     rules = manifest.get("rules")
     if rules is None:
         return
@@ -1122,9 +1147,10 @@ def _fetch_pack(
             ).result
             # Before anything reads a field, so a wrong type fails this pack
             # alone, and a release id the API would refuse is never sent as a
-            # pin.
-            _refuse_malformed_manifest(manifest, key)
-            release_id = str(manifest.get("release_id") or "")
+            # pin. The id comes first and is held before the rules are checked,
+            # so a refusal of the rules still says which release it came from.
+            release_id = _manifest_release_id(manifest, key)
+            _refuse_malformed_rules(manifest, key)
             chosen = select_rules(manifest, wanted)
             rows = [rule_row(key, release_id, selected) for selected in chosen]
             if out is None or not chosen:
