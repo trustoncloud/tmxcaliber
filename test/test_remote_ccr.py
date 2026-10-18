@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
+import pathlib
+import zipfile
 from typing import Any
 
 import pytest
 
-from tmxcaliber.lib.remote.ccr import RuleFilter, rule_row, select_rules
+from tmxcaliber.lib.remote.ccr import (
+    RuleFilter,
+    extract,
+    rule_row,
+    select_rules,
+    verify_archive,
+)
 from tmxcaliber.lib.remote.errors import ContractViolation
 
 
@@ -185,3 +195,136 @@ def test_a_row_carries_the_pack_the_release_and_the_selected_files() -> None:
 def test_a_rule_that_is_not_an_object_is_refused() -> None:
     with pytest.raises(ContractViolation):
         select_rules({"rules": ["S3.C20"]}, RuleFilter())
+
+
+def archive_of(entries: dict[str, bytes]) -> bytes:
+    """Zip entries the way the bundle is built: one file per entry.
+
+    Args:
+        entries: Each entry name and its content.
+
+    Returns:
+        The zip.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, content in entries.items():
+            archive.writestr(name, content)
+    return buffer.getvalue()
+
+
+def pack(entries: dict[str, bytes]) -> tuple[bytes, dict[str, Any]]:
+    """Build an archive and the manifest that describes it.
+
+    Args:
+        entries: The archive's entries.
+
+    Returns:
+        The archive, and a manifest declaring every entry under its rule.
+    """
+    data = archive_of(entries)
+    rules: dict[str, list[str]] = {}
+    for name in entries:
+        rule_id, _, file = name.partition("/")
+        rules.setdefault(rule_id, []).append(file)
+    manifest = {
+        "release_id": "d07d6aee",
+        "bundle": {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)},
+        "rules": [
+            rule(rule_id, ["allowlist"], files=files)
+            for rule_id, files in rules.items()
+        ],
+    }
+    return data, manifest
+
+
+ENTRIES = {
+    "S3.C20/metadata.json": b"{}",
+    "S3.C20/allowlist/cloud/check.rego": b"package a",
+    "S3.C21/metadata.json": b"{}",
+}
+
+
+def test_a_matching_archive_verifies() -> None:
+    data, manifest = pack(ENTRIES)
+
+    verify_archive(data, manifest, "aws-s3")
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {"sha256": "0" * 64},
+        {"bytes": 1},
+        None,
+    ],
+    ids=["digest", "size", "absent"],
+)
+def test_an_archive_unlike_its_manifest_is_refused(block: Any) -> None:
+    data, manifest = pack(ENTRIES)
+    if block is None:
+        del manifest["bundle"]
+    else:
+        manifest["bundle"] = {**manifest["bundle"], **block}
+
+    with pytest.raises(ContractViolation):
+        verify_archive(data, manifest, "aws-s3")
+
+
+def test_only_the_selected_files_are_written(tmp_path: pathlib.Path) -> None:
+    data, manifest = pack(ENTRIES)
+    chosen = select_rules(manifest, RuleFilter(controls=("S3.C20",), files=("*.rego",)))
+
+    written = extract(data, manifest, "aws-s3", chosen, tmp_path)
+
+    target = tmp_path / "aws-s3" / "S3.C20" / "allowlist" / "cloud" / "check.rego"
+    assert written == [target]
+    assert target.read_bytes() == b"package a"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["aws-s3"]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    ["../escape.rego", "/abs/escape.rego", "S3.C20\\evil.rego", "S3.C20//x.rego"],
+)
+def test_an_unsafe_entry_refuses_the_whole_pack(
+    tmp_path: pathlib.Path, extra: str
+) -> None:
+    data, manifest = pack(ENTRIES)
+    data = archive_of({**ENTRIES, extra: b"x"})
+    manifest["bundle"] = {
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "bytes": len(data),
+    }
+    chosen = select_rules(manifest, RuleFilter())
+
+    with pytest.raises(ContractViolation):
+        extract(data, manifest, "aws-s3", chosen, tmp_path)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_an_entry_the_manifest_does_not_declare_refuses_the_pack(
+    tmp_path: pathlib.Path,
+) -> None:
+    _, manifest = pack(ENTRIES)
+    data = archive_of({**ENTRIES, "S3.C99/metadata.json": b"{}"})
+    chosen = select_rules(manifest, RuleFilter())
+
+    with pytest.raises(ContractViolation):
+        extract(data, manifest, "aws-s3", chosen, tmp_path)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_declared_file_missing_from_the_archive_refuses_the_pack(
+    tmp_path: pathlib.Path,
+) -> None:
+    _, manifest = pack(ENTRIES)
+    data = archive_of({k: v for k, v in ENTRIES.items() if not k.endswith(".rego")})
+    chosen = select_rules(manifest, RuleFilter())
+
+    with pytest.raises(ContractViolation):
+        extract(data, manifest, "aws-s3", chosen, tmp_path)
+
+    assert list(tmp_path.iterdir()) == []

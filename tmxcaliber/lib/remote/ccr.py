@@ -13,9 +13,16 @@ chosen.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import hashlib
+import io
+import os
+import shutil
+import tempfile
+import zipfile
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
+from pathlib import Path
 from typing import Any, Final
 
 from .errors import ContractViolation
@@ -151,3 +158,127 @@ def rule_row(release_key: str, release_id: str, chosen: Selected) -> dict[str, A
         "weightedPriority": rule.get("weighted_priority", ""),
         "files": list(chosen.files),
     }
+
+
+def verify_archive(data: bytes, manifest: Mapping[str, Any], release_key: str) -> None:
+    """Refuse an archive that is not the one its manifest describes.
+
+    The API checks the same digest before serving, so a mismatch here means
+    the bytes changed in transit or the manifest came from another release.
+    Either way nothing from the archive is written.
+
+    Args:
+        data: The archive.
+        manifest: The manifest the rules were selected from.
+        release_key: The pack, for the message.
+
+    Raises:
+        ContractViolation: If the manifest describes no source archive, or the
+            archive's size or digest differs from it.
+    """
+    block = manifest.get("bundle")
+    if not isinstance(block, Mapping) or not block.get("sha256"):
+        raise ContractViolation(
+            f"{release_key}'s manifest describes no source archive.",
+            code="bad_manifest",
+        )
+    size = block.get("bytes")
+    if isinstance(size, int) and size != len(data):
+        raise ContractViolation(
+            f"{release_key}'s archive is {len(data)} bytes; its manifest says {size}.",
+            code="archive_mismatch",
+        )
+    if hashlib.sha256(data).hexdigest() != block["sha256"]:
+        raise ContractViolation(
+            f"{release_key}'s archive does not match its manifest's digest.",
+            code="archive_mismatch",
+        )
+
+
+def _is_safe(name: str) -> bool:
+    """Decide whether an archive entry name stays inside its pack folder.
+
+    Args:
+        name: The entry name.
+
+    Returns:
+        False for an absolute name, a backslash, a drive or other colon, or an
+        empty, ``.`` or ``..`` segment.
+    """
+    if not name or name.startswith("/") or "\\" in name or ":" in name:
+        return False
+    return all(part not in ("", ".", "..") for part in name.split("/"))
+
+
+def extract(
+    data: bytes,
+    manifest: Mapping[str, Any],
+    release_key: str,
+    chosen: Sequence[Selected],
+    out: Path,
+) -> list[Path]:
+    """Write the selected files of a verified archive under ``out/<release_key>``.
+
+    **All or nothing per pack.** Every check runs, and every file is written to
+    a staging folder inside ``out``, before anything reaches its final place,
+    so a refused pack leaves ``out`` as it was.
+
+    Args:
+        data: The archive, already verified with `verify_archive`.
+        manifest: The manifest the rules were selected from.
+        release_key: The pack.
+        chosen: The rules and files to write.
+        out: The folder to write under.
+
+    Returns:
+        Every file written, in selection order.
+
+    Raises:
+        ContractViolation: If any entry is unsafe or undeclared, or a selected
+            file is missing from the archive.
+    """
+    declared = {
+        f"{rule.get('id')}/{file}"
+        for rule in manifest.get("rules") or []
+        if isinstance(rule, Mapping)
+        for file in rule.get("files") or []
+    }
+    wanted = [f"{s.rule.get('id')}/{file}" for s in chosen for file in s.files]
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        entries = {name for name in archive.namelist() if not name.endswith("/")}
+        unsafe = sorted(name for name in entries if not _is_safe(name))
+        if unsafe:
+            raise ContractViolation(
+                f"{release_key}'s archive holds an unsafe entry: {unsafe[0]!r}.",
+                code="archive_unsafe",
+            )
+        undeclared = sorted(entries - declared)
+        if undeclared:
+            raise ContractViolation(
+                f"{release_key}'s archive holds {undeclared[0]}, which its manifest "
+                "does not declare.",
+                code="archive_mismatch",
+            )
+        missing = [name for name in wanted if name not in entries]
+        if missing:
+            raise ContractViolation(
+                f"{release_key}'s archive lacks {missing[0]}, which its manifest "
+                "declares.",
+                code="archive_mismatch",
+            )
+        out.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=f".{release_key}-", dir=out))
+        try:
+            for name in wanted:
+                staged = staging.joinpath(*name.split("/"))
+                staged.parent.mkdir(parents=True, exist_ok=True)
+                staged.write_bytes(archive.read(name))
+            written: list[Path] = []
+            for name in wanted:
+                final = out.joinpath(release_key, *name.split("/"))
+                final.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(staging.joinpath(*name.split("/")), final)
+                written.append(final)
+            return written
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
