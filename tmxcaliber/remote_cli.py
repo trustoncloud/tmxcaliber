@@ -24,10 +24,12 @@ import os
 import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from colorama import Fore
 
+from .lib.remote.ccr import MATCHERS, MODES, RuleFilter, fetch
 from .lib.remote.client import TocClient
 from .lib.remote.config import (
     SECTION,
@@ -206,6 +208,111 @@ def add_api_parsers(subparsers: _SubParsersAction[ArgumentParser]) -> None:
             route.command[-1], help=_summary(route), description=_summary(route)
         )
         _leaf(leaf, route)
+
+    # The one hand-written command under an API group. It composes routes the
+    # loop above bound, and names no route of its own.
+    _add_ccr_fetch(groups[("ccr",)])
+
+
+def _add_ccr_fetch(ccr: _SubParsersAction[ArgumentParser]) -> None:
+    """Add `ccr fetch` under the `ccr` group.
+
+    Args:
+        ccr: The `ccr` group's subparser action.
+    """
+    summary = (
+        "Select CCR rules by pack, control, mode, matcher or file, and write "
+        "their Rego and metadata with --out."
+    )
+    parser = ccr.add_parser("fetch", help=summary, description=summary)
+    parser.add_argument(
+        "release_keys",
+        nargs="*",
+        metavar="RELEASEKEY",
+        help="packs to read, as `tmxcaliber ccr packs list` reports them. "
+        "Every entitled pack when omitted.",
+    )
+    for name, help_text in (
+        ("provider", "read only this provider's packs, for example aws."),
+        ("service", "read only this service's packs, for example s3."),
+        ("control", "select this control, for example S3.C20."),
+        ("file", "select files whose <rule id>/<file> matches this glob."),
+    ):
+        parser.add_argument(
+            f"--{name}", action="append", default=[], help=help_text + " Repeatable."
+        )
+    parser.add_argument(
+        "--mode",
+        action="append",
+        default=[],
+        choices=MODES,
+        help="select rules that ship this mode, and only its files. Repeatable.",
+    )
+    parser.add_argument(
+        "--matcher",
+        action="append",
+        default=[],
+        choices=MATCHERS,
+        help="select rules that implement this matcher, and only its files. "
+        "Repeatable.",
+    )
+    parser.add_argument(
+        "--out",
+        default="",
+        metavar="DIR",
+        help="write the selected files to DIR/<release key>/<rule id>/. "
+        "Prints the selected rules as JSON when omitted.",
+    )
+    parser.set_defaults(ccr_fetch=True)
+
+
+def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
+    """Execute `ccr fetch`.
+
+    Args:
+        params: The parsed arguments.
+        client: A client to use, built from the environment when omitted.
+
+    Returns:
+        The exit status: 0, 1 when a pack failed, 2 for a usage error.
+
+    Raises:
+        RemoteError: On a credential, transport or server failure.
+    """
+    if params.release_keys and (params.provider or params.service):
+        print(
+            Fore.RED
+            + "Name packs, or narrow by --provider and --service, not both."
+            + Fore.RESET,
+            file=sys.stderr,
+        )
+        return 2
+    result = fetch(
+        client or connect(),
+        release_keys=tuple(params.release_keys),
+        providers=tuple(params.provider),
+        services=tuple(params.service),
+        wanted=RuleFilter(
+            controls=tuple(params.control),
+            modes=tuple(params.mode),
+            matchers=tuple(params.matcher),
+            files=tuple(params.file),
+        ),
+        out=Path(params.out) if params.out else None,
+    )
+    if params.out:
+        for path in result.written:
+            print(path)
+    else:
+        print(json.dumps(result.rows, indent=2))
+    if not result.rows and not result.failed:
+        print(
+            Fore.YELLOW + "No rule matched the filters given." + Fore.RESET,
+            file=sys.stderr,
+        )
+    for key, reason in result.failed.items():
+        print(Fore.RED + f"{key}: {reason}" + Fore.RESET, file=sys.stderr)
+    return 1 if result.failed else 0
 
 
 def selected_route(params: Namespace) -> Route | None:

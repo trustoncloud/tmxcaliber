@@ -17,9 +17,15 @@ from tmxcaliber.lib.remote.config import Settings
 from tmxcaliber.lib.remote.contract import route_for
 from tmxcaliber.lib.remote.errors import AuthenticationError
 from tmxcaliber.lib.remote.resolve import resolve_source
-from tmxcaliber.remote_cli import connect, resolve_command_source, run_api_command
+from tmxcaliber.remote_cli import (
+    connect,
+    resolve_command_source,
+    run_api_command,
+    run_ccr_fetch,
+)
 
 from .test_remote_assemble import DETAIL, DFD, PARTS, _at_release
+from .test_remote_ccr import PackClient, two_packs
 from .test_remote_config import (
     HAZARD,
     NOTED_CASES,
@@ -696,3 +702,125 @@ def test_the_archive_command_writes_the_bytes(tmp_path: pathlib.Path) -> None:
     assert client.calls == [
         ("/v1/ccr/packs/aws-s3/archive", {"kind": "deploy", "release": ""})
     ]
+
+
+def _fetch_params(monkeypatch: pytest.MonkeyPatch, *words: str) -> Namespace:
+    """Parse a `ccr fetch` command through the real parser.
+
+    Args:
+        monkeypatch: Sets argv.
+        *words: The words after `ccr fetch`.
+
+    Returns:
+        The parsed arguments.
+    """
+    monkeypatch.setattr(sys, "argv", ["tmxcaliber", "ccr", "fetch", *words])
+    return cli_module.get_params()
+
+
+def test_fetch_parses_every_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    params = _fetch_params(
+        monkeypatch,
+        "aws-s3",
+        "--control",
+        "S3.C20",
+        "--mode",
+        "allowlist",
+        "--matcher",
+        "terraform",
+        "--file",
+        "*.rego",
+        "--out",
+        "rules",
+    )
+
+    assert params.ccr_fetch is True
+    assert params.release_keys == ["aws-s3"]
+    assert (params.control, params.mode, params.matcher, params.file) == (
+        ["S3.C20"],
+        ["allowlist"],
+        ["terraform"],
+        ["*.rego"],
+    )
+    assert params.out == "rules"
+
+
+def test_fetch_refuses_an_unknown_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(SystemExit):
+        _fetch_params(monkeypatch, "--mode", "sometimes")
+
+
+def test_fetch_prints_rows_as_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "--control", "S3.C20")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    assert status == 0
+    assert [row["ruleId"] for row in json.loads(capsys.readouterr().out)] == ["S3.C20"]
+
+
+def test_fetch_with_no_match_prints_an_empty_list_and_a_note(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "--control", "Nothing.C1")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert json.loads(captured.out) == []
+    assert "No rule matched" in captured.err
+
+
+def test_fetch_writes_files_and_prints_their_paths(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    params = _fetch_params(
+        monkeypatch, "aws-s3", "--file", "*.rego", "--out", str(tmp_path)
+    )
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    written = tmp_path / "aws-s3" / "S3.C20" / "allowlist" / "cloud" / "check.rego"
+    assert status == 0
+    assert capsys.readouterr().out.split() == [str(written)]
+    assert written.exists()
+
+
+def test_fetch_refuses_packs_and_a_provider_together(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "aws-s3", "--provider", "aws")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    assert status == 2
+    assert "not both" in capsys.readouterr().err
+
+
+def test_a_failed_pack_exits_non_zero_and_names_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "aws-nothing")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    assert status == 1
+    assert "aws-nothing" in capsys.readouterr().err
+
+
+def test_main_runs_fetch_and_exits_with_its_status(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(remote_cli, "connect", lambda: PackClient(two_packs()))
+    monkeypatch.setattr(sys, "argv", ["tmxcaliber", "ccr", "fetch", "aws-nothing"])
+
+    with pytest.raises(SystemExit) as exited:
+        cli_module.main()
+
+    assert exited.value.code == 1
+    assert "aws-nothing" in capsys.readouterr().err
