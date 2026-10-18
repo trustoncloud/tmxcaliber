@@ -190,7 +190,20 @@ tmxcaliber subscriptions list
 tmxcaliber compliance frameworks list
 tmxcaliber compliance mappings list --framework nist-800-53-r5
 tmxcaliber ccr packs list
+tmxcaliber ccr packs archive aws-s3 --output aws-s3-source.zip
+tmxcaliber ccr packs archive aws-s3 --kind deploy --output aws-s3.zip
+tmxcaliber ccr fetch aws-s3 --control S3.C20
+tmxcaliber ccr fetch --provider gcp --mode universal --matcher terraform --out rules
+tmxcaliber ccr fetch --file '*/terraform/*.rego' --out rules
 ```
+
+`ccr fetch` reads each pack's manifest and selects rules by control, mode,
+matcher and file glob. Repeating a flag widens it; different flags narrow each
+other. Without `--out` it prints the selected rules as JSON. With `--out` it
+downloads only the packs that matched, checks each archive against its
+manifest's digest, and writes the selected files to
+`<out>/<release key>/<rule id>/`. Every pack's files come from the one release
+its manifest names.
 
 Collections are read in full; paging is handled for you. When the API reports
 that an answer is incomplete (for example, compliance mappings for
@@ -219,6 +232,7 @@ api = Client()
 api.me()
 api.threatmodels.list(provider="aws")
 api.threatmodels.threats("aws-s3", feature_class="S3.FC1")
+api.ccr.fetch("aws-s3", control=["S3.C20"], out="rules")
 api.compliance.mappings.list(framework="nist-800-53-r5")
 ```
 

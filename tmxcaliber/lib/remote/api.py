@@ -19,10 +19,14 @@ keyword arguments, and a paged route returns every row, as the CLI does.
 from __future__ import annotations
 
 import inspect
+import os
 import urllib.request
 import warnings
+from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
+from .ccr import FetchResult, RuleFilter, fetch
 from .client import TocClient
 from .config import DEFAULT_TIMEOUT, load_settings
 from .contract import ROUTES, Route, required_parameters
@@ -151,6 +155,74 @@ class Group:
         return f"<{'.'.join(self._command)}: {', '.join(names)}>"
 
 
+class CcrFetch:
+    """`tmxcaliber ccr fetch`, called as ``Client().ccr.fetch(...)``.
+
+    Written by hand because it composes three routes rather than reaching one.
+
+    Args:
+        client: The client the calls go through.
+    """
+
+    def __init__(self, client: TocClient) -> None:
+        self._client = client
+
+    def __repr__(self) -> str:
+        """Name the operation by its command.
+
+        Returns:
+            The call shape.
+        """
+        return (
+            "<ccr.fetch(*release_keys, provider=(), service=(), control=(), "
+            "mode=(), matcher=(), file=(), out=None)>"
+        )
+
+    def __call__(
+        self,
+        *release_keys: str,
+        provider: Sequence[str] = (),
+        service: Sequence[str] = (),
+        control: Sequence[str] = (),
+        mode: Sequence[str] = (),
+        matcher: Sequence[str] = (),
+        file: Sequence[str] = (),
+        out: str | os.PathLike[str] | None = None,
+    ) -> FetchResult:
+        """Select CCR rules, as `tmxcaliber ccr fetch` does.
+
+        Args:
+            *release_keys: Packs to read. Every entitled pack when none.
+            provider: Narrow the listed packs to these providers.
+            service: Narrow the listed packs to these services.
+            control: Control ids to select.
+            mode: Modes a rule must ship one of.
+            matcher: Matchers a rule must implement one of.
+            file: Globs over ``<rule id>/<file>``.
+            out: A folder to write the selected files under.
+
+        Returns:
+            The rows, the files written and the packs that failed.
+
+        Raises:
+            ValueError: If packs are named and also narrowed.
+            RemoteError: On a credential, transport or server failure.
+        """
+        return fetch(
+            self._client,
+            release_keys=release_keys,
+            providers=tuple(provider),
+            services=tuple(service),
+            wanted=RuleFilter(
+                controls=tuple(control),
+                modes=tuple(mode),
+                matchers=tuple(matcher),
+                files=tuple(file),
+            ),
+            out=Path(out) if out is not None else None,
+        )
+
+
 class Client(TocClient):
     """A TrustOnCloud API client whose attributes mirror the CLI's commands.
 
@@ -191,6 +263,12 @@ class Client(TocClient):
         super().__init__(settings, opener=opener)
         for route in ROUTES:
             self._attach(route)
+        # Hung after the routes so a route the API adds at `ccr fetch` is a
+        # collision caught here rather than a silent replacement.
+        ccr = getattr(self, "ccr", None)
+        if not isinstance(ccr, Group) or hasattr(ccr, "fetch"):
+            raise ValueError("ccr fetch has no free place on the client.")
+        ccr.fetch = CcrFetch(self)  # type: ignore[attr-defined]
 
     def _attach(self, route: Route) -> None:
         """Hang one route's operation at its command's attribute path.

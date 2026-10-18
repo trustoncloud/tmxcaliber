@@ -13,6 +13,7 @@ import pytest
 import tmxcaliber
 from tmxcaliber.lib.remote import api as api_module
 from tmxcaliber.lib.remote.api import Client, Group, Operation
+from tmxcaliber.lib.remote.ccr import FetchResult
 from tmxcaliber.lib.remote.config import DEFAULT_BASE_URL
 from tmxcaliber.lib.remote.contract import (
     ROUTES,
@@ -359,3 +360,54 @@ def test_a_binary_route_refuses_the_json_a_sibling_route_would_answer() -> None:
 
     with pytest.raises(ContractViolation, match="not an archive"):
         client.ccr.packs.archive("aws-s3")
+
+
+def test_fetch_hangs_beside_the_pack_commands() -> None:
+    client = Client()
+
+    assert "fetch" in repr(client.ccr)
+    assert "packs" in repr(client.ccr)
+
+
+def test_fetch_lists_the_selected_rules_through_the_api() -> None:
+    manifest = {
+        "release_id": "d07d6aee",
+        "rules": [
+            {
+                "id": "S3.C20",
+                "modes": ["universal"],
+                "files": ["metadata.json"],
+                "matchers": {},
+            },
+            {
+                "id": "S3.C21",
+                "modes": ["denylist"],
+                "files": ["metadata.json"],
+                "matchers": {},
+            },
+        ],
+    }
+    client = Client(opener=FakeOpener([FakeResponse(manifest)]))
+
+    result = client.ccr.fetch("aws-s3", mode=["universal"])
+
+    assert isinstance(result, FetchResult)
+    assert [row["ruleId"] for row in result.rows] == ["S3.C20"]
+    assert result.written == []
+
+
+def test_a_route_the_api_adds_at_ccr_fetch_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    taken = Route(
+        path="/v1/ccr/fetch",
+        command=("ccr", "fetch"),
+        paged=False,
+        filters=(),
+        positional=None,
+        summary="A route that would sit where the hand-written fetch goes.",
+    )
+    monkeypatch.setattr(api_module, "ROUTES", (*ROUTES, taken))
+
+    with pytest.raises(ValueError, match="ccr fetch has no free place"):
+        Client()
