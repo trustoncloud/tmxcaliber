@@ -13,7 +13,7 @@ import sys
 import tempfile
 import zipfile
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import pytest
@@ -22,11 +22,17 @@ from tmxcaliber.lib.remote.ccr import (
     RuleFilter,
     _is_safe,
     extract,
+    fetch,
     rule_row,
     select_rules,
     verify_archive,
 )
-from tmxcaliber.lib.remote.errors import ContractViolation
+from tmxcaliber.lib.remote.errors import (
+    AuthenticationError,
+    ContractViolation,
+    NotFound,
+    ReleaseSuperseded,
+)
 
 
 def rule(
@@ -1326,3 +1332,156 @@ def test_a_staging_folder_that_cannot_be_deleted_does_not_fail_a_pack_that_was_w
     # because it cannot be deleted. The files are all in place by then.
     assert len(written) == len(ENTRIES)
     assert target.read_bytes() == b"{}"
+
+
+class PackClient:
+    """Answers the three CCR routes from fixtures, and records every call."""
+
+    def __init__(self, packs: dict[str, tuple[bytes, dict[str, Any]]]) -> None:
+        self.packs = packs
+        self.calls: list[tuple[str, dict[str, str]]] = []
+        #: Release keys whose next archive call answers 410 once.
+        self.supersede_once: set[str] = set()
+
+    def paginate(
+        self, path: str, params: Mapping[str, str] | None = None, **_: Any
+    ) -> Any:
+        self.calls.append((path, dict(params or {})))
+        yield from ({"releaseKey": key} for key in sorted(self.packs))
+
+    def get(self, path: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
+        self.calls.append((path, dict(params or {})))
+        key = path.rsplit("/", 1)[-1]
+        if key not in self.packs:
+            raise NotFound("No such pack.", status=404)
+        return self.packs[key][1]
+
+    def get_bytes(self, path: str, params: Mapping[str, str] | None = None) -> bytes:
+        self.calls.append((path, dict(params or {})))
+        key = path.split("/")[-2]
+        if key in self.supersede_once:
+            self.supersede_once.discard(key)
+            raise ReleaseSuperseded("Superseded.", status=410)
+        return self.packs[key][0]
+
+
+def two_packs() -> dict[str, tuple[bytes, dict[str, Any]]]:
+    """Two packs, one per provider.
+
+    Returns:
+        Each pack's archive and manifest, by release key.
+    """
+    return {
+        "aws-s3": pack(ENTRIES),
+        "gcp-bigquery": pack({"Bigquery.C102/metadata.json": b"{}"}),
+    }
+
+
+def test_without_out_no_archive_is_downloaded() -> None:
+    client = PackClient(two_packs())
+
+    result = fetch(client, wanted=RuleFilter(controls=("S3.C20",)))  # type: ignore[arg-type]
+
+    assert [row["ruleId"] for row in result.rows] == ["S3.C20"]
+    assert not any(path.endswith("/archive") for path, _ in client.calls)
+
+
+def test_provider_and_service_narrow_the_listed_packs() -> None:
+    client = PackClient(two_packs())
+
+    result = fetch(client, providers=("gcp",))  # type: ignore[arg-type]
+
+    assert {row["releaseKey"] for row in result.rows} == {"gcp-bigquery"}
+    assert ("/v1/ccr/packs/aws-s3", {}) not in client.calls
+
+
+def test_named_packs_are_read_without_listing() -> None:
+    client = PackClient(two_packs())
+
+    fetch(client, release_keys=("aws-s3",))  # type: ignore[arg-type]
+
+    assert client.calls == [("/v1/ccr/packs/aws-s3", {})]
+
+
+def test_naming_packs_and_narrowing_them_is_refused() -> None:
+    with pytest.raises(ValueError):
+        fetch(PackClient({}), release_keys=("aws-s3",), providers=("aws",))  # type: ignore[arg-type]
+
+
+def test_only_packs_with_a_match_are_downloaded_pinned_to_their_release(
+    tmp_path: pathlib.Path,
+) -> None:
+    client = PackClient(two_packs())
+
+    result = fetch(client, wanted=RuleFilter(controls=("S3.C20",)), out=tmp_path)  # type: ignore[arg-type]
+
+    archives = [(p, q) for p, q in client.calls if p.endswith("/archive")]
+    assert archives == [
+        ("/v1/ccr/packs/aws-s3/archive", {"kind": "source", "release": "d07d6aee"})
+    ]
+    assert result.written == [
+        tmp_path / "aws-s3" / "S3.C20" / "metadata.json",
+        tmp_path / "aws-s3" / "S3.C20" / "allowlist" / "cloud" / "check.rego",
+    ]
+
+
+def test_a_superseded_release_is_read_again_once(tmp_path: pathlib.Path) -> None:
+    client = PackClient(two_packs())
+    client.supersede_once.add("aws-s3")
+
+    result = fetch(client, release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
+
+    assert result.failed == {}
+    assert [p for p, _ in client.calls].count("/v1/ccr/packs/aws-s3") == 2
+
+
+def test_one_failed_pack_does_not_stop_the_others(tmp_path: pathlib.Path) -> None:
+    packs = two_packs()
+    data, manifest = packs["aws-s3"]
+    packs["aws-s3"] = (data + b"tampered", manifest)
+    client = PackClient(packs)
+
+    result = fetch(client, out=tmp_path)  # type: ignore[arg-type]
+
+    assert set(result.failed) == {"aws-s3"}
+    assert (tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json").exists()
+    assert not (tmp_path / "aws-s3").exists()
+
+
+def test_an_unknown_named_pack_is_reported_not_raised() -> None:
+    result = fetch(PackClient(two_packs()), release_keys=("aws-nothing",))  # type: ignore[arg-type]
+
+    assert "aws-nothing" in result.failed
+
+
+class AlwaysSuperseded(PackClient):
+    """A client whose pack is republished before every archive read."""
+
+    def get_bytes(self, path: str, params: Mapping[str, str] | None = None) -> bytes:
+        self.calls.append((path, dict(params or {})))
+        raise ReleaseSuperseded("Superseded.", status=410)
+
+
+def test_a_release_that_changes_twice_in_a_row_fails_the_pack(
+    tmp_path: pathlib.Path,
+) -> None:
+    client = AlwaysSuperseded(two_packs())
+
+    result = fetch(client, release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
+
+    assert set(result.failed) == {"aws-s3"}
+    # One retry and no more: the manifest is read twice, and the archive twice.
+    assert [p for p, _ in client.calls].count("/v1/ccr/packs/aws-s3") == 2
+    assert [p for p, _ in client.calls].count("/v1/ccr/packs/aws-s3/archive") == 2
+    assert not (tmp_path / "aws-s3").exists()
+
+
+def test_a_credential_failure_is_not_a_packs_failure() -> None:
+    class Unauthorised(PackClient):
+        def get(
+            self, path: str, params: Mapping[str, str] | None = None
+        ) -> dict[str, Any]:
+            raise AuthenticationError("Bad key.", status=401)
+
+    with pytest.raises(AuthenticationError):
+        fetch(Unauthorised(two_packs()), release_keys=("aws-s3",))  # type: ignore[arg-type]

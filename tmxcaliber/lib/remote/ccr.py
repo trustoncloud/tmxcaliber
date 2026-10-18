@@ -24,12 +24,15 @@ import tempfile
 import zipfile
 import zlib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Final
 
-from .errors import ContractViolation
+from .client import TocClient
+from .contract import Route, route_for
+from .errors import ContractViolation, NotFound, ReleaseSuperseded
+from .operations import call_route
 
 #: The modes a rule can ship, as ccr_factory names them.
 MODES: Final[tuple[str, ...]] = ("universal", "allowlist", "denylist")
@@ -57,6 +60,13 @@ class RuleFilter:
     modes: tuple[str, ...] = ()
     matchers: tuple[str, ...] = ()
     files: tuple[str, ...] = ()
+
+
+#: The filter that selects everything, which is `fetch`'s default. It is a
+#: module-level value because a call in a default argument is refused by the
+#: linter (B008). Callers share this one instance, which is safe because
+#: `RuleFilter` is frozen.
+_NO_FILTER: Final[RuleFilter] = RuleFilter()
 
 
 @dataclass(frozen=True)
@@ -704,3 +714,159 @@ def extract(
                 with contextlib.suppress(OSError):
                     folder.rmdir()
             raise
+
+
+def _route(command: tuple[str, ...]) -> Route:
+    """Find a CCR route by its command.
+
+    Args:
+        command: The command words.
+
+    Returns:
+        The route.
+    """
+    found = route_for(command)
+    assert found is not None, f"{' '.join(command)} is not bound"
+    return found
+
+
+@dataclass
+class FetchResult:
+    """What a fetch found and wrote.
+
+    Attributes:
+        rows: One row per selected rule, across every pack read.
+        written: Every file written, when a folder was given.
+        failed: Each pack that could not be read, and why.
+    """
+
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    written: list[Path] = field(default_factory=list)
+    failed: dict[str, str] = field(default_factory=dict)
+
+
+def _pack_keys(
+    client: TocClient,
+    release_keys: Sequence[str],
+    providers: Sequence[str],
+    services: Sequence[str],
+) -> list[str]:
+    """Decide which packs to read.
+
+    Args:
+        client: The client.
+        release_keys: Packs named by the caller.
+        providers: Providers to narrow the listed packs to.
+        services: Services to narrow the listed packs to.
+
+    Returns:
+        The release keys, in the order they will be read.
+    """
+    if release_keys:
+        return list(dict.fromkeys(release_keys))
+    keys: list[str] = []
+    for row in call_route(client, _route(("ccr", "packs", "list")), "", {}).result:
+        key = str(row.get("releaseKey") or "")
+        # A release key is `<provider>-<service>`, split on its first hyphen,
+        # as the API splits it to check entitlement.
+        provider, _, service = key.partition("-")
+        if providers and provider not in providers:
+            continue
+        if services and service not in services:
+            continue
+        keys.append(key)
+    return keys
+
+
+def _fetch_pack(
+    client: TocClient, key: str, wanted: RuleFilter, out: Path | None
+) -> tuple[list[dict[str, Any]], list[Path]]:
+    """Select from one pack, and write its files when a folder is given.
+
+    **One release throughout.** The archive is asked for the release the
+    manifest names, so the files written are the ones the rules were chosen
+    from. A pack republished between the two reads answers 410, and its
+    manifest is read once more.
+
+    Args:
+        client: The client.
+        key: The pack.
+        wanted: The filter.
+        out: The folder to write under, or None to write nothing.
+
+    Returns:
+        The pack's rows and the files written.
+
+    Raises:
+        NotFound: If the pack is unknown or not entitled.
+        ReleaseSuperseded: If the release changed twice in a row.
+        ContractViolation: If the archive is not the one its manifest describes.
+    """
+    for attempt in (1, 2):
+        manifest = call_route(client, _route(("ccr", "packs", "get")), key, {}).result
+        release_id = str(manifest.get("release_id") or "")
+        chosen = select_rules(manifest, wanted)
+        rows = [rule_row(key, release_id, selected) for selected in chosen]
+        if out is None or not chosen:
+            return rows, []
+        try:
+            data = call_route(
+                client,
+                _route(("ccr", "packs", "archive")),
+                key,
+                {"kind": "source", "release": release_id},
+            ).result
+        except ReleaseSuperseded:
+            if attempt == 2:
+                raise
+            continue
+        verify_archive(data, manifest, key)
+        return rows, extract(data, manifest, key, chosen, out)
+    raise AssertionError("unreachable: the loop returns or raises")
+
+
+def fetch(
+    client: TocClient,
+    *,
+    release_keys: Sequence[str] = (),
+    providers: Sequence[str] = (),
+    services: Sequence[str] = (),
+    wanted: RuleFilter = _NO_FILTER,
+    out: Path | None = None,
+) -> FetchResult:
+    """Select CCR rules across packs, and write their files when asked.
+
+    A pack that cannot be read is recorded in ``failed`` and the others still
+    complete. A credential or transport failure is not a pack's failure and
+    propagates.
+
+    Args:
+        client: The client.
+        release_keys: Packs to read. Every entitled pack when empty.
+        providers: Narrow the listed packs to these providers.
+        services: Narrow the listed packs to these services.
+        wanted: Which rules and files to select.
+        out: The folder to write under, or None to only list.
+
+    Returns:
+        The rows, the files written and the packs that failed.
+
+    Raises:
+        ValueError: If packs are named and also narrowed by provider or service.
+        RemoteError: On a credential, transport or server failure.
+    """
+    if release_keys and (providers or services):
+        raise ValueError("Name packs, or narrow by provider and service, not both.")
+    result = FetchResult()
+    for key in _pack_keys(client, release_keys, providers, services):
+        try:
+            rows, written = _fetch_pack(client, key, wanted, out)
+        except NotFound:
+            result.failed[key] = "unknown, or not in this tenant's subscription."
+            continue
+        except (ReleaseSuperseded, ContractViolation) as exc:
+            result.failed[key] = str(exc)
+            continue
+        result.rows.extend(rows)
+        result.written.extend(written)
+    return result
