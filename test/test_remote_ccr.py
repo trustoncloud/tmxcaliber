@@ -105,6 +105,11 @@ MANIFEST: dict[str, Any] = {
 }
 
 
+#: A release id as the API issues it, which is the commit the pack was built
+#: from (``GITHUB_SHA``), so 40 characters where most fixtures here use 8.
+FULL_RELEASE = "d07d6aee5f3c9b1e8a4d2c6b0f7e9a1d3c5b7e2f"
+
+
 def ids(wanted: RuleFilter) -> list[str]:
     """Select from the fixture and name what was chosen.
 
@@ -211,6 +216,14 @@ def test_a_row_carries_the_pack_the_release_and_the_selected_files() -> None:
         "weightedPriority": "High",
         "files": ["metadata.json"],
     }
+
+
+def test_a_row_carries_a_full_length_release_id_whole() -> None:
+    # Seven characters are enough to tell releases apart on screen, but the row
+    # is what a script pins the next request to, so it carries the whole id.
+    [chosen] = select_rules(MANIFEST, RuleFilter(controls=("S3.C21",)))
+
+    assert rule_row("aws-s3", FULL_RELEASE, chosen)["releaseId"] == FULL_RELEASE
 
 
 def test_a_rule_that_is_not_an_object_is_refused() -> None:
@@ -1465,6 +1478,22 @@ def test_only_packs_with_a_match_are_downloaded_pinned_to_their_release(
     ]
 
 
+def test_a_full_length_release_id_pins_the_archive_and_fills_every_row(
+    tmp_path: pathlib.Path,
+) -> None:
+    packs = two_packs()
+    data, manifest = packs["aws-s3"]
+    packs["aws-s3"] = (data, {**manifest, "release_id": FULL_RELEASE})
+    client = PackClient(packs)
+
+    result = fetch(client, release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
+
+    archives = [query for path, query in client.calls if path.endswith("/archive")]
+    assert archives == [{"kind": "source", "release": FULL_RELEASE}]
+    assert [row["releaseId"] for row in result.rows] == [FULL_RELEASE] * 2
+    assert len(result.written) == len(ENTRIES)
+
+
 def test_a_superseded_release_is_read_again_once(tmp_path: pathlib.Path) -> None:
     client = PackClient(two_packs())
     client.supersede_once.add("aws-s3")
@@ -1502,11 +1531,6 @@ def test_an_unknown_named_pack_is_reported_not_raised() -> None:
     )
     # The manifest was never read, so there is no release to name.
     assert failure.release_id is None
-
-
-#: A release id as the API issues it, which is the commit the pack was built
-#: from (``GITHUB_SHA``), so 40 characters where most fixtures here use 8.
-FULL_RELEASE = "d07d6aee5f3c9b1e8a4d2c6b0f7e9a1d3c5b7e2f"
 
 
 def with_first_rule(manifest: dict[str, Any], **fields: Any) -> dict[str, Any]:
@@ -1791,6 +1815,29 @@ def test_a_pack_failure_reads_as_one_line() -> None:
     assert str(failure) == (
         f"archive failed: {DAMAGED} [unavailable, HTTP 503, request r-1, "
         f"release d07d6ae]. {REFUSED_HINT}"
+    )
+
+
+def test_a_failed_pack_keeps_a_full_length_release_id_and_prints_seven(
+    tmp_path: pathlib.Path,
+) -> None:
+    packs = two_packs()
+    data, manifest = packs["aws-s3"]
+    packs["aws-s3"] = (data, {**manifest, "release_id": FULL_RELEASE})
+    client = PackClient(packs)
+    client.archive_errors["aws-s3"] = ServiceUnavailable(
+        DAMAGED, code="unavailable", status=503, request_id="r-1"
+    )
+
+    result = fetch(client, release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
+
+    failure = result.failed["aws-s3"]
+    # The field keeps the whole id for a script; the line people read is cut
+    # to seven characters, as a short commit hash is.
+    assert failure.release_id == FULL_RELEASE
+    assert str(failure) == (
+        f"archive failed: {DAMAGED} [unavailable, HTTP 503, request r-1, "
+        f"release {FULL_RELEASE[:7]}]. {REFUSED_HINT}"
     )
 
 
