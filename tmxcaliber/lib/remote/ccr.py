@@ -282,15 +282,20 @@ def _refuse_unwritable(wanted: Sequence[str], release_key: str) -> None:
     only once, and two names that land on one path would overwrite each other
     or fail part way through the moves.
 
+    The selected paths are the strings that are joined onto ``out``, so they are
+    judged here for leaving their folder, whatever the archive's names say. An
+    archive can report an entry under another name than the one it stores, and
+    a check on the stored names cannot vouch for what reaches the disk then.
+
     Args:
         wanted: The selected paths, each ``<rule id>/<file>``.
         release_key: The pack, for the message.
 
     Raises:
         ContractViolation: If the manifest lists a path twice (code
-            ``bad_manifest``), or a path is one Windows cannot write, equals
-            another once case is ignored, or is both a file and a folder of
-            another (code ``archive_unsafe``).
+            ``bad_manifest``), or a path could leave its folder, is one Windows
+            cannot write, equals another once case is ignored, or is both a
+            file and a folder of another (code ``archive_unsafe``).
     """
     seen: set[str] = set()
     for name in wanted:
@@ -302,6 +307,12 @@ def _refuse_unwritable(wanted: Sequence[str], release_key: str) -> None:
         seen.add(name)
     by_folded: dict[str, str] = {}
     for name in wanted:
+        if not _is_safe(name):
+            raise ContractViolation(
+                f"{release_key}'s manifest declares {name!r}, which could leave "
+                "its folder.",
+                code="archive_unsafe",
+            )
         if not _is_portable(name):
             raise ContractViolation(
                 f"{release_key}'s manifest declares {name!r}, which cannot be "
@@ -344,12 +355,23 @@ def _refuse_folders_in_the_way(
         out: The folder to write under.
 
     Raises:
-        ContractViolation: If a folder, or a link to one, is at a final path
-            (code ``archive_unwritable``).
+        ContractViolation: If a folder, or a link to one, is at a final path, or
+            a final path cannot be examined, such as one inside a folder this
+            user cannot search (code ``archive_unwritable``). The disk's error
+            is the cause in the second case. Python 3.10 to 3.12 raise it from
+            ``Path.is_dir``, and without this it would end a whole fetch.
     """
     for name in wanted:
         final = out.joinpath(release_key, *name.split("/"))
-        if final.is_dir():
+        try:
+            in_the_way = final.is_dir()
+        except OSError as exc:
+            raise ContractViolation(
+                f"{release_key}'s file {name} cannot be written, because {final} "
+                f"cannot be examined: {exc} Nothing was changed.",
+                code="archive_unwritable",
+            ) from exc
+        if in_the_way:
             raise ContractViolation(
                 f"{release_key}'s file {name} cannot be written, because {final} "
                 "is a folder.",
@@ -430,7 +452,9 @@ def _remove_tree(folder: Path) -> None:
     fetch may have left that copy read-only, so with ``rmtree`` a hidden folder
     of stale files would stay in the output folder after a pack that succeeded.
     The attribute is cleared only when a delete is refused. This is best effort,
-    because it also runs while another failure is propagating.
+    because it also runs while another failure is propagating, and an error from
+    it would take the place of that failure. Whatever cannot be deleted stays
+    behind, hidden, and the pack's own outcome is reported as it was.
 
     Args:
         folder: The folder to delete.
@@ -440,7 +464,7 @@ def _remove_tree(folder: Path) -> None:
             path = os.path.join(parent, name)
             try:
                 os.unlink(path)
-            except PermissionError:
+            except OSError:
                 with contextlib.suppress(OSError):
                     os.chmod(path, stat.S_IWRITE)
                     os.unlink(path)
@@ -474,17 +498,20 @@ def _install(
         Every file written, in the order of ``wanted``.
 
     Raises:
-        ContractViolation: If an entry cannot be read, or the disk refuses a
-            write or a move (code ``archive_unwritable``). The disk's error is
-            the cause. It is reported as a failed pack, as an unreadable entry
-            is, because ``fetch`` has to be able to go on to the next pack when
-            one file is held open by another program.
+        ContractViolation: If an entry cannot be read, or the disk refuses to
+            make ``out`` or the staging folder, or refuses a write or a move
+            (code ``archive_unwritable``). The disk's error is the cause. It is
+            reported as a failed pack, as an unreadable entry is, because
+            ``fetch`` has to be able to go on to the next pack when one file is
+            held open by another program, and has to report a folder the user
+            cannot write as a failed pack instead of a traceback.
     """
-    _make_folder(out, created)
-    staging = Path(tempfile.mkdtemp(prefix=f".{release_key}-", dir=out))
     placed: list[tuple[Path, Path | None]] = []
     keep_staging = False
+    staging: Path | None = None
     try:
+        _make_folder(out, created)
+        staging = Path(tempfile.mkdtemp(prefix=f".{release_key}-", dir=out))
         for name in wanted:
             staged = staging.joinpath("new", *name.split("/"))
             staged.parent.mkdir(parents=True, exist_ok=True)
@@ -503,6 +530,8 @@ def _install(
             written.append(final)
         return written
     except OSError as exc:
+        # When the failure came before the staging folder existed, nothing has
+        # been placed, so there is nothing to put back and nothing to keep.
         restored = _put_back(placed)
         keep_staging = not restored
         outcome = (
@@ -518,7 +547,7 @@ def _install(
         keep_staging = not _put_back(placed)
         raise
     finally:
-        if not keep_staging:
+        if staging is not None and not keep_staging:
             _remove_tree(staging)
 
 
@@ -550,12 +579,15 @@ def extract(
 
     Raises:
         ContractViolation: If the archive cannot be read (code
-            ``archive_unreadable``), any entry is unsafe or undeclared, a
-            selected file is missing from the archive, or the selection lists a
-            path twice or names files that cannot sit side by side on every
-            platform. Also, with code ``archive_unwritable``, if a folder is
-            where a file belongs or the disk refuses a write or a move, in which
-            case ``out`` has been put back as it was.
+            ``archive_unreadable``), any entry is unsafe or undeclared, an entry
+            reads under another name than the one it stores, a selected file is
+            missing from the archive, or the selection lists a path twice,
+            holds one that could leave its folder, or names files that cannot
+            sit side by side on every platform. Also, with code
+            ``archive_unwritable``, if a folder is where a file belongs, a path
+            under ``out`` cannot be examined, or the disk refuses to make
+            ``out`` or to write or move a file, in which case ``out`` has been
+            put back as it was.
     """
     declared = {
         f"{rule.get('id')}/{file}"
@@ -564,6 +596,10 @@ def extract(
         for file in rule.get("files") or []
     }
     wanted = [f"{s.rule.get('id')}/{file}" for s in chosen for file in s.files]
+    # These paths are what gets joined onto ``out``, so they are judged before
+    # the archive is looked at. Nothing the archive's names say can vouch for
+    # them.
+    _refuse_unwritable(wanted, release_key)
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except _UNREADABLE as exc:
@@ -588,6 +624,23 @@ def extract(
                 f"{release_key}'s archive holds an unsafe entry: {unsafe[0]!r}.",
                 code="archive_unsafe",
             )
+        # zipfile reports a name that an extra field gives an entry, and a name
+        # cut at its first null byte, in place of the stored one. Only the
+        # reported name is read and compared, so the check on the stored name
+        # above would say nothing about it. Backslashes are set aside here
+        # because zipfile folds them on Windows only, and the check above has
+        # already refused them in every entry that is written.
+        renamed = sorted(
+            info.orig_filename
+            for info in archive.infolist()
+            if info.filename.replace("\\", "/") != info.orig_filename.replace("\\", "/")
+        )
+        if renamed:
+            raise ContractViolation(
+                f"{release_key}'s archive holds an entry stored as {renamed[0]!r} "
+                "that reads as another name.",
+                code="archive_unsafe",
+            )
         undeclared = sorted(entries - declared)
         if undeclared:
             raise ContractViolation(
@@ -602,7 +655,6 @@ def extract(
                 "declares.",
                 code="archive_mismatch",
             )
-        _refuse_unwritable(wanted, release_key)
         _refuse_folders_in_the_way(wanted, release_key, out)
         created: list[Path] = []
         try:
