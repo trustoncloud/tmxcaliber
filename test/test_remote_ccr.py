@@ -1093,6 +1093,91 @@ def test_a_selected_path_that_could_leave_its_folder_is_refused_unread(
     assert list(tmp_path.iterdir()) == []
 
 
+#: Stands for a key that is an absolute path, which only the test can build,
+#: because it has to lie under the test's own folder.
+ABSOLUTE_KEY = "<an absolute path>"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "..",
+        ".",
+        "",
+        "../x",
+        "../../sibling",
+        "a/b",
+        "a\\b",
+        "aws-s3/..",
+        "aws-s3\n",
+        "aws\0s3",
+        "AWS-S3",
+        "awss3",
+        "-aws",
+        "aws-",
+        "aws--s3",
+        ABSOLUTE_KEY,
+    ],
+    ids=[
+        "parent",
+        "current",
+        "empty",
+        "parent-then-name",
+        "two-levels-up",
+        "separator",
+        "backslash",
+        "name-then-parent",
+        "trailing-newline",
+        "null-byte",
+        "uppercase",
+        "no-hyphen",
+        "leading-hyphen",
+        "trailing-hyphen",
+        "doubled-hyphen",
+        "absolute",
+    ],
+)
+def test_a_release_key_that_could_leave_the_output_folder_is_refused_unread(
+    tmp_path: pathlib.Path, key: str
+) -> None:
+    # The key is joined onto ``out`` as a folder name, and it reaches this
+    # client from the API with nothing between it and the disk. The archive is
+    # honest and its one file is safe under every check on names, so only a
+    # check on the key refuses this pack. With the key ``..`` the file would
+    # replace one that belongs to a sibling of ``out``.
+    if key == ABSOLUTE_KEY:
+        key = str(tmp_path / "elsewhere")
+    home = tmp_path / "home"
+    owned = home / ".ssh" / "authorized_keys"
+    owned.parent.mkdir(parents=True)
+    owned.write_bytes(b"owner")
+    data, manifest = pack({".ssh/authorized_keys": b"attacker"})
+    chosen = select_rules(manifest, RuleFilter())
+    before = tree(tmp_path)
+
+    with pytest.raises(ContractViolation) as caught:
+        extract(data, manifest, key, chosen, home / "ccr")
+
+    assert caught.value.code == "archive_unsafe"
+    assert tree(tmp_path) == before
+    assert owned.read_bytes() == b"owner"
+
+
+@pytest.mark.parametrize(
+    "key", ["aws-s3", "gcp-cloud-storage", "azure-key-vault-2", "a-1"]
+)
+def test_a_release_key_in_the_servers_form_is_written_under_its_own_folder(
+    tmp_path: pathlib.Path, key: str
+) -> None:
+    data, manifest = pack(ENTRIES)
+    chosen = select_rules(manifest, RuleFilter())
+
+    written = extract(data, manifest, key, chosen, tmp_path / "out")
+
+    assert written
+    assert all((tmp_path / "out" / key) in path.parents for path in written)
+
+
 def test_a_name_that_zipfile_cuts_short_refuses_the_pack(
     tmp_path: pathlib.Path,
 ) -> None:

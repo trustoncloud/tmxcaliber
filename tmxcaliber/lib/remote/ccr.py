@@ -18,6 +18,7 @@ import hashlib
 import io
 import lzma
 import os
+import re
 import stat
 import tempfile
 import zipfile
@@ -227,6 +228,15 @@ _WINDOWS_DEVICES: Final[frozenset[str]] = frozenset(
     | {f"lpt{n}" for n in range(1, 10)}
 )
 
+#: The form of a pack's release key, which is the API's own rule
+#: (``isSafeReleaseKey``): lowercase letters and digits in two or more groups
+#: joined by single hyphens, as in ``aws-s3``. The key becomes a folder name
+#: under the output folder and the API never sends one that does not fit, so
+#: this client accepts exactly that form instead of listing what could go wrong
+#: in a folder name. It is matched with ``fullmatch`` because ``$`` also accepts
+#: a trailing newline.
+_RELEASE_KEY: Final[re.Pattern[str]] = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)+")
+
 
 def _is_safe(name: str) -> bool:
     """Decide whether an archive entry name stays inside its pack folder.
@@ -272,6 +282,31 @@ def _is_portable(name: str) -> bool:
         if part.split(".", 1)[0].rstrip(" ").casefold() in _WINDOWS_DEVICES:
             return False
     return True
+
+
+def _refuse_unsafe_key(release_key: str) -> None:
+    """Refuse a release key that is not the form the API issues.
+
+    The key is joined onto ``out`` as a folder name, and it reaches this client
+    from an API response, so a key such as ``..`` or ``a/b`` would send every
+    file of the pack outside ``out``. The checks on the manifest's paths and on
+    the archive's names cannot see it, because the key is not part of either.
+    A null byte in a key would also end a fetch with a raw ``ValueError`` from
+    the disk calls.
+
+    Args:
+        release_key: The pack.
+
+    Raises:
+        ContractViolation: If the key does not match the API's own form (code
+            ``archive_unsafe``).
+    """
+    if not _RELEASE_KEY.fullmatch(release_key):
+        raise ContractViolation(
+            f"The pack key {release_key!r} is not in the form the API issues, so "
+            "nothing is written under it.",
+            code="archive_unsafe",
+        )
 
 
 def _refuse_unwritable(wanted: Sequence[str], release_key: str) -> None:
@@ -584,10 +619,12 @@ def extract(
             missing from the archive, or the selection lists a path twice,
             holds one that could leave its folder, or names files that cannot
             sit side by side on every platform. Also, with code
-            ``archive_unwritable``, if a folder is where a file belongs, a path
-            under ``out`` cannot be examined, or the disk refuses to make
-            ``out`` or to write or move a file, in which case ``out`` has been
-            put back as it was.
+            ``archive_unsafe``, if the pack's key is not in the form the API
+            issues, because a key such as ``..`` would name a folder outside
+            ``out``. Also, with code ``archive_unwritable``, if a folder is
+            where a file belongs, a path under ``out`` cannot be examined, or
+            the disk refuses to make ``out`` or to write or move a file, in
+            which case ``out`` has been put back as it was.
     """
     declared = {
         f"{rule.get('id')}/{file}"
@@ -596,9 +633,10 @@ def extract(
         for file in rule.get("files") or []
     }
     wanted = [f"{s.rule.get('id')}/{file}" for s in chosen for file in s.files]
-    # These paths are what gets joined onto ``out``, so they are judged before
-    # the archive is looked at. Nothing the archive's names say can vouch for
-    # them.
+    # The key and these paths are what gets joined onto ``out``, so they are
+    # judged before the archive is looked at. Nothing the archive's names say
+    # can vouch for them.
+    _refuse_unsafe_key(release_key)
     _refuse_unwritable(wanted, release_key)
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
