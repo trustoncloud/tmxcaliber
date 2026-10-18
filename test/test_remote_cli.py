@@ -648,3 +648,51 @@ def _never_called() -> NoReturn:
         AssertionError: Always.
     """
     raise AssertionError("a local source reached for a credential")
+
+
+class BytesStubClient(StubClient):
+    """Answers a binary route with a fixed archive."""
+
+    archive = b"PK\x03\x04\xff"
+
+    def get_bytes(self, path: str, params: Mapping[str, str] | None = None) -> bytes:
+        """Answer a binary call.
+
+        Args:
+            path: The path.
+            params: The query.
+
+        Returns:
+            The archive.
+        """
+        self.calls.append((path, dict(params or {})))
+        return self.archive
+
+
+def test_the_archive_command_needs_a_file_to_write_to(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        sys, "argv", ["tmxcaliber", "ccr", "packs", "archive", "aws-s3"]
+    )
+
+    with pytest.raises(SystemExit):
+        cli_module.get_params()
+
+    assert "--output" in capsys.readouterr().err
+
+
+def test_the_archive_command_writes_the_bytes(tmp_path: pathlib.Path) -> None:
+    route = route_for(("ccr", "packs", "archive"))
+    assert route is not None
+    params = Namespace(api_route=route, release_key="aws-s3", kind="deploy", release="")
+    client = BytesStubClient()
+
+    result, kind = run_api_command(params, client=client)  # type: ignore[arg-type]
+    cli_module.output_result(str(tmp_path / "pack.zip"), result, kind)
+
+    assert kind == "bytes"
+    assert (tmp_path / "pack.zip").read_bytes() == BytesStubClient.archive
+    assert client.calls == [
+        ("/v1/ccr/packs/aws-s3/archive", {"kind": "deploy", "release": ""})
+    ]

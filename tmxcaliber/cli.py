@@ -500,6 +500,15 @@ def output_result(
     result_type: str,
     output_removed_json: JsonDict | None = None,
 ) -> None:
+    if result_type == "bytes":
+        # Written as received. The parser already insists on a file for a
+        # binary command, so there is no terminal case to handle.
+        if not output_param:
+            raise TypeError("Binary output needs a file to write to")
+        with open(output_param, "wb") as file:
+            file.write(result)
+        return
+
     removed_json = output_removed_json or {}
     json_result = ""
     output_removed_result = ""

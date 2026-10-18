@@ -168,7 +168,14 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
     parser.add_argument(
         "--output",
         default="",
-        help="file to write the result to. Prints to stdout when omitted.",
+        # A zip printed to a terminal is noise at best, so a binary route
+        # refuses to run without a file.
+        required=route.binary,
+        help=(
+            "file to write the archive to."
+            if route.binary
+            else "file to write the result to. Prints to stdout when omitted."
+        ),
     )
     parser.set_defaults(api_route=route)
 
@@ -315,7 +322,8 @@ def run_api_command(
             the result.
 
     Returns:
-        The result and the result type `output_result` expects.
+        The result and the result type `output_result` expects: "bytes" for a
+        binary route, "json" otherwise.
 
     Raises:
         RemoteError: On any credential, transport or server failure.
@@ -334,7 +342,7 @@ def run_api_command(
         _report_envelope(answer.envelope)
     if incomplete is not None:
         incomplete.extend(answer.missing)
-    return answer.result, "json"
+    return answer.result, "bytes" if route.binary else "json"
 
 
 def add_init_parser(subparsers: _SubParsersAction[ArgumentParser]) -> None:
