@@ -581,3 +581,79 @@ def test_a_bytes_request_maps_errors_like_any_other() -> None:
 
     with pytest.raises(errors.ReleaseSuperseded):
         client.get_bytes("/v1/ccr/packs/aws-s3/archive", {"release": "d07d6aee"})
+
+
+@pytest.mark.parametrize(
+    "served",
+    [
+        "text/html",
+        "text/html; charset=utf-8",
+        "application/json",
+        "Application/JSON; charset=utf-8",
+    ],
+)
+def test_a_bytes_request_refuses_a_body_of_another_media_type(served: str) -> None:
+    # A proxy notice page, a CDN error mapping, or a request line that landed on
+    # a sibling JSON route all answer 200 with a body that is not an archive.
+    opener = FakeOpener(
+        [FakeBytesResponse(b"<html>blocked</html>", {"content-type": served})]
+    )
+    client = TocClient(settings(), opener=opener)
+
+    with pytest.raises(errors.ContractViolation, match="not an archive") as raised:
+        client.get_bytes("/v1/ccr/packs/aws-s3/archive")
+
+    assert raised.value.code == "bad_body"
+
+
+def test_a_refused_media_type_names_what_was_served_and_the_request() -> None:
+    opener = FakeOpener(
+        [
+            FakeBytesResponse(
+                b"{}", {"Content-Type": "application/json", "X-Request-Id": "req-9"}
+            )
+        ]
+    )
+    client = TocClient(settings(), opener=opener)
+
+    with pytest.raises(errors.ContractViolation) as raised:
+        client.get_bytes("/v1/ccr/packs/aws-s3/archive")
+
+    assert "application/json" in str(raised.value)
+    assert raised.value.request_id == "req-9"
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        {"Content-Type": "application/zip"},
+        {"content-type": "application/zip"},
+        {"CONTENT-TYPE": "Application/Zip; charset=binary"},
+        {},
+    ],
+)
+def test_a_bytes_request_accepts_a_zip_however_the_header_is_spelled(
+    header: dict[str, str],
+) -> None:
+    # A distribution in front of the origin may lowercase header names, and a
+    # server may omit the header, so only a header that names another type is
+    # refused.
+    opener = FakeOpener([FakeBytesResponse(ZIP, header)])
+    client = TocClient(settings(), opener=opener)
+
+    assert client.get_bytes("/v1/ccr/packs/aws-s3/archive") == ZIP
+
+
+def test_a_refused_media_type_is_not_retried() -> None:
+    opener = FakeOpener(
+        [
+            FakeBytesResponse(b"<html>", {"content-type": "text/html"}),
+            FakeBytesResponse(ZIP),
+        ]
+    )
+    client = TocClient(settings(), opener=opener, sleep=lambda _: None)
+
+    with pytest.raises(errors.ContractViolation):
+        client.get_bytes("/v1/ccr/packs/aws-s3/archive")
+
+    assert len(opener.requests) == 1

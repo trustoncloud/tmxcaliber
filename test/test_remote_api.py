@@ -20,7 +20,11 @@ from tmxcaliber.lib.remote.contract import (
     required_page_fields,
     required_parameters,
 )
-from tmxcaliber.lib.remote.errors import ConfigurationError, IncompleteAnswer
+from tmxcaliber.lib.remote.errors import (
+    ConfigurationError,
+    ContractViolation,
+    IncompleteAnswer,
+)
 from tmxcaliber.lib.remote.operations import incompleteness_fields, request_for
 
 from .test_remote_client import FakeBytesResponse, FakeOpener, FakeResponse
@@ -345,3 +349,13 @@ def test_a_binary_route_returns_the_bytes() -> None:
     client = Client(opener=FakeOpener([FakeBytesResponse(body)]))
 
     assert client.ccr.packs.archive("aws-s3", kind="deploy") == body
+
+
+def test_a_binary_route_refuses_the_json_a_sibling_route_would_answer() -> None:
+    # A path that lands on the manifest route answers 200 JSON. Handed back as
+    # the archive it would be written out as a zip that is not one.
+    served = FakeResponse({"rules": []}, {"Content-Type": "application/json"})
+    client = Client(opener=FakeOpener([served]))
+
+    with pytest.raises(ContractViolation, match="not an archive"):
+        client.ccr.packs.archive("aws-s3")

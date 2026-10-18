@@ -107,6 +107,43 @@ def _retry_after(headers: Mapping[str, str]) -> float | None:
         return max(0.0, when.timestamp() - time.time())
 
 
+def _header(headers: Mapping[str, str], name: str) -> str | None:
+    """Look a response header up whatever case it arrived in.
+
+    The caller holds a plain dict copy of the headers, which has lost the
+    case-insensitivity of the response object, and a distribution in front of
+    the origin may lowercase every name.
+
+    Args:
+        headers: The response headers.
+        name: The header name.
+
+    Returns:
+        The value, or None when the header is absent.
+    """
+    wanted = name.lower()
+    for key, value in headers.items():
+        if key.lower() == wanted:
+            return value
+    return None
+
+
+def _media_type(headers: Mapping[str, str]) -> str | None:
+    """Read the media type a response declared, without its parameters.
+
+    Args:
+        headers: The response headers.
+
+    Returns:
+        The lowercased type, such as ``application/zip``, or None when the
+        response declared none.
+    """
+    declared = _header(headers, "Content-Type")
+    if declared is None:
+        return None
+    return declared.split(";", 1)[0].strip().lower() or None
+
+
 def _raise_for(status: int, body: bytes, headers: Mapping[str, str]) -> None:
     """Translate a failed response into the matching exception.
 
@@ -370,6 +407,35 @@ class TocClient:
             )
         return parsed
 
+    def _request_bytes(self, path: str, params: Mapping[str, str]) -> bytes:
+        """Perform one GET and return the body once it proves to be a zip.
+
+        Args:
+            path: The path, beginning with a slash.
+            params: Query parameters, empty values omitted.
+
+        Returns:
+            The body, untouched.
+
+        Raises:
+            RemoteError: On any failure, including a body the API declared as
+                something other than a zip.
+        """
+        body, headers = self._send(path, params, "application/zip")
+        served = _media_type(headers)
+        # A body is refused only when the header names another type. The JSON
+        # path rejects a wrong 200 body because it fails to parse, but a
+        # proxy's HTML notice or a sibling JSON route's answer would pass for
+        # an archive here, and nothing downstream of a raw fetch checks it. A
+        # missing header is let through, as a server may omit it.
+        if served is not None and served != "application/zip":
+            raise ContractViolation(
+                f"{path} answered with {served}, not an archive.",
+                code="bad_body",
+                request_id=_header(headers, "X-Request-Id"),
+            )
+        return body
+
     def _retrying(self, call: Callable[[], _T]) -> _T:
         """Run one request, retrying the failures worth retrying.
 
@@ -430,12 +496,11 @@ class TocClient:
             The body.
 
         Raises:
-            RemoteError: On a failure that is not worth retrying, or when the
-                attempts are exhausted.
+            RemoteError: On a failure that is not worth retrying, when the
+                attempts are exhausted, or when a 200 declares a media type
+                other than a zip.
         """
-        return self._retrying(
-            lambda: self._send(path, params or {}, "application/zip")[0]
-        )
+        return self._retrying(lambda: self._request_bytes(path, params or {}))
 
     def paginate(
         self,
