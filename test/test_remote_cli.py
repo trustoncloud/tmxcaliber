@@ -405,6 +405,33 @@ def test_an_optional_filter_keeps_its_wording(
     assert "required arguments:" not in text
 
 
+def test_the_archive_options_say_what_they_choose(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Neither option narrows a collection, so "filter by kind." and "filter by
+    # release." told the reader nothing about what to pass.
+    text = " ".join(_help_of(monkeypatch, capsys, ["ccr", "packs", "archive"]).split())
+
+    assert (
+        "which archive to download: source (the default, the rule tree) or deploy "
+        "(the Terraform package)." in text
+    )
+    assert (
+        "the release to pin the download to, as `tmxcaliber ccr packs get` reports "
+        "it; the API refuses a release it no longer publishes." in text
+    )
+    assert "filter by kind" not in text
+    assert "filter by release" not in text
+
+
+def test_a_release_filter_elsewhere_keeps_its_wording(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = _help_of(monkeypatch, capsys, ["threatmodels", "get"])
+
+    assert "filter by release." in text
+
+
 def test_a_second_credential_does_not_read_the_first_one_s_cache(
     tmp_path: pathlib.Path,
 ) -> None:

@@ -69,6 +69,23 @@ POSITIONALS = {
     "release_key": ("RELEASEKEY", "the pack's release key."),
 }
 
+#: Help for an option that "filter by ..." would misdescribe, by route path and
+#: then option. The archive route's options choose which file comes back, and
+#: narrow no collection, so the generated text would tell the reader nothing
+#: about what to pass. Every option not listed here keeps the generated text.
+OPTION_HELP: Mapping[str, Mapping[str, str]] = {
+    "/v1/ccr/packs/{releaseKey}/archive": {
+        "kind": (
+            "which archive to download: source (the default, the rule tree) or "
+            "deploy (the Terraform package)."
+        ),
+        "release": (
+            "the release to pin the download to, as `tmxcaliber ccr packs get` "
+            "reports it; the API refuses a release it no longer publishes."
+        ),
+    },
+}
+
 
 def _option(filter_name: str) -> str:
     """Render a query parameter as its command-line option.
@@ -91,9 +108,13 @@ def _filter_help(route: Route, name: str, *, required: bool) -> str:
         required: Whether the route refuses to answer without it.
 
     Returns:
-        The help text, naming the command that lists the accepted values when
-        the API publishes one.
+        The route's own text for the option in `OPTION_HELP` when it has one.
+        Otherwise the generated text, naming the command that lists the
+        accepted values when the API publishes one.
     """
+    written = OPTION_HELP.get(route.path, {}).get(name)
+    if written is not None:
+        return written
     words = name.replace("_", " ")
     text = f"the {words} to read." if required else f"filter by {words}."
     lookup = values_route(route, name)
