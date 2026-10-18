@@ -774,6 +774,73 @@ def test_fetch_with_no_match_prints_an_empty_list_and_a_note(
     assert "No rule matched" in captured.err
 
 
+# The tests above that parse a command only read the namespace, so each filter
+# below is run through `fetch` and judged by what comes out. A flag wired to the
+# wrong argument, or dropped, then changes the rows instead of passing unseen.
+
+
+@pytest.mark.parametrize(
+    ("words", "release_keys"),
+    [
+        (("--provider", "gcp"), {"gcp-bigquery"}),
+        (("--service", "s3"), {"aws-s3"}),
+    ],
+    ids=["provider", "service"],
+)
+def test_fetch_narrows_the_packs_by_provider_or_service(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    words: tuple[str, ...],
+    release_keys: set[str],
+) -> None:
+    params = _fetch_params(monkeypatch, *words)
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    rows = json.loads(capsys.readouterr().out)
+    assert status == 0
+    assert {row["releaseKey"] for row in rows} == release_keys
+
+
+def test_fetch_selects_only_rules_that_ship_the_mode(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "--mode", "denylist")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert json.loads(captured.out) == []
+    assert "No rule matched" in captured.err
+
+
+def test_fetch_selects_by_mode_and_matcher_together(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "--mode", "allowlist", "--matcher", "cloud")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    rows = json.loads(capsys.readouterr().out)
+    assert status == 0
+    assert [row["ruleId"] for row in rows] == ["S3.C20", "S3.C21", "Bigquery.C102"]
+
+
+def test_fetch_matcher_leaves_out_the_files_of_the_other_matcher(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(
+        monkeypatch, "aws-s3", "--matcher", "terraform", "--control", "S3.C20"
+    )
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    rows = json.loads(capsys.readouterr().out)
+    assert status == 0
+    assert [row["files"] for row in rows] == [["metadata.json"]]
+
+
 def test_fetch_writes_files_and_prints_their_paths(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
