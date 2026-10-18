@@ -232,7 +232,9 @@ api = Client()
 api.me()
 api.threatmodels.list(provider="aws")
 api.threatmodels.threats("aws-s3", feature_class="S3.FC1")
-api.ccr.fetch("aws-s3", control=["S3.C20"], out="rules")
+result = api.ccr.fetch("aws-s3", control=["S3.C20"], out="rules")
+if result.failed:
+    raise RuntimeError(f"Packs not fetched: {result.failed}")
 api.compliance.mappings.list(framework="nist-800-53-r5")
 ```
 
@@ -240,9 +242,22 @@ api.compliance.mappings.list(framework="nist-800-53-r5")
 kept somewhere else, pass it: `Client(api_key=..., api_url=...)`. A collection
 comes back as a list of every row. An incomplete answer raises
 `IncompleteAnswer`, which carries the rows that did arrive, unless you pass
-`allow_incomplete=True`. Every failure is a `RemoteError` subclass, such as
-`AuthenticationError` or `NotFound`, importable from `tmxcaliber`.
-`api.get(path)` and `api.paginate(path)` remain available for a raw path.
+`allow_incomplete=True`. Every failure of a route call is a `RemoteError`
+subclass, such as `AuthenticationError` or `NotFound`, importable from
+`tmxcaliber`. `api.get(path)` and `api.paginate(path)` remain available for a
+raw path.
+
+`api.ccr.fetch` composes several routes, so it answers differently. It returns
+a `FetchResult` with `rows` (one per selected rule), `written` (the files it
+wrote) and `failed` (each pack it could not read, by release key, with the
+reason). A pack that is unknown, outside your subscription, republished twice
+during the read, or whose archive cannot be verified or written is named in
+`failed` and does not raise, while the other packs still complete, so check
+`failed` before relying on the files. The command line makes that check for
+you: it names each failed pack on stderr and exits 1. A credential, transport
+or server failure still raises a `RemoteError`. Each option that repeats on
+the command line (`provider`, `service`, `control`, `mode`, `matcher` and
+`file`) takes one string or a list of strings.
 
 ## Command Overview
 

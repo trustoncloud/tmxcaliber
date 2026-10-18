@@ -12,7 +12,7 @@ import pytest
 
 import tmxcaliber
 from tmxcaliber.lib.remote import api as api_module
-from tmxcaliber.lib.remote.api import Client, Group, Operation
+from tmxcaliber.lib.remote.api import CcrFetch, Client, Group, Operation
 from tmxcaliber.lib.remote.ccr import FetchResult
 from tmxcaliber.lib.remote.config import DEFAULT_BASE_URL
 from tmxcaliber.lib.remote.contract import (
@@ -28,6 +28,7 @@ from tmxcaliber.lib.remote.errors import (
 )
 from tmxcaliber.lib.remote.operations import incompleteness_fields, request_for
 
+from .test_remote_ccr import PackClient, two_packs
 from .test_remote_client import FakeBytesResponse, FakeOpener, FakeResponse
 from .test_remote_config import HAZARD, KEY, OTHER, STORED_URL, write_config
 
@@ -411,3 +412,51 @@ def test_a_route_the_api_adds_at_ccr_fetch_is_refused(
 
     with pytest.raises(ValueError, match="ccr fetch has no free place"):
         Client()
+
+
+@pytest.mark.parametrize(
+    ("option", "text"),
+    [
+        ("control", "S3.C20"),
+        ("mode", "allowlist"),
+        ("matcher", "terraform"),
+        ("provider", "gcp"),
+        ("service", "bigquery"),
+    ],
+)
+def test_one_string_for_an_option_selects_as_a_list_of_one_does(
+    option: str, text: str
+) -> None:
+    # A str is a Sequence[str], so `tuple("gcp")` would be ("g", "c", "p") and
+    # the answer would be an empty success that reads as "nothing matches".
+    api = CcrFetch(PackClient(two_packs()))  # type: ignore[arg-type]
+
+    as_text = api(**{option: text})
+    as_list = api(**{option: [text]})
+
+    assert as_list.rows
+    assert as_text == as_list
+
+
+def test_one_glob_string_writes_what_a_list_of_one_glob_writes(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Split into characters, "*/cloud/*.rego" contains the pattern "*", which
+    # matches every file of every pack.
+    packs = two_packs()
+    glob = "*/cloud/*.rego"
+
+    as_text = CcrFetch(PackClient(packs))(  # type: ignore[arg-type]
+        file=glob, out=tmp_path / "text"
+    )
+    as_list = CcrFetch(PackClient(packs))(  # type: ignore[arg-type]
+        file=[glob], out=tmp_path / "list"
+    )
+
+    assert [p.relative_to(tmp_path / "list") for p in as_list.written] == [
+        pathlib.Path("aws-s3", "S3.C20", "allowlist", "cloud", "check.rego")
+    ]
+    assert [p.relative_to(tmp_path / "text") for p in as_text.written] == [
+        p.relative_to(tmp_path / "list") for p in as_list.written
+    ]
+    assert not (tmp_path / "text" / "gcp-bigquery").exists()

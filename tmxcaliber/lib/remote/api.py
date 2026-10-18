@@ -155,6 +155,27 @@ class Group:
         return f"<{'.'.join(self._command)}: {', '.join(names)}>"
 
 
+def _many(value: str | Sequence[str]) -> tuple[str, ...]:
+    """Read an option that repeats on the command line.
+
+    A string is itself a sequence of strings, so ``tuple("gcp")`` is
+    ``("g", "c", "p")``. That selects no provider and no control, and a glob
+    such as ``"*/cloud/*.rego"`` would become the pattern ``"*"``, which
+    matches every file of every pack. The command line's ``--provider gcp`` is
+    this option with one value, and the library's other calls take plain
+    strings for options, so a lone string is read as a list of one.
+
+    Args:
+        value: One string, or the strings given.
+
+    Returns:
+        The values, as a tuple.
+    """
+    if isinstance(value, str):
+        return (value,)
+    return tuple(value)
+
+
 class CcrFetch:
     """`tmxcaliber ccr fetch`, called as ``Client().ccr.fetch(...)``.
 
@@ -181,15 +202,19 @@ class CcrFetch:
     def __call__(
         self,
         *release_keys: str,
-        provider: Sequence[str] = (),
-        service: Sequence[str] = (),
-        control: Sequence[str] = (),
-        mode: Sequence[str] = (),
-        matcher: Sequence[str] = (),
-        file: Sequence[str] = (),
+        provider: str | Sequence[str] = (),
+        service: str | Sequence[str] = (),
+        control: str | Sequence[str] = (),
+        mode: str | Sequence[str] = (),
+        matcher: str | Sequence[str] = (),
+        file: str | Sequence[str] = (),
         out: str | os.PathLike[str] | None = None,
     ) -> FetchResult:
         """Select CCR rules, as `tmxcaliber ccr fetch` does.
+
+        Each option that repeats on the command line takes one string or a list
+        of strings. A pack that could not be read is named in the result's
+        ``failed`` and does not raise, so a caller checks it.
 
         Args:
             *release_keys: Packs to read. Every entitled pack when none.
@@ -211,13 +236,13 @@ class CcrFetch:
         return fetch(
             self._client,
             release_keys=release_keys,
-            providers=tuple(provider),
-            services=tuple(service),
+            providers=_many(provider),
+            services=_many(service),
             wanted=RuleFilter(
-                controls=tuple(control),
-                modes=tuple(mode),
-                matchers=tuple(matcher),
-                files=tuple(file),
+                controls=_many(control),
+                modes=_many(mode),
+                matchers=_many(matcher),
+                files=_many(file),
             ),
             out=Path(out) if out is not None else None,
         )
