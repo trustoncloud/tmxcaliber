@@ -185,3 +185,13 @@ def test_the_pack_archive_is_a_binary_command() -> None:
 
 def test_a_pack_row_names_its_release() -> None:
     assert "releaseId" in _row_properties("/v1/ccr/packs")
+
+
+def test_the_pack_list_summary_names_the_product_as_the_contract_does() -> None:
+    # The summary is the command's help, so wording of the client's own can
+    # name a product other than the one the contract describes.
+    route = contract.route_for_path("/v1/ccr/packs")
+    published = contract.contract()["paths"]["/v1/ccr/packs"]["get"]["summary"]
+
+    assert route is not None
+    assert route.summary == published

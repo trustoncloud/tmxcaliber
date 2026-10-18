@@ -161,7 +161,7 @@ ROUTES: Final[tuple[Route, ...]] = (
         paged=True,
         filters=(),
         positional=None,
-        summary="Wiz Custom Configuration Rule packs.",
+        summary="Wiz Cloud Configuration Rule packs.",
     ),
     Route(
         path="/v1/ccr/packs/{releaseKey}",
