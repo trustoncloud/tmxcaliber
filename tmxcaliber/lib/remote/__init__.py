@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from .api import Client
 from .assemble import fetch_document, load_remote
+from .ccr import FetchResult, PackFailure
 from .client import TocClient
 from .config import Credentials, Settings, load_settings
 from .contract import ROUTES, Route, route_for
@@ -25,6 +26,7 @@ from .errors import (
     NotFound,
     PermissionDenied,
     RateLimited,
+    ReleaseSuperseded,
     RemoteError,
     ServiceUnavailable,
 )
@@ -39,12 +41,15 @@ __all__ = [
     "ConfigurationError",
     "ContractViolation",
     "Credentials",
+    "FetchResult",
     "IncompleteAnswer",
     "InvalidCursor",
     "InvalidRequest",
     "NotFound",
+    "PackFailure",
     "PermissionDenied",
     "RateLimited",
+    "ReleaseSuperseded",
     "RemoteError",
     "Route",
     "ServiceUnavailable",

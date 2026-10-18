@@ -13,8 +13,11 @@ from typing import Any
 import pytest
 
 import tmxcaliber
+import tmxcaliber.lib.remote as remote_package
 from tmxcaliber import cli as cli_module
 from tmxcaliber.lib.remote import api as api_module
+from tmxcaliber.lib.remote import ccr as ccr_module
+from tmxcaliber.lib.remote import errors as errors_module
 from tmxcaliber.lib.remote.api import CcrFetch, Client, Group, Operation
 from tmxcaliber.lib.remote.ccr import FetchResult
 from tmxcaliber.lib.remote.client import MAX_ATTEMPTS
@@ -114,6 +117,29 @@ def call_arguments(route: Route) -> tuple[tuple[str, ...], dict[str, str]]:
 def test_the_client_is_importable_from_the_package() -> None:
     assert tmxcaliber.Client is Client
     assert "Client" in tmxcaliber.__all__
+
+
+def test_a_superseded_release_is_importable_where_every_route_failure_is() -> None:
+    # The README promises every route failure from `tmxcaliber`, and a pinned
+    # archive request raises this one, so a caller has to be able to catch it.
+    from tmxcaliber import ReleaseSuperseded as from_top
+    from tmxcaliber.lib.remote import ReleaseSuperseded as from_remote
+
+    assert from_top is from_remote is errors_module.ReleaseSuperseded
+    assert "ReleaseSuperseded" in tmxcaliber.__all__
+    assert "ReleaseSuperseded" in remote_package.__all__
+
+
+def test_what_fetch_returns_is_importable_from_the_remote_package() -> None:
+    from tmxcaliber.lib.remote import FetchResult as Result
+    from tmxcaliber.lib.remote import PackFailure as Failure
+
+    assert Result is ccr_module.FetchResult
+    assert Failure is ccr_module.PackFailure
+    assert {"FetchResult", "PackFailure"} <= set(remote_package.__all__)
+    # The top level keeps to the client and the errors it raises, as its
+    # docstring says, so these stay one level down.
+    assert not {"FetchResult", "PackFailure"} & set(tmxcaliber.__all__)
 
 
 @pytest.mark.parametrize("route", ROUTES, ids=lambda route: " ".join(route.command))
