@@ -264,7 +264,10 @@ for. The command line makes that check for you: it prints one line per failed
 pack on stderr and exits 1. A credential or rate limit failure, or an outage
 that reaches the pack list or a manifest, still raises a `RemoteError`. Each
 option that repeats on the command line (`provider`, `service`, `control`,
-`mode`, `matcher` and `file`) takes one string or a list of strings.
+`mode`, `matcher` and `file`) takes one string or a list of strings. A `mode`
+other than `universal`, `allowlist` or `denylist`, or a `matcher` other than
+`cloud` or `terraform`, raises `ValueError` before any request, as the command
+line refuses it, so a misspelling never reads as an empty answer.
 
 ## Command Overview
 

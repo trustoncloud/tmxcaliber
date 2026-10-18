@@ -72,6 +72,29 @@ class RuleFilter:
     matchers: tuple[str, ...] = ()
     files: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        """Refuse a mode or matcher that no rule can have.
+
+        A misspelled or capitalised value, such as ``Universal``, matches no
+        rule, so the fetch would come back empty and read as packs without
+        such a rule. The command line's ``choices`` refuse it before this runs;
+        here every other caller is held to the same values.
+
+        Raises:
+            ValueError: If a mode is not one of `MODES`, or a matcher is not
+                one of `MATCHERS`.
+        """
+        for kind, given, valid in (
+            ("mode", self.modes, MODES),
+            ("matcher", self.matchers, MATCHERS),
+        ):
+            unknown = [value for value in given if value not in valid]
+            if unknown:
+                raise ValueError(
+                    f"Unknown {kind} {unknown[0]!r}; expected one of "
+                    f"{', '.join(valid)}."
+                )
+
 
 #: The filter that selects everything, which is `fetch`'s default. It is a
 #: module-level value because a call in a default argument is refused by the

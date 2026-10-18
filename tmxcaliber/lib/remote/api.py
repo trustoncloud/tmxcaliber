@@ -233,7 +233,9 @@ class CcrFetch:
             The rows, the files written and the packs that failed.
 
         Raises:
-            ValueError: If packs are named and also narrowed.
+            ValueError: If packs are named and also narrowed, or a mode or a
+                matcher is not one of those the command line accepts. Either
+                is refused before any request.
             RemoteError: On a failure that is not one pack's alone, such as a
                 credential failure, a rate limit, or an outage that reaches the
                 pack list or a manifest.

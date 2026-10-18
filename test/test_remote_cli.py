@@ -745,9 +745,23 @@ def test_fetch_parses_every_filter(monkeypatch: pytest.MonkeyPatch) -> None:
     assert params.out == "rules"
 
 
-def test_fetch_refuses_an_unknown_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    with pytest.raises(SystemExit):
-        _fetch_params(monkeypatch, "--mode", "sometimes")
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [("--mode", "sometimes"), ("--mode", "Universal"), ("--matcher", "clouds")],
+)
+def test_fetch_refuses_an_unknown_mode_or_matcher_as_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    option: str,
+    value: str,
+) -> None:
+    # argparse refuses it before `RuleFilter` can, so the command line keeps
+    # its usage line and exit status 2 instead of a ValueError traceback.
+    with pytest.raises(SystemExit) as exited:
+        _fetch_params(monkeypatch, option, value)
+
+    assert exited.value.code == 2
+    assert f"invalid choice: '{value}'" in capsys.readouterr().err
 
 
 def test_fetch_prints_rows_as_json(

@@ -19,7 +19,7 @@ from tmxcaliber.lib.remote import api as api_module
 from tmxcaliber.lib.remote import ccr as ccr_module
 from tmxcaliber.lib.remote import errors as errors_module
 from tmxcaliber.lib.remote.api import CcrFetch, Client, Group, Operation
-from tmxcaliber.lib.remote.ccr import FetchResult
+from tmxcaliber.lib.remote.ccr import MATCHERS, MODES, FetchResult
 from tmxcaliber.lib.remote.client import MAX_ATTEMPTS
 from tmxcaliber.lib.remote.config import DEFAULT_BASE_URL
 from tmxcaliber.lib.remote.contract import (
@@ -432,6 +432,29 @@ def test_fetch_lists_the_selected_rules_through_the_api() -> None:
     assert isinstance(result, FetchResult)
     assert [row["ruleId"] for row in result.rows] == ["S3.C20"]
     assert result.written == []
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "valid"),
+    [("mode", "Universal", MODES), ("matcher", "clouds", MATCHERS)],
+)
+def test_fetch_refuses_a_mode_or_matcher_the_command_line_would_refuse(
+    option: str, value: str, valid: tuple[str, ...]
+) -> None:
+    # The command line has argparse's choices, and the library has only this,
+    # so a misspelling must not come back as an empty answer that looks fine.
+    opener = FakeOpener([FakeResponse(MANIFEST)])
+    client = Client(opener=opener)
+
+    with pytest.raises(ValueError) as refused:
+        client.ccr.fetch("aws-s3", **{option: value})
+
+    assert repr(value) in str(refused.value)
+    for name in valid:
+        assert name in str(refused.value)
+    # Refused before any request, so no pack was read for a filter that
+    # could never match.
+    assert opener.requests == []
 
 
 def test_fetch_goes_on_past_an_archive_the_api_keeps_refusing(

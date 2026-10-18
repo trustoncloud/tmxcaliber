@@ -19,6 +19,8 @@ from typing import Any
 import pytest
 
 from tmxcaliber.lib.remote.ccr import (
+    MATCHERS,
+    MODES,
     PackFailure,
     RuleFilter,
     _is_safe,
@@ -214,6 +216,33 @@ def test_a_row_carries_the_pack_the_release_and_the_selected_files() -> None:
 def test_a_rule_that_is_not_an_object_is_refused() -> None:
     with pytest.raises(ContractViolation):
         select_rules({"rules": ["S3.C20"]}, RuleFilter())
+
+
+@pytest.mark.parametrize(
+    ("fields", "named"),
+    [
+        ({"modes": ("Universal",)}, ("'Universal'", *MODES)),
+        ({"modes": ("allowlist", "sometimes")}, ("'sometimes'", *MODES)),
+        ({"matchers": ("clouds",)}, ("'clouds'", *MATCHERS)),
+    ],
+    ids=["capitalised mode", "one unknown mode of two", "misspelled matcher"],
+)
+def test_a_mode_or_matcher_no_rule_can_have_is_refused(
+    fields: dict[str, tuple[str, ...]], named: tuple[str, ...]
+) -> None:
+    # It would select nothing, and an empty answer reads as a pack with no
+    # such rule rather than as a typing slip.
+    with pytest.raises(ValueError) as refused:
+        RuleFilter(**fields)
+
+    for text in named:
+        assert text in str(refused.value)
+
+
+def test_every_published_mode_and_matcher_is_accepted() -> None:
+    wanted = RuleFilter(modes=MODES, matchers=MATCHERS)
+
+    assert (wanted.modes, wanted.matchers) == (MODES, MATCHERS)
 
 
 def archive_of(
