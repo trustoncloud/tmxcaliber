@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator, Mapping
 from importlib import metadata
-from typing import Any, Final
+from typing import Any, Final, TypeVar
 
 from .config import Settings
 from .contract import paging_fields
@@ -37,6 +37,8 @@ from .errors import (
     RemoteError,
     ServiceUnavailable,
 )
+
+_T = TypeVar("_T")
 
 #: How many times a retryable failure is attempted in total.
 MAX_ATTEMPTS: Final[int] = 3
@@ -274,18 +276,21 @@ class TocClient:
         """
         return self._settings.credentials.key_id
 
-    def _request(self, path: str, params: Mapping[str, str]) -> dict[str, Any]:
-        """Perform one GET and parse the answer.
+    def _send(
+        self, path: str, params: Mapping[str, str], accept: str
+    ) -> tuple[bytes, dict[str, str]]:
+        """Perform one GET and return its answer as received.
 
         Args:
             path: The path, beginning with a slash.
             params: Query parameters, empty values omitted.
+            accept: The media type to ask for.
 
         Returns:
-            The decoded JSON object.
+            The raw body and the response headers.
 
         Raises:
-            RemoteError: On any failure, including a body that is not JSON.
+            RemoteError: On any failure.
         """
         query = urllib.parse.urlencode({k: v for k, v in params.items() if v})
         url = f"{self._settings.base_url}{path}" + (f"?{query}" if query else "")
@@ -294,7 +299,7 @@ class TocClient:
             method="GET",
             headers={
                 "Authorization": f"Bearer {self._settings.credentials.api_key}",
-                "Accept": "application/json",
+                "Accept": accept,
                 "User-Agent": _user_agent(),
             },
         )
@@ -330,7 +335,22 @@ class TocClient:
                 f"reading the response: {type(exc).__name__}.",
                 code="connection_lost",
             ) from None
+        return body, headers
 
+    def _request(self, path: str, params: Mapping[str, str]) -> dict[str, Any]:
+        """Perform one GET and parse the answer.
+
+        Args:
+            path: The path, beginning with a slash.
+            params: Query parameters, empty values omitted.
+
+        Returns:
+            The decoded JSON object.
+
+        Raises:
+            RemoteError: On any failure, including a body that is not JSON.
+        """
+        body, headers = self._send(path, params, "application/json")
         try:
             parsed = json.loads(body.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
@@ -350,6 +370,36 @@ class TocClient:
             )
         return parsed
 
+    def _retrying(self, call: Callable[[], _T]) -> _T:
+        """Run one request, retrying the failures worth retrying.
+
+        Args:
+            call: The request.
+
+        Returns:
+            What the request returned.
+
+        Raises:
+            RemoteError: On a failure that is not worth retrying, or when the
+                attempts are exhausted.
+        """
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                return call()
+            except (RateLimited, ServiceUnavailable) as exc:
+                if attempt >= MAX_ATTEMPTS:
+                    raise
+                wait = getattr(exc, "retry_after", None)
+                if wait is not None and wait > MAX_RETRY_AFTER:
+                    # Reporting beats sleeping. The server named a window, not
+                    # a remaining time, and the caller can act on the number.
+                    raise
+                if wait is None:
+                    wait = min(MAX_RETRY_AFTER, 2 ** (attempt - 1))
+                self._sleep(wait * (0.5 + random.random() / 2))
+
     def get(self, path: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
         """Fetch one resource, retrying the failures worth retrying.
 
@@ -364,22 +414,28 @@ class TocClient:
             RemoteError: On a failure that is not worth retrying, or when the
                 attempts are exhausted.
         """
-        attempt = 0
-        while True:
-            attempt += 1
-            try:
-                return self._request(path, params or {})
-            except (RateLimited, ServiceUnavailable) as exc:
-                if attempt >= MAX_ATTEMPTS:
-                    raise
-                wait = getattr(exc, "retry_after", None)
-                if wait is not None and wait > MAX_RETRY_AFTER:
-                    # Reporting beats sleeping. The server named a window, not
-                    # a remaining time, and the caller can act on the number.
-                    raise
-                if wait is None:
-                    wait = min(MAX_RETRY_AFTER, 2 ** (attempt - 1))
-                self._sleep(wait * (0.5 + random.random() / 2))
+        return self._retrying(lambda: self._request(path, params or {}))
+
+    def get_bytes(self, path: str, params: Mapping[str, str] | None = None) -> bytes:
+        """Fetch one resource as the bytes the API served, retrying as `get` does.
+
+        For a route whose 200 is not JSON, such as a CCR pack archive. The body
+        is returned untouched: decoding it would corrupt a zip.
+
+        Args:
+            path: The path, beginning with a slash.
+            params: Query parameters.
+
+        Returns:
+            The body.
+
+        Raises:
+            RemoteError: On a failure that is not worth retrying, or when the
+                attempts are exhausted.
+        """
+        return self._retrying(
+            lambda: self._send(path, params or {}, "application/zip")[0]
+        )
 
     def paginate(
         self,

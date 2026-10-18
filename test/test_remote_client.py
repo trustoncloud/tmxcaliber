@@ -70,6 +70,14 @@ class FakeResponse:
         return None
 
 
+class FakeBytesResponse(FakeResponse):
+    """A response whose body is raw bytes, such as a pack archive."""
+
+    def __init__(self, body: bytes, headers: dict[str, str] | None = None) -> None:
+        super().__init__(None, headers)
+        self._body = body
+
+
 class FakeOpener(urllib.request.OpenerDirector):
     """An opener that replays queued answers and records the requests."""
 
@@ -515,3 +523,61 @@ def test_an_incomplete_read_is_reported_rather_than_raised_raw() -> None:
 
     with pytest.raises(errors.ServiceUnavailable):
         client.get("/v1/me")
+
+
+#: Deliberately invalid UTF-8, so a client that decoded it would fail.
+ZIP = b"PK\x03\x04\xff\xfe\x00"
+
+
+def test_bytes_come_back_exactly_as_served() -> None:
+    opener = FakeOpener([FakeBytesResponse(ZIP)])
+    client = TocClient(settings(), opener=opener)
+
+    assert client.get_bytes("/v1/ccr/packs/aws-s3/archive") == ZIP
+
+
+def test_a_bytes_request_asks_for_a_zip() -> None:
+    opener = FakeOpener([FakeBytesResponse(ZIP)])
+    client = TocClient(settings(), opener=opener)
+
+    client.get_bytes("/v1/ccr/packs/aws-s3/archive", {"kind": "source", "release": ""})
+
+    request = opener.requests[0]
+    assert request.get_header("Accept") == "application/zip"
+    assert request.full_url.endswith("/v1/ccr/packs/aws-s3/archive?kind=source")
+
+
+def test_a_bytes_request_is_retried_like_any_other() -> None:
+    opener = FakeOpener(
+        [
+            http_error(
+                503,
+                {"error": {"code": "unavailable", "message": "x", "requestId": "r"}},
+            ),
+            FakeBytesResponse(ZIP),
+        ]
+    )
+    client = TocClient(settings(), opener=opener, sleep=lambda _: None)
+
+    assert client.get_bytes("/v1/ccr/packs/aws-s3/archive") == ZIP
+
+
+def test_a_bytes_request_maps_errors_like_any_other() -> None:
+    opener = FakeOpener(
+        [
+            http_error(
+                410,
+                {
+                    "error": {
+                        "code": "release_superseded",
+                        "message": "x",
+                        "requestId": "r",
+                    }
+                },
+            )
+        ]
+    )
+    client = TocClient(settings(), opener=opener)
+
+    with pytest.raises(errors.ReleaseSuperseded):
+        client.get_bytes("/v1/ccr/packs/aws-s3/archive", {"release": "d07d6aee"})

@@ -30,7 +30,8 @@ class Answer:
     """What one route returned.
 
     Attributes:
-        result: Every row of a paged route, or the object of any other.
+        result: Every row of a paged route, the bytes of a binary one, or the
+            object of any other.
         envelope: A paged route's first-page fields other than the paging
             ones; empty for any other route.
         missing: One ``name: value`` line per incompleteness field the API
@@ -114,6 +115,8 @@ def call_route(
         ValueError: If a ThreatModel reference cannot be parsed.
     """
     path, query = request_for(route, positional, filters)
+    if route.binary:
+        return Answer(result=client.get_bytes(path, query))
     if not route.paged:
         return Answer(result=client.get(path, query))
 

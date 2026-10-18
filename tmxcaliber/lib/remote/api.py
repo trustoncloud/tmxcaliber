@@ -96,7 +96,8 @@ class Operation:
                 as the signature lists them.
 
         Returns:
-            Every row of a paged route, or the object any other route returns.
+            Every row of a paged route, the bytes of a binary route, or the
+            object any other route returns.
 
         Raises:
             TypeError: If the arguments do not match the signature.

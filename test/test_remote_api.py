@@ -23,7 +23,7 @@ from tmxcaliber.lib.remote.contract import (
 from tmxcaliber.lib.remote.errors import ConfigurationError, IncompleteAnswer
 from tmxcaliber.lib.remote.operations import incompleteness_fields, request_for
 
-from .test_remote_client import FakeOpener, FakeResponse
+from .test_remote_client import FakeBytesResponse, FakeOpener, FakeResponse
 from .test_remote_config import HAZARD, KEY, OTHER, STORED_URL, write_config
 
 #: A value for each kind of positional the route table uses.
@@ -338,3 +338,10 @@ def test_a_group_lists_what_it_holds() -> None:
     assert isinstance(group, Group)
     assert repr(group).startswith("<threatmodels: ")
     assert "threats" in repr(group)
+
+
+def test_a_binary_route_returns_the_bytes() -> None:
+    body = b"PK\x03\x04\xff"
+    client = Client(opener=FakeOpener([FakeBytesResponse(body)]))
+
+    assert client.ccr.packs.archive("aws-s3", kind="deploy") == body
