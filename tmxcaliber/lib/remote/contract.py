@@ -81,7 +81,9 @@ ROUTES: Final[tuple[Route, ...]] = (
         paged=False,
         filters=(),
         positional=None,
-        summary="The calling credential: its tenant, and what it may do.",
+        summary=(
+            "The calling credential: its tenant, who it acts for, and what it may do."
+        ),
     ),
     Route(
         path="/v1/threatmodels",
@@ -89,7 +91,7 @@ ROUTES: Final[tuple[Route, ...]] = (
         paged=True,
         filters=("provider",),
         positional=None,
-        summary="ThreatModels this tenant is entitled to.",
+        summary="ThreatModels this credential is entitled to.",
     ),
     Route(
         path="/v1/threatmodels/{provider}/{service}",
@@ -137,7 +139,7 @@ ROUTES: Final[tuple[Route, ...]] = (
         paged=True,
         filters=(),
         positional=None,
-        summary="What this tenant is entitled to, and until when.",
+        summary="What this credential is entitled to, and until when.",
     ),
     Route(
         path="/v1/compliance/frameworks",

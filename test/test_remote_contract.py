@@ -195,3 +195,14 @@ def test_the_pack_list_summary_names_the_product_as_the_contract_does() -> None:
 
     assert route is not None
     assert route.summary == published
+
+
+@pytest.mark.parametrize("path", ["/v1/me", "/v1/threatmodels", "/v1/subscriptions"])
+def test_the_credential_scoped_summaries_say_what_the_contract_says(path: str) -> None:
+    # The summary is the command's help. The contract scopes these routes to
+    # the credential, which can act for a person, where it used to say tenant.
+    route = contract.route_for_path(path)
+    published = contract.contract()["paths"][path]["get"]["summary"]
+
+    assert route is not None
+    assert route.summary == published

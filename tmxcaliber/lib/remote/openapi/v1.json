@@ -208,6 +208,70 @@
         ],
         "type": "object"
       },
+      "Me": {
+        "additionalProperties": false,
+        "properties": {
+          "credential": {
+            "additionalProperties": false,
+            "description": "How the caller authenticated.",
+            "properties": {
+              "id": {
+                "description": "The key id, the public half of the credential.",
+                "type": "string"
+              },
+              "kind": {
+                "const": "api_key",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          "permissions": {
+            "description": "What this credential may call, sorted.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "subject": {
+            "additionalProperties": false,
+            "description": "Who the credential acts for.",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "description": "`service` for a key that acts for itself, whose id is the key id; `user` for a key that acts for a person, whose id is that person's.",
+                "enum": [
+                  "service",
+                  "user"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          "tenantId": {
+            "description": "The credential's tenant. Never the subject.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenantId",
+          "credential",
+          "subject",
+          "permissions"
+        ],
+        "type": "object"
+      },
       "Page": {
         "description": "The collection envelope. A route with a declared projection narrows `items` to its own row schema.",
         "properties": {
@@ -702,14 +766,14 @@
     },
     "securitySchemes": {
       "apiKey": {
-        "description": "A tenant API key, in `Authorization: Bearer`. Never a query parameter: that writes the credential into access logs.",
+        "description": "An API key, in `Authorization: Bearer`. Never a query parameter: that writes the credential into access logs.",
         "scheme": "bearer",
         "type": "http"
       }
     }
   },
   "info": {
-    "description": "Read access to the ThreatModel data your tenant is entitled to. Every route is read-only, authenticated with a tenant API key, and additionally restricted to your tenant's allowed IP ranges.",
+    "description": "Read access to the ThreatModel data your credential is entitled to. Every route is read-only, authenticated with an API key, and additionally restricted to your tenant's allowed IP ranges.",
     "title": "TrustOnCloud API",
     "version": "1.0.0"
   },
@@ -1569,7 +1633,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/Me"
                 }
               }
             },
@@ -1646,7 +1710,7 @@
             "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
           }
         },
-        "summary": "The calling credential: its tenant, and what it may do."
+        "summary": "The calling credential: its tenant, who it acts for, and what it may do."
       }
     },
     "/v1/subscriptions": {
@@ -1781,7 +1845,7 @@
             "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
           }
         },
-        "summary": "What this tenant is entitled to, and until when.",
+        "summary": "What this credential is entitled to, and until when.",
         "x-required-permission": "api.subscriptions.read"
       }
     },
@@ -1916,7 +1980,7 @@
             "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
           }
         },
-        "summary": "ThreatModels this tenant is entitled to.",
+        "summary": "ThreatModels this credential is entitled to.",
         "x-required-permission": "api.threatmodels.read"
       }
     },
