@@ -52,7 +52,7 @@ def fetch_to_cache(
     An unpinned reference is kept under its own name with a lifetime,
     because what "latest" means can change; within that lifetime a repeated
     reference costs no calls at all, which matters against an hourly budget
-    that a single assembly spends five of.
+    that a single assembly spends four of.
 
     Args:
         ref: The ThreatModel, optionally pinned to a release.
