@@ -6,6 +6,7 @@ reached a real socket would fail rather than quietly go to the network.
 
 from __future__ import annotations
 
+import gzip
 import json
 import urllib.error
 import urllib.request
@@ -661,4 +662,124 @@ def test_a_refused_media_type_is_not_retried() -> None:
     with pytest.raises(errors.ContractViolation):
         client.get_bytes("/v1/ccr/packs/aws-s3/archive")
 
+    assert len(opener.requests) == 1
+
+
+class RawResponse(FakeResponse):
+    """A response whose body is given as the bytes the server sent."""
+
+    def __init__(self, raw: bytes, headers: dict[str, str]) -> None:
+        super().__init__(None, headers)
+        self._body = raw
+
+
+def test_the_client_asks_for_gzip() -> None:
+    opener = FakeOpener([FakeResponse({})])
+    TocClient(settings(), opener=opener).get("/v1/me")
+
+    assert opener.requests[0].get_header("Accept-encoding") == "gzip"
+
+
+@pytest.mark.parametrize("name", ["Content-Encoding", "content-encoding"])
+def test_a_gzip_answer_is_decoded(name: str) -> None:
+    # The header's case depends on what sits between the client and the
+    # origin, so it is matched without case.
+    body = {"tenantId": "t-1", "permissions": ["api.threatmodels.read"] * 50}
+    raw = gzip.compress(json.dumps(body).encode("utf-8"))
+    opener = FakeOpener([RawResponse(raw, {name: "gzip"})])
+
+    assert TocClient(settings(), opener=opener).get("/v1/me") == body
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"plainly not gzip",
+        b"\x1f\x8b\x08\x00 then nonsense",
+        gzip.compress(b'{"tenantId": "t-1"}')[:-8],
+    ],
+)
+def test_a_gzip_body_that_will_not_decode_is_a_bad_body(raw: bytes) -> None:
+    # It arrived whole, so it is a wrong answer rather than a lost connection,
+    # and retrying would ask for the same bytes again.
+    opener = FakeOpener([RawResponse(raw, {"Content-Encoding": "gzip"})])
+    client = TocClient(settings(), opener=opener, sleep=lambda _: None)
+
+    with pytest.raises(errors.ContractViolation) as caught:
+        client.get("/v1/me")
+    assert caught.value.code == "bad_body"
+    assert len(opener.requests) == 1
+
+
+def test_a_gzip_error_envelope_still_maps_to_its_code() -> None:
+    import io
+
+    envelope = {"error": {"code": "forbidden", "message": "nope", "requestId": "r-9"}}
+    error = urllib.error.HTTPError(
+        "https://api.example.test/v1/me",
+        403,
+        "forbidden",
+        {"Content-Encoding": "gzip"},  # type: ignore[arg-type]
+        io.BytesIO(gzip.compress(json.dumps(envelope).encode("utf-8"))),
+    )
+    opener = FakeOpener([error])
+
+    with pytest.raises(errors.PermissionDenied) as caught:
+        TocClient(settings(), opener=opener).get("/v1/me")
+    assert "r-9" in str(caught.value)
+
+
+def test_an_archive_request_asks_for_gzip_too() -> None:
+    opener = FakeOpener([FakeBytesResponse(ZIP, {"Content-Type": "application/zip"})])
+    TocClient(settings(), opener=opener).get_bytes("/v1/ccr/packs/aws-s3/archive")
+
+    assert opener.requests[0].get_header("Accept-encoding") == "gzip"
+
+
+@pytest.mark.parametrize("name", ["Content-Encoding", "content-encoding"])
+def test_a_gzip_archive_is_decoded_to_the_zip_it_carries(name: str) -> None:
+    # Left compressed, the bytes would fail the manifest's digest check, so the
+    # archive path undoes the encoding exactly as the JSON path does.
+    opener = FakeOpener(
+        [
+            RawResponse(
+                gzip.compress(ZIP), {"Content-Type": "application/zip", name: "gzip"}
+            )
+        ]
+    )
+
+    got = TocClient(settings(), opener=opener).get_bytes("/v1/ccr/packs/aws-s3/archive")
+
+    assert got == ZIP
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"plainly not gzip",
+        b"\x1f\x8b\x08\x00 then nonsense",
+        gzip.compress(ZIP)[:-8],
+    ],
+)
+def test_a_gzip_archive_that_will_not_decode_is_a_bad_body(raw: bytes) -> None:
+    # It arrived whole, so it is a wrong answer rather than a lost connection,
+    # and it is refused once rather than retried.
+    opener = FakeOpener(
+        [
+            RawResponse(
+                raw,
+                {
+                    "Content-Type": "application/zip",
+                    "Content-Encoding": "gzip",
+                    "X-Request-Id": "req-7",
+                },
+            )
+        ]
+    )
+    client = TocClient(settings(), opener=opener, sleep=lambda _: None)
+
+    with pytest.raises(errors.ContractViolation, match="will not decompress") as caught:
+        client.get_bytes("/v1/ccr/packs/aws-s3/archive")
+    assert caught.value.code == "bad_body"
+    assert caught.value.request_id == "req-7"
     assert len(opener.requests) == 1

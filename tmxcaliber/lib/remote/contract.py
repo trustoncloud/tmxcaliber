@@ -99,7 +99,7 @@ ROUTES: Final[tuple[Route, ...]] = (
         paged=False,
         filters=("release",),
         positional="tm_id",
-        summary="One ThreatModel, without the sections served separately.",
+        summary="One ThreatModel and its diagram, without the paged sections.",
     ),
     Route(
         path="/v1/threatmodels/{provider}/{service}/threats",

@@ -13,6 +13,7 @@ to.
 
 from __future__ import annotations
 
+import gzip
 import http.client
 import json
 import platform
@@ -22,6 +23,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 from collections.abc import Callable, Iterator, Mapping
 from importlib import metadata
 from typing import Any, Final, TypeVar
@@ -144,6 +146,43 @@ def _media_type(headers: Mapping[str, str]) -> str | None:
     return declared.split(";", 1)[0].strip().lower() or None
 
 
+#: What a gzip body that cannot be undone raises: a bad header is
+#: ``gzip.BadGzipFile``, an ``OSError``; a truncated one is ``EOFError``; corrupt
+#: data is ``zlib.error``.
+UNDECODABLE: Final = (OSError, EOFError, zlib.error)
+
+
+def _decoded(body: bytes, headers: Mapping[str, str]) -> bytes:
+    """Undo the gzip encoding this client asks for.
+
+    ``urllib`` neither asks for an encoding nor undoes one, so a response
+    arrives exactly as the server sent it.
+
+    Args:
+        body: The body as it arrived.
+        headers: The response headers, in whatever case they arrived.
+
+    Returns:
+        The body with its content encoding removed.
+
+    Raises:
+        OSError: If a body labelled gzip does not start like one.
+        EOFError: If a gzip body ends early.
+        zlib.error: If the compressed data is corrupt.
+    """
+    encoding = next(
+        (
+            value
+            for name, value in headers.items()
+            if name.lower() == "content-encoding"
+        ),
+        "",
+    )
+    if encoding.strip().lower() != "gzip":
+        return body
+    return gzip.decompress(body)
+
+
 def _raise_for(status: int, body: bytes, headers: Mapping[str, str]) -> None:
     """Translate a failed response into the matching exception.
 
@@ -159,16 +198,16 @@ def _raise_for(status: int, body: bytes, headers: Mapping[str, str]) -> None:
     message = ""
     request_id = headers.get("X-Request-Id") or headers.get("x-request-id")
     try:
-        envelope = json.loads(body.decode("utf-8"))
+        envelope = json.loads(_decoded(body, headers).decode("utf-8"))
         error = envelope.get("error") if isinstance(envelope, dict) else None
         if isinstance(error, dict):
             code = str(error.get("code", ""))
             message = str(error.get("message", ""))
             request_id = str(error.get("requestId") or request_id or "") or None
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, *UNDECODABLE):
         # Not the API's envelope. A distribution in front of the origin can
-        # answer with an HTML error page, and guessing at it would be worse
-        # than reporting the status.
+        # answer with an HTML error page, or a body that will not decompress,
+        # and guessing at either would be worse than reporting the status.
         pass
 
     cls = BY_CODE.get(code) or BY_STATUS.get(status, RemoteError)
@@ -337,6 +376,11 @@ class TocClient:
             headers={
                 "Authorization": f"Bearer {self._settings.credentials.api_key}",
                 "Accept": accept,
+                # Negotiated, so a server that does not compress answers as
+                # before. gzip only: it is the one encoding the standard
+                # library can undo, and a page of controls shrinks several
+                # times over.
+                "Accept-Encoding": "gzip",
                 "User-Agent": _user_agent(),
             },
         )
@@ -389,8 +433,11 @@ class TocClient:
         """
         body, headers = self._send(path, params, "application/json")
         try:
-            parsed = json.loads(body.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
+            # Outside the transport `try` above on purpose: a body that will
+            # not decompress arrived whole, so it is a bad answer rather than
+            # a lost connection, and must not be retried as one.
+            parsed = json.loads(_decoded(body, headers).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError, *UNDECODABLE):
             # Never routed through the CLI's JSON repair pass: on a truncated
             # body that would turn a transport failure into a document that
             # looks fine and is silently wrong.
@@ -415,7 +462,7 @@ class TocClient:
             params: Query parameters, empty values omitted.
 
         Returns:
-            The body, untouched.
+            The body, with any gzip encoding undone.
 
         Raises:
             RemoteError: On any failure, including a body the API declared as
@@ -434,7 +481,19 @@ class TocClient:
                 code="bad_body",
                 request_id=_header(headers, "X-Request-Id"),
             )
-        return body
+        try:
+            # Every request asks for gzip, so an archive can arrive compressed
+            # on top of being a zip. Undone here, as the JSON path does, or the
+            # bytes would fail the manifest's digest check downstream. A body
+            # that will not decompress arrived whole: a bad answer, not a lost
+            # connection, so it is not retried.
+            return _decoded(body, headers)
+        except UNDECODABLE:
+            raise ContractViolation(
+                f"{path} answered with a compressed archive that will not decompress.",
+                code="bad_body",
+                request_id=_header(headers, "X-Request-Id"),
+            ) from None
 
     def _retrying(self, call: Callable[[], _T]) -> _T:
         """Run one request, retrying the failures worth retrying.

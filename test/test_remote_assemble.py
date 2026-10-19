@@ -623,3 +623,47 @@ def test_a_retired_stub_stays_acceptable() -> None:
         assert document["threats"]["S3.T98"] == {"retired": True}
     finally:
         PARTS["threats"].pop()
+
+
+INLINE_DFD = {"body": "PG14ZmlsZT5pbmxpbmU8L214ZmlsZT4="}
+
+
+def test_an_inlined_dfd_is_used_without_asking_its_route() -> None:
+    """The detail route carries the diagram, so assembly is four calls.
+
+    The hourly budget is per key, and a fifth call per model was a fifth of
+    every assembly spent on bytes the first call can already hold.
+    """
+    client = StubClient({**DETAIL, "dfd": INLINE_DFD})
+
+    fetched = fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
+
+    assert fetched.document["dfd"] == INLINE_DFD
+    assert not [path for path, _ in client.calls if path.endswith("/dfd")]
+    assert len(client.calls) == 4
+
+
+def test_a_detail_without_a_dfd_still_asks_its_route() -> None:
+    """A server from before the detail route carried the diagram still works."""
+    client = StubClient()
+
+    fetched = fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
+
+    assert fetched.document["dfd"] == DFD
+    dfd_calls = [params for path, params in client.calls if path.endswith("/dfd")]
+    assert dfd_calls == [{"release": fetched.release}]
+
+
+@pytest.mark.parametrize("dfd", [{}, {"body": ""}, {"body": 0}, "PG14ZmlsZT4=", []])
+def test_an_inlined_dfd_without_a_usable_body_is_refused(dfd: object) -> None:
+    """An unusable inlined diagram is refused, never replaced by its route's.
+
+    The API holds the two to the same object, so asking `/dfd` instead would
+    only hide a server answering in a shape the contract does not allow.
+    """
+    client = StubClient({**DETAIL, "dfd": dfd})
+
+    with pytest.raises(ContractViolation) as caught:
+        fetch_document(client, TmRef("aws", "s3"))  # type: ignore[arg-type]
+    assert "diagram body" in str(caught.value)
+    assert not [path for path, _ in client.calls if path.endswith("/dfd")]
