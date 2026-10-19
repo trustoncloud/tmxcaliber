@@ -1,13 +1,14 @@
 """Rebuild a canonical ThreatModel document from the API.
 
-The API serves a model in five pieces: a detail route carrying the sections
-that are small, three paged collections, and the data flow diagram. The
-canonical schema requires all eight top-level sections, so a caller that
-wants a document tmxcaliber can work on has to put them back together.
+The API serves a model in four pieces: a detail route carrying every section
+that is not paged, the data flow diagram among them, and three paged
+collections. The canonical schema requires all eight top-level sections, so a
+caller that wants a document tmxcaliber can work on has to put them back
+together.
 
 **Every call is pinned to one release, and that is the point.** The detail
-route reports the release it answered with, and the four others are asked
-for that exact release. Without the pin, a model republished part-way
+route reports the release it answered with, and the others are asked for
+that exact release. Without the pin, a model republished part-way
 through the read would be stitched together out of two versions into a
 document that still validates against the schema and is wrong.
 """
@@ -108,7 +109,7 @@ def fetch_document(client: TocClient, ref: TmRef) -> Fetched:
         )
 
     # **Everything knowable from this one response is decided here**, before
-    # the four calls that build on it. The metadata checks used to sit after
+    # the calls that build on it. The metadata checks used to sit after
     # them, so a response with no metadata cost five calls to reject instead
     # of one, and the cross-check below was skipped entirely rather than
     # failing when there was nothing to cross-check against.
@@ -183,19 +184,30 @@ def fetch_document(client: TocClient, ref: TmRef) -> Fetched:
         # The largest page the contract allows, read from the contract. The
         # server's default is smaller, and the difference is whole extra
         # calls per section against an hourly budget a single assembly
-        # already spends five of.
+        # already spends four of.
         largest = page_maximum(f"/v1/threatmodels/{{provider}}/{{service}}/{part}") or 0
         rows = list(client.paginate(f"{base}/{part}", at_release, page_size=largest))
         document[part] = _by_id(part, rows)
 
-    dfd = client.get(f"{base}/dfd", at_release)
+    # The detail route carries the diagram, and the API holds it to the same
+    # object `/dfd` serves. A server from before it did is asked separately,
+    # so this works whichever was deployed first.
+    dfd = detail.get("dfd")
+    source = base
+    if dfd is None:
+        source = f"{base}/dfd"
+        dfd = client.get(source, at_release)
     # An empty object is a dict, so the section check below would pass it,
     # and `generate` then fails on the missing body while the cache keeps
     # serving the same answer until it expires. The schema requires a
     # body; a diagram with no body is not one.
-    if not isinstance(dfd.get("body"), str) or not dfd["body"].strip():
+    if (
+        not isinstance(dfd, dict)
+        or not isinstance(dfd.get("body"), str)
+        or not dfd["body"].strip()
+    ):
         raise ContractViolation(
-            f"{base}/dfd answered without a diagram body.",
+            f"{source} answered without a diagram body.",
             code="empty_dfd",
         )
     document["dfd"] = dfd
