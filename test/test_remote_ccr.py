@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import errno
 import hashlib
 import io
@@ -225,6 +226,78 @@ def test_a_row_carries_a_full_length_release_id_whole() -> None:
     [chosen] = select_rules(MANIFEST, RuleFilter(controls=("S3.C21",)))
 
     assert rule_row("aws-s3", FULL_RELEASE, chosen)["releaseId"] == FULL_RELEASE
+
+
+def row_for(wanted: RuleFilter, control: str = "S3.C20") -> dict[str, Any]:
+    """Select one rule from the fixture and render its row under the filter.
+
+    Args:
+        wanted: The filter, which the control is added to.
+        control: The rule to select.
+
+    Returns:
+        The row ``ccr fetch`` prints for it.
+    """
+    narrowed = RuleFilter(
+        controls=(control,),
+        modes=wanted.modes,
+        matchers=wanted.matchers,
+        files=wanted.files,
+    )
+    [chosen] = select_rules(MANIFEST, narrowed)
+    return rule_row("aws-s3", "d07d6aee", chosen, wanted=narrowed)
+
+
+def test_a_row_lists_only_the_modes_asked_for_in_the_rules_own_order() -> None:
+    # S3.C20 ships allowlist then universal. The row says which of them the
+    # files that come with it belong to, so a mode left out is not listed.
+    assert row_for(RuleFilter(modes=("universal",)))["modes"] == ["universal"]
+    assert row_for(RuleFilter(modes=("universal", "allowlist")))["modes"] == [
+        "allowlist",
+        "universal",
+    ]
+
+
+def test_a_row_lists_only_the_matchers_asked_for() -> None:
+    row = row_for(RuleFilter(matchers=("terraform",)))
+
+    assert row["matchers"] == {
+        "terraform": MANIFEST["rules"][0]["matchers"]["terraform"]
+    }
+
+
+def test_a_row_is_trimmed_by_mode_and_matcher_together() -> None:
+    row = row_for(RuleFilter(modes=("universal",), matchers=("terraform",)))
+
+    assert row["modes"] == ["universal"]
+    assert list(row["matchers"]) == ["terraform"]
+
+
+@pytest.mark.parametrize(
+    "wanted",
+    [RuleFilter(), RuleFilter(files=("*.rego",))],
+    ids=["control only", "control and file"],
+)
+def test_a_row_lists_every_mode_and_matcher_when_neither_is_asked_for(
+    wanted: RuleFilter,
+) -> None:
+    # A file glob already shows what it kept in the row's files.
+    row = row_for(wanted)
+
+    assert row["modes"] == ["allowlist", "universal"]
+    assert row["matchers"] == MANIFEST["rules"][0]["matchers"]
+
+
+def test_trimming_a_row_leaves_the_manifest_as_it_was() -> None:
+    before = copy.deepcopy(MANIFEST)
+
+    row = row_for(RuleFilter(modes=("universal",), matchers=("terraform",)))
+    row["modes"].append("denylist")
+    row["matchers"]["terraform"]["implemented"] = False
+    untrimmed = row_for(RuleFilter())
+    untrimmed["matchers"].clear()
+
+    assert before == MANIFEST
 
 
 def test_a_rule_that_is_not_an_object_is_refused() -> None:
@@ -1438,6 +1511,34 @@ def test_without_out_no_archive_is_downloaded() -> None:
 
     assert [row["ruleId"] for row in result.rows] == ["S3.C20"]
     assert not any(path.endswith("/archive") for path, _ in client.calls)
+
+
+def test_the_rows_a_fetch_returns_list_only_the_modes_and_matchers_asked_for() -> None:
+    packs = two_packs()
+    data, manifest = packs["aws-s3"]
+    rules = copy.deepcopy(manifest["rules"])
+    rules[0]["modes"] = ["allowlist", "universal"]
+    packs["aws-s3"] = (data, {**manifest, "rules": rules})
+    client = PackClient(packs)
+
+    trimmed = fetch(  # type: ignore[arg-type]
+        client,
+        release_keys=("aws-s3",),
+        wanted=RuleFilter(
+            controls=("S3.C20",), modes=("universal",), matchers=("cloud",)
+        ),
+    )
+    whole = fetch(
+        client, release_keys=("aws-s3",), wanted=RuleFilter(controls=("S3.C20",))
+    )  # type: ignore[arg-type]
+
+    [row] = trimmed.rows
+    assert (row["modes"], list(row["matchers"])) == (["universal"], ["cloud"])
+    [row] = whole.rows
+    assert (row["modes"], list(row["matchers"])) == (
+        ["allowlist", "universal"],
+        ["cloud", "terraform"],
+    )
 
 
 def test_provider_and_service_narrow_the_listed_packs() -> None:

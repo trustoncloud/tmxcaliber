@@ -186,25 +186,54 @@ def select_rules(manifest: Mapping[str, Any], wanted: RuleFilter) -> list[Select
     return chosen
 
 
-def rule_row(release_key: str, release_id: str, chosen: Selected) -> dict[str, Any]:
+def rule_row(
+    release_key: str,
+    release_id: str,
+    chosen: Selected,
+    *,
+    wanted: RuleFilter = _NO_FILTER,
+) -> dict[str, Any]:
     """Render one chosen rule as the row ``ccr fetch`` prints.
+
+    The row describes what the filters kept. A rule that ships allowlist and
+    universal, fetched with ``--mode universal``, comes with universal files
+    only, so a row that still listed allowlist would read as the manifest
+    printed back and hide that anything was narrowed. The filter is passed
+    here, and not carried on `Selected`, because trimming is how a row
+    presents a rule and needs nothing but the filter; a caller that passes no
+    filter gets the whole rule, as before. ``--control`` and ``--file`` leave
+    these two fields alone: the row's ``files`` already shows what a glob kept.
 
     Args:
         release_key: The pack.
         release_id: The release the manifest came from.
         chosen: The rule.
+        wanted: The filter the rule was chosen by.
 
     Returns:
-        The row, in the API's camelCase.
+        The row, in the API's camelCase. ``modes`` holds the rule's modes that
+        the filter asked for, in the rule's own order, and ``matchers`` the
+        entries it asked for, each when the filter names any. Both are new
+        values, so changing the row never changes the manifest.
     """
     rule = chosen.rule
+    modes = [
+        mode
+        for mode in rule.get("modes") or []
+        if not wanted.modes or mode in wanted.modes
+    ]
+    matchers = {
+        name: dict(entry)
+        for name, entry in (rule.get("matchers") or {}).items()
+        if not wanted.matchers or name in wanted.matchers
+    }
     return {
         "releaseKey": release_key,
         "releaseId": release_id,
         "ruleId": str(rule.get("id", "")),
         "name": rule.get("name", ""),
-        "modes": list(rule.get("modes") or []),
-        "matchers": rule.get("matchers") or {},
+        "modes": modes,
+        "matchers": matchers,
         "weightedPriority": rule.get("weighted_priority", ""),
         "files": list(chosen.files),
     }
@@ -1286,7 +1315,10 @@ def _fetch_pack(
             release_id = _manifest_release_id(manifest, key)
             _refuse_malformed_rules(manifest, key)
             chosen = select_rules(manifest, wanted)
-            rows = [rule_row(key, release_id, selected) for selected in chosen]
+            rows = [
+                rule_row(key, release_id, selected, wanted=wanted)
+                for selected in chosen
+            ]
             if out is None or not chosen:
                 return rows, []
             stage = "archive"

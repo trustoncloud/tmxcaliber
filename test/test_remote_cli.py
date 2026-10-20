@@ -893,6 +893,22 @@ def test_fetch_matcher_leaves_out_the_files_of_the_other_matcher(
     assert [row["files"] for row in rows] == [["metadata.json"]]
 
 
+def test_fetch_rows_list_only_the_modes_and_matchers_the_filters_kept(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A row that still listed every mode and matcher read as the manifest
+    # printed back, and hid that the filters had been applied.
+    params = _fetch_params(
+        monkeypatch, "aws-s3", "--control", "S3.C20", "--matcher", "terraform"
+    )
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    [row] = json.loads(capsys.readouterr().out)
+    assert status == 0
+    assert (row["modes"], list(row["matchers"])) == (["allowlist"], ["terraform"])
+
+
 def test_fetch_writes_files_and_prints_their_paths(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
