@@ -316,6 +316,13 @@ def _rank(
         close by its name or its service, only the candidates of that provider
         are returned. Otherwise the typed provider is the slip, as in
         ``aws-bigquery``, and the service decides.
+
+        A candidate that is only a little like the service (below
+        `_ALIAS_CUTOFF`) does not count as close when an alias names the service
+        exactly for another provider. ``aws-kms`` names no AWS pack, but
+        ``aws-eks`` scores 0.67 against ``kms``, and counting it would drop
+        Google's Cloud KMS, the one pack the alias names, and leave only wrong
+        suggestions.
     """
     pool = list(dict.fromkeys(candidates))
     if limit < 1 or not bare or query in pool:
@@ -331,17 +338,26 @@ def _rank(
     # says nothing about which service was meant, so it must not be taken for a
     # close candidate of the provider the query names.
     grounded: set[str] = set()
+    # The keys found by an alias, or by a service spelled as close as an alias
+    # has to be. Only these can outweigh an alias that names another provider's
+    # key exactly.
+    firm: set[str] = set()
 
-    def take(keys: Iterable[str], *, grounds: bool = True) -> None:
+    def take(
+        keys: Iterable[str], *, grounds: bool = True, firmly: bool = False
+    ) -> None:
         for key in keys:
             if key not in allowed:
                 continue
             if grounds:
                 grounded.add(key)
+            if firmly:
+                firm.add(key)
             if key not in found:
                 found.append(key)
 
-    take(aliases.get(bare, ()))
+    exact = [key for key in aliases.get(bare, ()) if key in allowed]
+    take(exact, firmly=True)
     if not found:
         # A name that is already an alias is not cut short, so ``ec2`` does not
         # also lead to ``ec2 auto scaling``. Words are compared whole, so
@@ -349,9 +365,9 @@ def _rank(
         # nothing. The shorter alias is the closer one.
         leading = (name for name in aliases if name.startswith(f"{bare}-"))
         for name in sorted(leading, key=lambda name: (len(name), name)):
-            take(aliases[name])
+            take(aliases[name], firmly=True)
     for _, name in _close(bare, aliases, _ALIAS_CUTOFF):
-        take(aliases[name])
+        take(aliases[name], firmly=True)
 
     # A key counts by the better of its two comparisons, so aws-ec2 ranks by
     # its whole spelling for aws-ec3 and by its service for ec3.
@@ -369,12 +385,22 @@ def _rank(
         for key in whole.keys() | service.keys()
     }
     for key in sorted(best, key=lambda key: (-best[key], key)):
-        take([key], grounds=key in service)
+        take(
+            [key],
+            grounds=key in service,
+            firmly=service.get(key, 0.0) >= _ALIAS_CUTOFF,
+        )
 
     if len(bare) <= _SHORT:
         take(sorted(key for key in pool if _within_one_edit(bare, _service(key))))
-    if provider and any(_provider(key) == provider for key in grounded):
-        found = [key for key in found if _provider(key) == provider]
+    if provider:
+        # When an alias names another provider's key exactly, the typed
+        # provider has to answer it with a firm match of its own. A slight
+        # likeness, such as eks to kms, is not an answer.
+        named_elsewhere = any(_provider(key) != provider for key in exact)
+        close = firm if named_elsewhere else grounded
+        if any(_provider(key) == provider for key in close):
+            found = [key for key in found if _provider(key) == provider]
     return found[:limit]
 
 
@@ -395,8 +421,10 @@ def suggest(query: str, candidates: Iterable[str], *, limit: int = 3) -> list[st
         service is spelled close to the query, then, for a query of four
         characters or fewer, those whose service is one edit away. When the
         query begins with a provider and one of its candidates is close by name
-        or by service, the other providers' candidates are left out. Empty when
-        nothing is close, when the query is itself a candidate, or when it
+        or by service, the other providers' candidates are left out, unless an
+        alias names the service exactly for another provider and none of the
+        typed provider's candidates is as close as an alias has to be. Empty
+        when nothing is close, when the query is itself a candidate, or when it
         names only a vendor, such as ``aws``.
     """
     bare = normalize(query)

@@ -313,6 +313,63 @@ def test_a_provider_with_only_a_look_alike_does_not_hide_the_service() -> None:
     assert suggest("aws-bigquery", readable)[0] == "gcp-bigquery"
 
 
+@pytest.mark.parametrize(
+    ("query", "first"),
+    [
+        ("aws-kms", "gcp-cloudkms"),
+        ("AWS KMS", "gcp-cloudkms"),
+        ("aws kms", "gcp-cloudkms"),
+        ("Amazon KMS", "gcp-cloudkms"),
+    ],
+)
+def test_a_weak_look_alike_of_the_typed_provider_does_not_hide_an_exact_alias(
+    query: str, first: str
+) -> None:
+    # No pack of AWS is a KMS, and aws-eks is only spelled a little like "kms"
+    # (0.67), so it names nothing. Google's Cloud KMS is the one pack that the
+    # alias "kms" names, and dropping it would leave only wrong suggestions.
+    found = suggest(query, KEYS)
+
+    assert found[0] == first
+    assert "aws-eks" not in found[:1]
+
+
+@pytest.mark.parametrize(
+    ("query", "named"),
+    [
+        ("azure-ebs", "aws-ec2"),
+        ("aws-cloud-sql", "gcp-cloudsql"),
+        ("azure-secrets-manager", "aws-secretsmanager"),
+        ("aws-sql-database", "azure-sql"),
+    ],
+)
+def test_an_exact_alias_of_another_provider_survives_among_hundreds(
+    query: str, named: str
+) -> None:
+    # The same slip with the whole catalogue to look in: many keys of the typed
+    # provider are a little like the service, and none of them is the service.
+    assert suggest(query, THREATMODEL_IDS)[0] == named
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        # A service of the typed provider that is spelled like the alias, not
+        # just a little like the query, is a real match, and the typed provider
+        # stays with it.
+        ("amazon kms", "aws"),
+        ("aws-iamm", "aws"),
+        ("gcp-storge", "gcp"),
+    ],
+)
+def test_a_close_service_of_the_typed_provider_still_keeps_the_provider(
+    query: str, expected: str
+) -> None:
+    found = suggest(query, THREATMODEL_IDS)
+
+    assert {key.partition("-")[0] for key in found} == {expected}
+
+
 @pytest.mark.parametrize("limit", [1, 2, 3, 5])
 @pytest.mark.parametrize(
     "query",

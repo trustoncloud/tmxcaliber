@@ -1836,6 +1836,23 @@ def test_following_a_suggestion_with_the_provider_still_given_never_dead_ends(
             assert {row["releaseKey"] for row in result.rows} == {suggested}
 
 
+@pytest.mark.parametrize("typed", ["aws-kms", "AWS KMS", "kms"])
+def test_a_provider_with_no_such_pack_still_gets_the_pack_that_service_names(
+    typed: str,
+) -> None:
+    # No AWS pack is a KMS, and aws-eks is spelled only a little like it. The
+    # one pack the name leads to is Google's, and it must not be dropped for
+    # the look-alike, whether the name is a pack or a service.
+    client = PackClient(readable_packs("gcp-cloudkms", "aws-eks"))
+
+    named = fetch(client, release_keys=(typed,))  # type: ignore[arg-type]
+    with pytest.raises(NoPackMatched) as refused:
+        fetch(client, services=(typed,))  # type: ignore[arg-type]
+
+    assert named.failed[typed].suggestions[0] == "gcp-cloudkms"
+    assert refused.value.suggestions[0] == "gcp-cloudkms"
+
+
 def test_a_pack_the_key_cannot_read_is_never_suggested() -> None:
     # gcp-vertex is the alias's pack, and this key cannot read it, so naming it
     # would tell the caller about a pack outside their subscription.
