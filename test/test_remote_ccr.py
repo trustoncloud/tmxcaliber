@@ -1730,6 +1730,43 @@ def test_a_narrowing_that_leaves_a_pack_is_not_refused() -> None:
     assert {row["releaseKey"] for row in result.rows} == {"gcp-vertex"}
 
 
+def test_a_service_given_as_a_listed_release_key_reads_that_pack() -> None:
+    # The provider is part of the key, so the key names the one pack, and the
+    # service of any other pack that happens to share its tail stays out.
+    client = PackClient(readable_packs("gcp-vertex", "aws-vertex"))
+
+    result = fetch(client, services=("gcp-vertex",))  # type: ignore[arg-type]
+
+    assert {row["releaseKey"] for row in result.rows} == {"gcp-vertex"}
+
+
+def test_a_listed_release_key_still_obeys_the_provider_beside_it() -> None:
+    client = PackClient(readable_packs("gcp-vertex"))
+
+    with pytest.raises(NoPackMatched):
+        fetch(client, providers=("aws",), services=("gcp-vertex",))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "typed",
+    ["Gemini Agent Platform", "vertexai", "GCP-Vertex", "gemini-agent-platform"],
+)
+def test_the_pack_a_refused_service_suggests_can_be_given_back_as_the_service(
+    typed: str,
+) -> None:
+    # The refusal says "Did you mean gcp-vertex?", and a person answers by
+    # typing that into the same flag, so it has to be accepted there.
+    client = PackClient(readable_packs("gcp-vertex"))
+
+    with pytest.raises(NoPackMatched) as refused:
+        fetch(client, services=(typed,))  # type: ignore[arg-type]
+    [suggested] = refused.value.suggestions
+    result = fetch(client, services=(suggested,))  # type: ignore[arg-type]
+
+    assert suggested == "gcp-vertex"
+    assert {row["releaseKey"] for row in result.rows} == {suggested}
+
+
 def test_a_pack_the_key_cannot_read_is_never_suggested() -> None:
     # gcp-vertex is the alias's pack, and this key cannot read it, so naming it
     # would tell the caller about a pack outside their subscription.

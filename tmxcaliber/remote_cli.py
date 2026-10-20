@@ -55,6 +55,7 @@ from .lib.remote.errors import (
     RemoteError,
 )
 from .lib.remote.operations import call_route, incompleteness_fields
+from .lib.remote.ref import is_remote_ref
 from .lib.remote.resolve import resolve_source
 from .lib.remote.suggest import did_you_mean, suggest
 
@@ -262,7 +263,11 @@ def _add_ccr_fetch(ccr: _SubParsersAction[ArgumentParser]) -> None:
     )
     for name, help_text in (
         ("provider", "read only this provider's packs, for example aws."),
-        ("service", "read only this service's packs, for example s3."),
+        (
+            "service",
+            "read only this service's packs, for example s3. A whole release "
+            "key, such as aws-s3, names its pack too.",
+        ),
         ("control", "select this control, for example S3.C20."),
         ("file", "select files whose <rule id>/<file> matches this glob."),
     ):
@@ -464,6 +469,22 @@ NAME_LISTS: Mapping[str, tuple[tuple[str, ...], str, str | None]] = {
 }
 
 
+def _then(message: str, sentence: str) -> str:
+    """Follow a message with a sentence of its own.
+
+    Args:
+        message: What an error said.
+        sentence: What to add.
+
+    Returns:
+        The two, with a full stop between them when the message has none, which
+        would otherwise run the two sentences together, and not a second one
+        when it has, which would read as a typing slip.
+    """
+    stop = "" if message.endswith((".", "!", "?")) else "."
+    return f"{message}{stop} {sentence}"
+
+
 def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
     """Say which listed name a positional the API does not know probably meant.
 
@@ -481,12 +502,17 @@ def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
     Returns:
         The ``Did you mean ...?`` sentence, with each ThreatModel's title
         after its id. Empty when the route names nothing the API lists, when
-        nothing listed is close, when the name is itself listed (as when only
-        its release is unknown), or when the list cannot be read, in which
-        case the API's own error is the one worth reporting.
+        no name was typed, when nothing listed is close, when the name is
+        itself listed (as when only its release is unknown), or when the list
+        cannot be read, in which case the API's own error is the one worth
+        reporting.
     """
     lookup = NAME_LISTS.get(route.positional or "")
     if lookup is None:
+        return ""
+    # A release pins a version of the name, and is no part of the name itself.
+    wanted = typed.partition("@")[0]
+    if not wanted:
         return ""
     command, name_field, title_field = lookup
     listing = route_for(command)
@@ -504,8 +530,6 @@ def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
         if title_field
         else None
     )
-    # A release pins a version of the name, and is no part of the name itself.
-    wanted = typed.partition("@")[0]
     return did_you_mean(suggest(wanted, [name for name in names if name]), labels)
 
 
@@ -532,37 +556,47 @@ def run_api_command(
         NotFound: If the API does not know the ThreatModel or pack named.
             When one this key can list is close to the name typed, the
             message ends with ``Did you mean ...?``, and the code, status and
-            request id stay the API's.
+            request id stay the API's. A ThreatModel typed in a shape no
+            reference has, such as ``Amazon EC2``, is refused before the API
+            is asked, and raises this too, with no status or request id, when
+            a listed one is close to it.
         RemoteError: On any other credential, transport or server failure.
-        ValueError: If a ThreatModel reference cannot be parsed.
+        ValueError: If a ThreatModel reference cannot be parsed, and none the
+            key can list is close to it.
     """
     route = selected_route(params)
     assert route is not None, "run_api_command called for a non-API command"
     api = client or connect()
     typed = str(getattr(params, route.positional, "") or "") if route.positional else ""
+    filters = {name: str(getattr(params, name, "") or "") for name in route.filters}
+    limit = int(getattr(params, "limit", 0) or 0)
     try:
-        answer = call_route(
-            api,
-            route,
-            typed,
-            {name: str(getattr(params, name, "") or "") for name in route.filters},
-            limit=int(getattr(params, "limit", 0) or 0),
-        )
+        answer = call_route(api, route, typed, filters, limit=limit)
     except NotFound as exc:
         sentence = _did_you_mean(api, route, typed)
         if not sentence:
             raise
-        # The API's message is a sentence of its own, so a second full stop
-        # would read as a typing slip, and a missing one would run the two
-        # sentences together.
-        message = Exception.__str__(exc)
-        stop = "" if message.endswith((".", "!", "?")) else "."
         raise NotFound(
-            f"{message}{stop} {sentence}",
+            _then(Exception.__str__(exc), sentence),
             code=exc.code,
             request_id=exc.request_id,
             status=exc.status,
         ) from exc
+    except ValueError as exc:
+        # A ThreatModel typed as "Amazon EC2" is refused by the reference
+        # grammar before any request is made, so no 404 follows and the name
+        # would never reach the suggestion. The refusal stays as it was when
+        # nothing listed is close, and when the reference is well formed and
+        # only its release is wrong.
+        sentence = (
+            _did_you_mean(api, route, typed)
+            if route.positional == "tm_id" and not is_remote_ref(typed)
+            else ""
+        )
+        if not sentence:
+            raise
+        # The API never saw the name, so there is no status or request id.
+        raise NotFound(_then(str(exc), sentence), code="not_found") from exc
     if route.paged:
         _report_envelope(answer.envelope)
     if incomplete is not None:

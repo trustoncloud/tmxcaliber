@@ -34,7 +34,7 @@ from tmxcaliber.remote_cli import (
 from .test_remote_api import page
 from .test_remote_assemble import DETAIL, DFD, PARTS, _at_release
 from .test_remote_ccr import PackClient, readable_packs, two_packs
-from .test_remote_client import FakeOpener, FakeResponse, http_error
+from .test_remote_client import FakeOpener, FakeResponse, StrictOpener, http_error
 from .test_remote_client import settings as client_settings
 from .test_remote_config import (
     HAZARD,
@@ -982,6 +982,28 @@ def test_a_narrowing_no_pack_has_exits_one_and_says_what_was_close(
     assert captured.err == Fore.RED + expected + Fore.RESET + "\n"
 
 
+def test_the_service_a_refusal_suggests_is_accepted_when_typed_back(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client = PackClient(readable_packs("gcp-vertex"))
+    refused = run_ccr_fetch(
+        _fetch_params(monkeypatch, "--service", "Gemini Agent Platform"),
+        client=client,  # type: ignore[arg-type]
+    )
+    assert refused == 1
+    assert "Did you mean gcp-vertex?" in capsys.readouterr().err
+
+    status = run_ccr_fetch(
+        _fetch_params(monkeypatch, "--service", "gcp-vertex"),
+        client=client,  # type: ignore[arg-type]
+    )
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert captured.err == ""
+    assert {row["releaseKey"] for row in json.loads(captured.out)} == {"gcp-vertex"}
+
+
 def test_main_reports_a_narrowing_no_pack_has_on_stderr(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1092,7 +1114,7 @@ def _listing(command: tuple[str, ...], rows: list[dict[str, Any]]) -> FakeRespon
 
 def _main_over(
     monkeypatch: pytest.MonkeyPatch, answers: list[Any], argv: list[str]
-) -> tuple[int, FakeOpener]:
+) -> tuple[int, StrictOpener]:
     """Run the real CLI over a real client whose transport replays answers.
 
     Args:
@@ -1103,7 +1125,8 @@ def _main_over(
     Returns:
         The exit status, and the opener, which recorded each request.
     """
-    opener = FakeOpener(answers)
+    # Strict, so a name the transport would refuse to send fails here too.
+    opener = StrictOpener(answers)
     client = TocClient(client_settings(), opener=opener)
     monkeypatch.setattr(remote_cli, "connect", lambda: client)
     monkeypatch.setattr(sys, "argv", ["tmxcaliber", *argv])
@@ -1261,3 +1284,142 @@ def test_the_suggestion_starts_a_sentence_of_its_own() -> None:
     assert str(caught.value) == (
         "aws-ec3 is unknown. Did you mean aws-ec2 (Amazon EC2)?"
     )
+
+
+#: ``ccr packs list`` as a key that reads the packs of two renamed services sees it.
+VERTEX_PACKS = [
+    *PACKS,
+    {"releaseKey": "gcp-vertex", "service": "vertex", "ruleCount": 2},
+    {"releaseKey": "gcp-pubsub", "service": "pubsub", "ruleCount": 1},
+]
+
+
+def test_fetch_of_a_renamed_pack_typed_with_spaces_still_suggests_its_key(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The name has spaces in it, which the transport refuses to send, so the
+    # pack the user typed never reached the API and no suggestion was made.
+    status, opener = _main_over(
+        monkeypatch,
+        [http_error(404, MISSING), _listing(("ccr", "packs", "list"), VERTEX_PACKS)],
+        ["ccr", "fetch", "Gemini Agent Platform"],
+    )
+
+    [line] = capsys.readouterr().err.splitlines()
+    assert status == 1
+    assert line.startswith(Fore.RED + "Gemini Agent Platform: manifest failed: ")
+    assert line.endswith("Did you mean gcp-vertex?" + Fore.RESET)
+    first = urllib.parse.urlsplit(opener.requests[0].full_url)
+    assert first.path == "/v1/ccr/packs/Gemini%20Agent%20Platform"
+    assert opener.answers == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "path", "sentence"),
+    [
+        pytest.param(
+            ["ccr", "packs", "get", "vertex ai"],
+            "/v1/ccr/packs/vertex%20ai",
+            "Did you mean gcp-vertex?",
+            id="a renamed pack",
+        ),
+        pytest.param(
+            ["ccr", "packs", "get", "Amazon EC2"],
+            "/v1/ccr/packs/Amazon%20EC2",
+            "Did you mean aws-ec2?",
+            id="a vendor's name",
+        ),
+        pytest.param(
+            ["ccr", "packs", "archive", "pub/sub", "--output", "unwritten.zip"],
+            "/v1/ccr/packs/pub%2Fsub/archive",
+            "Did you mean gcp-pubsub?",
+            id="a slash",
+        ),
+    ],
+)
+def test_a_pack_command_given_a_name_with_spaces_answers_not_found_with_a_suggestion(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    path: str,
+    sentence: str,
+) -> None:
+    status, opener = _main_over(
+        monkeypatch,
+        [http_error(404, MISSING), _listing(("ccr", "packs", "list"), VERTEX_PACKS)],
+        argv,
+    )
+
+    assert status == 1
+    assert capsys.readouterr().out == (
+        Fore.RED + f"Not found. {sentence} (request r-404)" + Fore.RESET + "\n"
+    )
+    assert urllib.parse.urlsplit(opener.requests[0].full_url).path == path
+    assert opener.answers == []
+
+
+@pytest.mark.parametrize("typed", ["Amazon EC2", "AWS-EC2", "ec 2"])
+def test_a_threatmodel_typed_in_a_shape_no_reference_has_is_followed_by_what_it_meant(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], typed: str
+) -> None:
+    # The reference grammar refuses a name with a space or a capital before any
+    # request is made, so there is no 404 to follow and the name was lost.
+    status, opener = _main_over(
+        monkeypatch,
+        [_listing(("threatmodels", "list"), THREATMODELS)],
+        ["threatmodels", "get", typed],
+    )
+
+    assert status == 1
+    assert capsys.readouterr().out == (
+        Fore.RED
+        + f"{typed!r} is not a ThreatModel reference; expected provider-service, "
+        "optionally with @release. Did you mean aws-ec2 (Amazon EC2)?"
+        + Fore.RESET
+        + "\n"
+    )
+    # Only the list was read, because the name could not be sent.
+    assert [urllib.parse.urlsplit(r.full_url).path for r in opener.requests] == [
+        "/v1/threatmodels"
+    ]
+
+
+def test_a_malformed_threatmodel_with_nothing_close_is_refused_as_before() -> None:
+    route = route_for(("threatmodels", "get"))
+    assert route is not None
+    opener = FakeOpener([_listing(("threatmodels", "list"), THREATMODELS)])
+    params = Namespace(api_route=route, tm_id="Nothing Like It", release="")
+
+    with pytest.raises(ValueError, match="is not a ThreatModel reference"):
+        run_api_command(params, client=TocClient(client_settings(), opener=opener))
+
+
+def test_a_pinned_threatmodel_with_a_bad_release_is_not_read_as_a_misspelled_name() -> (
+    None
+):
+    route = route_for(("threatmodels", "get"))
+    assert route is not None
+    opener = FakeOpener([])
+    params = Namespace(api_route=route, tm_id="aws-ec2@..", release="")
+
+    with pytest.raises(ValueError, match="not a usable release key"):
+        run_api_command(params, client=TocClient(client_settings(), opener=opener))
+
+    # The name is listed and right, so the list was never read.
+    assert opener.requests == []
+
+
+@pytest.mark.parametrize("typed", ["", "@1611187200"])
+def test_a_threatmodel_with_no_name_in_it_reads_no_list_to_suggest_from(
+    typed: str,
+) -> None:
+    # Nothing was typed that a listed name could be close to.
+    route = route_for(("threatmodels", "get"))
+    assert route is not None
+    opener = FakeOpener([])
+    params = Namespace(api_route=route, tm_id=typed, release="")
+
+    with pytest.raises(ValueError, match="is not a ThreatModel reference"):
+        run_api_command(params, client=TocClient(client_settings(), opener=opener))
+
+    assert opener.requests == []

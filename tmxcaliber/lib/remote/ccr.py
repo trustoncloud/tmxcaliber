@@ -1110,7 +1110,9 @@ def _pack_keys(
         client: The client.
         release_keys: Packs named by the caller.
         providers: Providers to narrow the listed packs to.
-        services: Services to narrow the listed packs to.
+        services: Services to narrow the listed packs to, each given as the
+            service alone, such as ``vertex``, or as the whole release key,
+            such as ``gcp-vertex``.
 
     Returns:
         The release keys, in the order they will be read.
@@ -1130,7 +1132,9 @@ def _pack_keys(
         provider, _, service = key.partition("-")
         if providers and provider not in providers:
             continue
-        if services and service not in services:
+        # A whole release key also names its service. The refusal below
+        # suggests release keys, so a person answers it by typing one here.
+        if services and service not in services and key not in services:
             continue
         keys.append(key)
     if (providers or services) and not keys:
@@ -1305,7 +1309,8 @@ def fetch(
         client: The client.
         release_keys: Packs to read. Every entitled pack when empty.
         providers: Narrow the listed packs to these providers.
-        services: Narrow the listed packs to these services.
+        services: Narrow the listed packs to these services, each given as
+            the service alone or as a whole release key such as ``gcp-vertex``.
         wanted: Which rules and files to select.
         out: The folder to write under, or None to only list.
 

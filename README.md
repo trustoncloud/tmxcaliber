@@ -209,10 +209,15 @@ A mistyped or renamed pack or service name gets a "Did you mean ...?"
 suggestion drawn only from the packs your key can read. `ccr fetch ec3` ends
 its failure line with `Did you mean aws-ec2?`, and `ccr fetch --service
 "Gemini Agent Platform"` exits 1 with `Did you mean gcp-vertex?`, because the
-pack keeps Vertex AI's key. `ccr packs get` and the `threatmodels` commands
-that take a ThreatModel do the same from `ccr packs list` and
-`threatmodels list`. From Python, a provider or service that matches no
-readable pack raises `NoPackMatched`, whose `suggestions` hold the same names.
+pack keeps Vertex AI's key. `--service` accepts that whole key (`--service
+gcp-vertex`), so a suggestion can be pasted back as it is. A name with spaces
+in it, such as `ccr fetch "Gemini Agent Platform"`, is a name to correct like
+any other. When you give a provider first, as in `gcp-storge`, the suggestions
+stay with that provider whenever one of its services is close. `ccr packs get`
+and the `threatmodels` commands that take a ThreatModel do the same from
+`ccr packs list` and `threatmodels list`. From Python, a provider or service
+that matches no readable pack raises `NoPackMatched`, whose `suggestions` hold
+the same names.
 
 Collections are read in full; paging is handled for you. When the API reports
 that an answer is incomplete (for example, compliance mappings for

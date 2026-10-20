@@ -10,6 +10,7 @@ owner here is what keeps ``tmxcaliber threatmodels threats aws-s3`` and
 from __future__ import annotations
 
 import json
+import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
@@ -69,7 +70,8 @@ def request_for(
             filters are not sent.
 
     Returns:
-        The concrete path, and the query to send with it.
+        The concrete path, with a pack's release key percent-encoded as one
+        path segment, and the query to send with it.
 
     Raises:
         ValueError: If a ThreatModel reference cannot be parsed.
@@ -86,7 +88,13 @@ def request_for(
         if ref.release and not query.get("release"):
             query["release"] = ref.release
     elif route.positional == "release_key":
-        path = path.replace("{releaseKey}", positional)
+        # A release key is typed by a person, and what they type may be a
+        # product's name with spaces in it, or hold a slash or a question
+        # mark. Left as typed, the transport refuses the path before sending
+        # anything, which the client reports as a lost connection and retries,
+        # and a name that was only wrong never reaches the API's own 404. One
+        # encoded segment is a name the API can answer for, however odd.
+        path = path.replace("{releaseKey}", urllib.parse.quote(positional, safe=""))
     return path, query
 
 

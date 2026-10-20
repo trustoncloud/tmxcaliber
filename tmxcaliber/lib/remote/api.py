@@ -223,7 +223,9 @@ class CcrFetch:
         Args:
             *release_keys: Packs to read. Every entitled pack when none.
             provider: Narrow the listed packs to these providers.
-            service: Narrow the listed packs to these services.
+            service: Narrow the listed packs to these services, each given as
+                the service alone or as a whole release key such as
+                ``gcp-vertex``.
             control: Control ids to select.
             mode: Modes a rule must ship one of.
             matcher: Matchers a rule must implement one of.

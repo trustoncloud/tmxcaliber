@@ -7,6 +7,7 @@ reached a real socket would fail rather than quietly go to the network.
 from __future__ import annotations
 
 import gzip
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -106,6 +107,38 @@ class FakeOpener(urllib.request.OpenerDirector):
         if isinstance(answer, BaseException):
             raise answer
         return answer
+
+
+class StrictOpener(FakeOpener):
+    """A `FakeOpener` that refuses a request the real transport would refuse.
+
+    ``http.client`` raises ``InvalidURL`` before it sends anything when the
+    path holds a space or a control character, and a fake that accepts any URL
+    hides every request that is never made. The client reports that failure as
+    a lost connection and retries it, so a name that cannot be sent must be
+    caught here to be seen.
+    """
+
+    def open(self, fullurl: Any, data: Any = None, timeout: Any = None) -> Any:
+        """Check the request line as the transport does, then answer as queued.
+
+        Args:
+            fullurl: The request.
+            data: Unused.
+            timeout: Unused.
+
+        Returns:
+            The next queued response.
+
+        Raises:
+            http.client.InvalidURL: When the transport would not send the path.
+        """
+        # `putrequest` validates the request line and only buffers it, so no
+        # connection is made.
+        http.client.HTTPConnection("api.example.test").putrequest(
+            "GET", fullurl.selector
+        )
+        return super().open(fullurl, data, timeout)
 
 
 def http_error(

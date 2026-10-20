@@ -42,6 +42,7 @@ from .test_remote_client import (
     FakeBytesResponse,
     FakeOpener,
     FakeResponse,
+    StrictOpener,
     http_error,
 )
 from .test_remote_config import HAZARD, KEY, OTHER, STORED_URL, write_config
@@ -177,6 +178,57 @@ def test_a_route_method_raises_the_apis_not_found_with_no_other_call(
 
     assert str(caught.value) == "Not found."
     assert len(opener.requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("typed", "segment"),
+    [
+        ("aws-s3", "aws-s3"),
+        ("Gemini Agent Platform", "Gemini%20Agent%20Platform"),
+        ("pub/sub", "pub%2Fsub"),
+        ("what?x=1", "what%3Fx%3D1"),
+        ("a#b", "a%23b"),
+        ("line\nbreak", "line%0Abreak"),
+        ("café", "caf%C3%A9"),
+    ],
+)
+def test_a_pack_name_fills_one_path_segment_whatever_it_holds(
+    typed: str, segment: str
+) -> None:
+    # A name is typed by a person, so it may hold a space, a slash or a mark
+    # that would end the path, and none of those may reach the request line.
+    for command, suffix in (
+        (("ccr", "packs", "get"), ""),
+        (("ccr", "packs", "archive"), "/archive"),
+    ):
+        route = route_for(command)
+        assert route is not None
+
+        path, query = request_for(route, typed, {})
+
+        assert path == f"/v1/ccr/packs/{segment}{suffix}"
+        assert query == {name: "" for name in route.filters}
+
+
+@pytest.mark.parametrize(
+    "command", [("ccr", "packs", "get"), ("ccr", "packs", "archive")], ids=" ".join
+)
+def test_a_pack_name_with_spaces_gets_the_apis_not_found_not_a_lost_connection(
+    command: tuple[str, ...],
+) -> None:
+    # Without the encoding the transport refuses the path before sending it,
+    # and the client reports a lost connection after retrying three times.
+    missing = {"error": {"code": "not_found", "message": "Not found."}}
+    opener = StrictOpener([http_error(404, missing)])
+    route = route_for(command)
+    assert route is not None
+
+    with pytest.raises(errors_module.NotFound):
+        operation_for(Client(opener=opener), route)("Gemini Agent Platform")
+
+    [sent] = opener.requests
+    assert "Gemini%20Agent%20Platform" in sent.full_url
+    assert " " not in sent.full_url
 
 
 def test_what_fetch_returns_is_importable_from_the_remote_package() -> None:
