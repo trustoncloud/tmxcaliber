@@ -44,12 +44,19 @@ from .lib.remote.contract import (
     ROUTES,
     Route,
     required_parameters,
+    route_for,
     values_field,
     values_route,
 )
-from .lib.remote.errors import ConfigurationError, NoPackMatched, RemoteError
+from .lib.remote.errors import (
+    ConfigurationError,
+    NoPackMatched,
+    NotFound,
+    RemoteError,
+)
 from .lib.remote.operations import call_route, incompleteness_fields
 from .lib.remote.resolve import resolve_source
+from .lib.remote.suggest import did_you_mean, suggest
 
 #: The namespace key each nesting level of the command tree parks its word in.
 #:
@@ -448,6 +455,60 @@ def resolve_command_source(source: str) -> str:
     return resolve_source(source, connect=connect)
 
 
+#: For a positional that names something the API lists, the command that lists
+#: it, the row field holding each name, and the row field holding its title
+#: when there is one.
+NAME_LISTS: Mapping[str, tuple[tuple[str, ...], str, str | None]] = {
+    "release_key": (("ccr", "packs", "list"), "releaseKey", None),
+    "tm_id": (("threatmodels", "list"), "tmId", "title"),
+}
+
+
+def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
+    """Say which listed name a positional the API does not know probably meant.
+
+    The command line asks only after a ``NotFound``, so a name typed right
+    costs no extra call, and `Client`'s route methods never ask, so a library
+    caller makes exactly the calls it wrote. Only what this key can list is
+    suggested, so a ThreatModel or pack outside its subscription is never
+    named.
+
+    Args:
+        client: The client the command used.
+        route: The route that answered ``NotFound``.
+        typed: The positional as typed, with any ``@release``.
+
+    Returns:
+        The ``Did you mean ...?`` sentence, with each ThreatModel's title
+        after its id. Empty when the route names nothing the API lists, when
+        nothing listed is close, when the name is itself listed (as when only
+        its release is unknown), or when the list cannot be read, in which
+        case the API's own error is the one worth reporting.
+    """
+    lookup = NAME_LISTS.get(route.positional or "")
+    if lookup is None:
+        return ""
+    command, name_field, title_field = lookup
+    listing = route_for(command)
+    assert listing is not None, f"{' '.join(command)} is not bound"
+    try:
+        rows = call_route(client, listing, "", {}).result
+    except RemoteError:
+        return ""
+    names = [str(row.get(name_field) or "") for row in rows]
+    labels = (
+        {
+            str(row.get(name_field) or ""): str(row.get(title_field) or "")
+            for row in rows
+        }
+        if title_field
+        else None
+    )
+    # A release pins a version of the name, and is no part of the name itself.
+    wanted = typed.partition("@")[0]
+    return did_you_mean(suggest(wanted, [name for name in names if name]), labels)
+
+
 def run_api_command(
     params: Namespace,
     *,
@@ -468,18 +529,40 @@ def run_api_command(
         binary route, "json" otherwise.
 
     Raises:
-        RemoteError: On any credential, transport or server failure.
+        NotFound: If the API does not know the ThreatModel or pack named.
+            When one this key can list is close to the name typed, the
+            message ends with ``Did you mean ...?``, and the code, status and
+            request id stay the API's.
+        RemoteError: On any other credential, transport or server failure.
         ValueError: If a ThreatModel reference cannot be parsed.
     """
     route = selected_route(params)
     assert route is not None, "run_api_command called for a non-API command"
-    answer = call_route(
-        client or connect(),
-        route,
-        str(getattr(params, route.positional, "") or "") if route.positional else "",
-        {name: str(getattr(params, name, "") or "") for name in route.filters},
-        limit=int(getattr(params, "limit", 0) or 0),
-    )
+    api = client or connect()
+    typed = str(getattr(params, route.positional, "") or "") if route.positional else ""
+    try:
+        answer = call_route(
+            api,
+            route,
+            typed,
+            {name: str(getattr(params, name, "") or "") for name in route.filters},
+            limit=int(getattr(params, "limit", 0) or 0),
+        )
+    except NotFound as exc:
+        sentence = _did_you_mean(api, route, typed)
+        if not sentence:
+            raise
+        # The API's message is a sentence of its own, so a second full stop
+        # would read as a typing slip, and a missing one would run the two
+        # sentences together.
+        message = Exception.__str__(exc)
+        stop = "" if message.endswith((".", "!", "?")) else "."
+        raise NotFound(
+            f"{message}{stop} {sentence}",
+            code=exc.code,
+            request_id=exc.request_id,
+            status=exc.status,
+        ) from exc
     if route.paged:
         _report_envelope(answer.envelope)
     if incomplete is not None:

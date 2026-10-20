@@ -157,6 +157,28 @@ def test_fetch_raises_for_a_service_no_readable_pack_has(
     assert refused.value.suggestions == ("gcp-bigquery",)
 
 
+@pytest.mark.parametrize(
+    "command",
+    [("threatmodels", "get"), ("ccr", "packs", "get")],
+    ids=lambda command: " ".join(command),
+)
+def test_a_route_method_raises_the_apis_not_found_with_no_other_call(
+    command: tuple[str, ...],
+) -> None:
+    # The command line reads a list to suggest a name; the library makes only
+    # the calls its caller wrote, so its route methods do not.
+    missing = {"error": {"code": "not_found", "message": "Not found."}}
+    opener = FakeOpener([http_error(404, missing)])
+    route = route_for(command)
+    assert route is not None
+
+    with pytest.raises(errors_module.NotFound) as caught:
+        operation_for(Client(opener=opener), route)("aws-ec3")
+
+    assert str(caught.value) == "Not found."
+    assert len(opener.requests) == 1
+
+
 def test_what_fetch_returns_is_importable_from_the_remote_package() -> None:
     from tmxcaliber.lib.remote import FetchResult as Result
     from tmxcaliber.lib.remote import PackFailure as Failure

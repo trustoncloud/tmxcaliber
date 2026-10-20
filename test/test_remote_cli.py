@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import pathlib
 import sys
+import urllib.parse
 from argparse import Namespace
 from collections.abc import Iterator, Mapping
 from typing import Any, NoReturn
@@ -14,9 +15,14 @@ from colorama import Fore
 
 from tmxcaliber import cli as cli_module
 from tmxcaliber import remote_cli
+from tmxcaliber.lib.remote.client import TocClient
 from tmxcaliber.lib.remote.config import Settings
 from tmxcaliber.lib.remote.contract import route_for
-from tmxcaliber.lib.remote.errors import AuthenticationError, ServiceUnavailable
+from tmxcaliber.lib.remote.errors import (
+    AuthenticationError,
+    NotFound,
+    ServiceUnavailable,
+)
 from tmxcaliber.lib.remote.resolve import resolve_source
 from tmxcaliber.remote_cli import (
     connect,
@@ -25,8 +31,11 @@ from tmxcaliber.remote_cli import (
     run_ccr_fetch,
 )
 
+from .test_remote_api import page
 from .test_remote_assemble import DETAIL, DFD, PARTS, _at_release
 from .test_remote_ccr import PackClient, readable_packs, two_packs
+from .test_remote_client import FakeOpener, FakeResponse, http_error
+from .test_remote_client import settings as client_settings
 from .test_remote_config import (
     HAZARD,
     NOTED_CASES,
@@ -1029,3 +1038,226 @@ def test_main_runs_fetch_and_exits_with_its_status(
 
     assert exited.value.code == 1
     assert "aws-nothing" in capsys.readouterr().err
+
+
+#: How the API answers for a ThreatModel or a pack this key cannot read.
+MISSING = {
+    "error": {"code": "not_found", "message": "Not found.", "requestId": "r-404"}
+}
+
+#: ``threatmodels list`` as a key that reads two ThreatModels sees it.
+THREATMODELS = [
+    {
+        "tmId": "aws-ec2",
+        "title": "Amazon EC2",
+        "provider": "aws",
+        "service": "ec2",
+        "version": "1",
+    },
+    {
+        "tmId": "gcp-bigquery",
+        "title": "Google BigQuery",
+        "provider": "gcp",
+        "service": "bigquery",
+        "version": "1",
+    },
+]
+
+#: ``ccr packs list`` as a key that reads two packs sees it.
+PACKS = [
+    {"releaseKey": "aws-ec2", "service": "ec2", "ruleCount": 3, "releaseId": None},
+    {
+        "releaseKey": "gcp-bigquery",
+        "service": "bigquery",
+        "ruleCount": 1,
+        "releaseId": None,
+    },
+]
+
+
+def _listing(command: tuple[str, ...], rows: list[dict[str, Any]]) -> FakeResponse:
+    """Answer a list command with one page.
+
+    Args:
+        command: The list command.
+        rows: Its rows.
+
+    Returns:
+        The page, holding every field the contract requires of it.
+    """
+    route = route_for(command)
+    assert route is not None
+    return FakeResponse(page(route, rows))
+
+
+def _main_over(
+    monkeypatch: pytest.MonkeyPatch, answers: list[Any], argv: list[str]
+) -> tuple[int, FakeOpener]:
+    """Run the real CLI over a real client whose transport replays answers.
+
+    Args:
+        monkeypatch: Replaces argv and the client the CLI connects.
+        answers: What the API answers, in order.
+        argv: The words after the program name.
+
+    Returns:
+        The exit status, and the opener, which recorded each request.
+    """
+    opener = FakeOpener(answers)
+    client = TocClient(client_settings(), opener=opener)
+    monkeypatch.setattr(remote_cli, "connect", lambda: client)
+    monkeypatch.setattr(sys, "argv", ["tmxcaliber", *argv])
+    with pytest.raises(SystemExit) as exited:
+        cli_module.main()
+    return int(exited.value.code or 0), opener
+
+
+@pytest.mark.parametrize(
+    ("argv", "listing", "rows", "sentence"),
+    [
+        pytest.param(
+            ["ccr", "packs", "get", "aws-ec3"],
+            ("ccr", "packs", "list"),
+            PACKS,
+            "Did you mean aws-ec2?",
+            id="ccr packs get",
+        ),
+        pytest.param(
+            ["ccr", "packs", "archive", "aws-ec3", "--output", "unwritten.zip"],
+            ("ccr", "packs", "list"),
+            PACKS,
+            "Did you mean aws-ec2?",
+            id="ccr packs archive",
+        ),
+        pytest.param(
+            ["threatmodels", "get", "aws-ec3"],
+            ("threatmodels", "list"),
+            THREATMODELS,
+            "Did you mean aws-ec2 (Amazon EC2)?",
+            id="threatmodels get",
+        ),
+        pytest.param(
+            ["threatmodels", "threats", "aws-ec3@1611187200"],
+            ("threatmodels", "list"),
+            THREATMODELS,
+            "Did you mean aws-ec2 (Amazon EC2)?",
+            id="pinned threatmodels threats",
+        ),
+    ],
+)
+def test_a_name_the_api_does_not_know_is_followed_by_what_it_probably_meant(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    listing: tuple[str, ...],
+    rows: list[dict[str, Any]],
+    sentence: str,
+) -> None:
+    status, opener = _main_over(
+        monkeypatch, [http_error(404, MISSING), _listing(listing, rows)], argv
+    )
+
+    out = capsys.readouterr().out
+    assert status == 1
+    assert (
+        out == Fore.RED + f"Not found. {sentence} (request r-404)" + Fore.RESET + "\n"
+    )
+    list_route = route_for(listing)
+    assert list_route is not None
+    assert urllib.parse.urlsplit(opener.requests[1].full_url).path == list_route.path
+    assert opener.answers == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "answers"),
+    [
+        pytest.param(
+            ["threatmodels", "get", "aws-ec3"],
+            [
+                http_error(404, MISSING),
+                http_error(
+                    403,
+                    {
+                        "error": {
+                            "code": "forbidden",
+                            "message": "No.",
+                            "requestId": "r-403",
+                        }
+                    },
+                ),
+            ],
+            id="the list cannot be read",
+        ),
+        pytest.param(
+            ["threatmodels", "get", "azure-cosmosdb"],
+            [
+                http_error(404, MISSING),
+                _listing(("threatmodels", "list"), THREATMODELS),
+            ],
+            id="nothing is close",
+        ),
+        pytest.param(
+            ["threatmodels", "get", "aws-ec2@1"],
+            [
+                http_error(404, MISSING),
+                _listing(("threatmodels", "list"), THREATMODELS),
+            ],
+            id="the name is listed, its release is not",
+        ),
+        pytest.param(
+            ["ccr", "packs", "get", "aws-ec3"],
+            [http_error(404, MISSING), _listing(("ccr", "packs", "list"), [])],
+            id="no pack is readable",
+        ),
+        pytest.param(["me"], [http_error(404, MISSING)], id="no name was typed"),
+    ],
+)
+def test_a_not_found_with_nothing_to_suggest_is_reported_as_it_was(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    answers: list[Any],
+) -> None:
+    status, opener = _main_over(monkeypatch, answers, argv)
+
+    assert status == 1
+    assert capsys.readouterr().out == (
+        Fore.RED + "Not found. (request r-404)" + Fore.RESET + "\n"
+    )
+    # A command without a name reads no list, so only its own call was made.
+    assert opener.answers == []
+
+
+def test_the_suggestion_keeps_the_original_errors_details() -> None:
+    route = route_for(("threatmodels", "get"))
+    assert route is not None
+    opener = FakeOpener(
+        [http_error(404, MISSING), _listing(("threatmodels", "list"), THREATMODELS)]
+    )
+    params = Namespace(api_route=route, tm_id="aws-ec3", release="")
+
+    with pytest.raises(NotFound) as caught:
+        run_api_command(params, client=TocClient(client_settings(), opener=opener))
+
+    error = caught.value
+    assert type(error) is NotFound
+    assert (error.code, error.status, error.request_id) == ("not_found", 404, "r-404")
+    assert Exception.__str__(error) == ("Not found. Did you mean aws-ec2 (Amazon EC2)?")
+    assert isinstance(error.__cause__, NotFound)
+
+
+def test_the_suggestion_starts_a_sentence_of_its_own() -> None:
+    route = route_for(("threatmodels", "get"))
+    assert route is not None
+    unstopped = {"error": {"code": "not_found", "message": "aws-ec3 is unknown"}}
+    opener = FakeOpener(
+        [http_error(404, unstopped), _listing(("threatmodels", "list"), THREATMODELS)]
+    )
+    params = Namespace(api_route=route, tm_id="aws-ec3", release="")
+
+    with pytest.raises(NotFound) as caught:
+        run_api_command(params, client=TocClient(client_settings(), opener=opener))
+
+    assert str(caught.value) == (
+        "aws-ec3 is unknown. Did you mean aws-ec2 (Amazon EC2)?"
+    )
