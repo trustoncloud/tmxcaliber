@@ -976,8 +976,8 @@ def test_a_narrowing_no_pack_has_exits_one_and_says_what_was_close(
 
     captured = capsys.readouterr()
     assert status == 1
-    # Nothing was selected, so there are no rows to print, and the reason is
-    # the narrowing, not a pack without such a rule.
+    # Nothing was selected, so there are no rows to print, and the one line
+    # on stderr puts the blame on the narrowing.
     assert captured.out == ""
     assert captured.err == Fore.RED + expected + Fore.RESET + "\n"
 

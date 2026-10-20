@@ -205,6 +205,15 @@ manifest's digest, and writes the selected files to
 `<out>/<release key>/<rule id>/`. Every pack's files come from the one release
 its manifest names.
 
+A mistyped or renamed pack or service name gets a "Did you mean ...?"
+suggestion drawn only from the packs your key can read. `ccr fetch ec3` ends
+its failure line with `Did you mean aws-ec2?`, and `ccr fetch --service
+"Gemini Agent Platform"` exits 1 with `Did you mean gcp-vertex?`, because the
+pack keeps Vertex AI's key. `ccr packs get` and the `threatmodels` commands
+that take a ThreatModel do the same from `ccr packs list` and
+`threatmodels list`. From Python, a provider or service that matches no
+readable pack raises `NoPackMatched`, whose `suggestions` hold the same names.
+
 Collections are read in full; paging is handled for you. When the API reports
 that an answer is incomplete (for example, compliance mappings for
 ThreatModels whose SCF release is not supported yet), the command still writes
