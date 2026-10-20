@@ -43,6 +43,7 @@ from .test_remote_config import (
     STORED_URL,
     EndpointCase,
 )
+from .test_remote_suggest import THREATMODELS as CATALOGUE
 
 
 class StubClient:
@@ -1511,6 +1512,99 @@ def test_a_threatmodels_key_spelled_like_its_title_leads_to_it_after_the_404(
         Fore.RED
         + "Not found. Did you mean aws-kms (AWS Key Management Service (AWS KMS))? "
         "(request r-404)" + Fore.RESET + "\n"
+    )
+
+
+#: ``threatmodels list`` as a key that reads the whole catalogue sees it. A row
+#: holds the five fields the contract gives it, and no covered services, so the
+#: names a suggestion can use are each title and its short form.
+CATALOGUE_ROWS = [
+    {
+        "tmId": row.tm_id,
+        "title": row.title,
+        "provider": row.tm_id.partition("-")[0],
+        "service": row.tm_id.partition("-")[2],
+        "version": "1",
+    }
+    for row in CATALOGUE
+]
+
+
+@pytest.mark.parametrize(
+    ("typed", "sentence"),
+    [
+        pytest.param(
+            "gcp-firestor",
+            "Did you mean gcp-firestore (Cloud Firestore), "
+            "gcp-filestore (Filestore) or gcp-firebase (Firebase)?",
+            id="slip of an id that another title nearly spells",
+        ),
+        pytest.param(
+            "aws-qconnet",
+            "Did you mean aws-qconnect (Amazon Q in Connect), "
+            "aws-connect (Amazon Connect) or aws-cognito (Amazon Cognito)?",
+            id="slip of an id that another id nearly spells",
+        ),
+    ],
+)
+def test_a_slip_of_an_id_leads_to_its_threatmodel_over_the_whole_catalogue(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    typed: str,
+    sentence: str,
+) -> None:
+    # The API answers 404 for a well formed id it does not know, and the list is
+    # read after it. Another ThreatModel's title is a near miss of each slip, and
+    # the ThreatModel typed has to lead all the same.
+    status, _ = _main_over(
+        monkeypatch,
+        [
+            http_error(404, MISSING),
+            _listing(("threatmodels", "list"), CATALOGUE_ROWS),
+        ],
+        ["threatmodels", "get", typed],
+    )
+
+    assert status == 1
+    assert capsys.readouterr().out == (
+        Fore.RED + f"Not found. {sentence} (request r-404)" + Fore.RESET + "\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("typed", "sentence"),
+    [
+        pytest.param(
+            "Dataproc",
+            "Did you mean gcp-dataproc (Managed Service for Apache Spark), "
+            "gcp-metastore (Dataproc Metastore) or aws-databrew (AWS Glue DataBrew)?",
+            id="service with another title near it",
+        ),
+        pytest.param(
+            "Compute",
+            "Did you mean azure-compute (Azure Compute) "
+            "or gcp-compute (Compute Engine)?",
+            id="service two providers share",
+        ),
+    ],
+)
+def test_a_service_typed_alone_leads_to_its_threatmodel_over_the_whole_catalogue(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    typed: str,
+    sentence: str,
+) -> None:
+    status, _ = _main_over(
+        monkeypatch,
+        [_listing(("threatmodels", "list"), CATALOGUE_ROWS)],
+        ["threatmodels", "get", typed],
+    )
+
+    assert status == 1
+    assert capsys.readouterr().out == (
+        Fore.RED
+        + f"{typed!r} is not a ThreatModel reference; expected provider-service, "
+        f"optionally with @release. {sentence}" + Fore.RESET + "\n"
     )
 
 

@@ -15,7 +15,7 @@ name therefore contributes nothing.
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from difflib import SequenceMatcher
 from types import MappingProxyType
 from typing import Final
@@ -235,28 +235,6 @@ def alternative_names(*titles: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(name for name in names if name))
 
 
-def _merged(
-    first: Mapping[str, tuple[str, ...]], second: Mapping[str, tuple[str, ...]]
-) -> Mapping[str, tuple[str, ...]]:
-    """Join two tables of keys by normalized name.
-
-    Args:
-        first: One table, whose keys come first where a name is in both.
-        second: The other.
-
-    Returns:
-        A table with every name of either, naming the keys of both, once each.
-        Passed the names a list publishes as ``first``, a ThreatModel's own
-        title outranks an alias that reads the same and leads elsewhere, as
-        ``Gemini Enterprise`` leads to its ThreatModel before it leads to
-        Vertex AI.
-    """
-    table = dict(first)
-    for name, keys in second.items():
-        table[name] = tuple(dict.fromkeys((*table.get(name, ()), *keys)))
-    return MappingProxyType(table)
-
-
 def _service(key: str) -> str:
     """Take the service from a release key.
 
@@ -356,7 +334,7 @@ def _rank(
     aliases: Mapping[str, tuple[str, ...]],
     limit: int,
     provider: str | None = None,
-    published: Collection[str] = (),
+    published: Mapping[str, tuple[str, ...]] | None = None,
 ) -> list[str]:
     """Choose the candidates a query most likely meant, best first.
 
@@ -366,18 +344,36 @@ def _rank(
         full: The query with every word kept, to compare with whole keys.
         bare: The query as aliases are stored, to compare with aliases and
             with each key's service.
-        aliases: Each alternative name, and the keys it can mean.
+        aliases: Each curated alternative name, and the keys it can mean.
         limit: How many to return at most.
         provider: The provider the query names, when it begins with one.
-        published: The keys that a name the caller itself published, such as a
-            ThreatModel's title, leads to when it is the query exactly.
+        published: Each name the caller itself published, such as a
+            ThreatModel's title, and the keys it leads to. It is kept apart
+            from `aliases` because a title is evidence about one key, and a key
+            spelled almost as the query is better evidence than a title that is
+            only close to it. A curated alias is a different matter: it is the
+            one name its pack goes by, so a near miss of it is a likely slip.
 
     Returns:
-        Up to ``limit`` candidates, in this order: aliases the query names
-        exactly; aliases whose first words are the query's words, which is how
-        a name is cut short; aliases it nearly names (`_ALIAS_CUTOFF`); keys
-        whose whole spelling or whose service is close (`_KEY_CUTOFF`); and,
-        for a short query (`_SHORT`), keys whose service is one edit away.
+        Up to ``limit`` candidates, in this order:
+
+        1. The candidates the query names exactly: those a published name or
+           an alias leads to, then those whose service, or whose whole key, is
+           the query. A key named by its own spelling is as sure a match as one
+           named by an alias, so ``Dataproc`` leads to ``gcp-dataproc`` before
+           any title that is only like it.
+        2. Aliases whose first words are the query's words, which is how a name
+           is cut short, shortest first. Only when no name is exact.
+        3. Aliases it nearly names (`_ALIAS_CUTOFF`).
+        4. Everything else together, by the best of three scores: how close the
+           key's whole spelling is, how close its service is (both
+           `_KEY_CUTOFF`), and how close a published name is, which is
+           `_ALIAS_CUTOFF` for a name that begins with the query's words, as
+           for an alias, and the ratio itself for a near miss. A slip of a key
+           therefore leads to that key, and not to a ThreatModel whose title
+           is a little like the slip.
+        5. For a short query (`_SHORT`), keys whose service is one edit away.
+
         Nothing when the query is itself a candidate, because there is nothing
         to correct. Only the candidate itself when the query spells one in
         another case or with other separators, such as ``AWS_EC2``.
@@ -388,15 +384,17 @@ def _rank(
         ``aws-bigquery``, and the service decides.
 
         A candidate that is only a little like the service (below
-        `_ALIAS_CUTOFF`) does not count as close when an alias names the service
-        exactly for another provider. ``aws-kms`` names no AWS pack, but
-        ``aws-eks`` scores 0.67 against ``kms``, and counting it would drop
-        Google's Cloud KMS, the one pack the alias names, and leave only wrong
-        suggestions.
+        `_ALIAS_CUTOFF`) does not count as close when a name leads to another
+        provider's key exactly, or another provider's service is the query.
+        ``aws-kms`` names no AWS pack, but ``aws-eks`` scores 0.67 against
+        ``kms``, and counting it would drop Google's Cloud KMS, the one pack the
+        alias names, and leave only wrong suggestions.
 
         A query that is exactly a name the caller published is no slip of the
         keys, so what follows the candidates that name leads to would only be
-        noise, and they alone are returned.
+        noise, and they alone are returned, with any candidate whose service is
+        the query, because a service typed exactly is as much its own name as a
+        title is: ``Compute`` is Azure's title and Google's service.
     """
     pool = list(dict.fromkeys(candidates))
     if limit < 1 or not bare or query in pool:
@@ -406,15 +404,16 @@ def _rank(
         # Every key that shares its provider also scores well against it, and
         # beside the key it plainly names those would only be noise.
         return [full]
+    titles = published or {}
     found: list[str] = []
     # The keys found by a name or by a service. A key found only because its
     # whole spelling shares the typed provider's prefix is not among them: it
     # says nothing about which service was meant, so it must not be taken for a
     # close candidate of the provider the query names.
     grounded: set[str] = set()
-    # The keys found by an alias, or by a service spelled as close as an alias
-    # has to be. Only these can outweigh an alias that names another provider's
-    # key exactly.
+    # The keys found by an alias, by a name the caller published, or by a
+    # service spelled as close as an alias has to be. Only these can outweigh a
+    # name that leads to another provider's key exactly.
     firm: set[str] = set()
 
     def take(
@@ -430,9 +429,15 @@ def _rank(
             if key not in found:
                 found.append(key)
 
-    exact = [key for key in aliases.get(bare, ()) if key in allowed]
+    named = [key for key in titles.get(bare, ()) if key in allowed]
+    aliased = [key for key in aliases.get(bare, ()) if key in allowed]
+    # A service is typed as it is spelled, and a key spelled as the query is as
+    # exact a hit as an alias that says so. Sorted, so the order never depends
+    # on the order the caller listed the candidates in.
+    spelled = sorted(key for key in pool if bare in (key, _service(key)))
+    exact = list(dict.fromkeys((*named, *aliased, *spelled)))
     take(exact, firmly=True)
-    if not found:
+    if not (named or aliased):
         # A name that is already an alias is not cut short, so ``ec2`` does not
         # also lead to ``ec2 auto scaling``. Words are compared whole, so
         # ``gemini`` begins ``gemini agent platform`` and ``gem`` begins
@@ -443,8 +448,25 @@ def _rank(
     for _, name in _close(bare, aliases, _ALIAS_CUTOFF):
         take(aliases[name], firmly=True)
 
-    # A key counts by the better of its two comparisons, so aws-ec2 ranks by
-    # its whole spelling for aws-ec3 and by its service for ec3.
+    # How close a name the caller published is, by key. It is scored beside the
+    # spellings below and not ranked above them, because a title that is a near
+    # miss of the query can belong to a key whose own spelling is a nearer one:
+    # "firestor" is a slip of Firestore, and a near miss of the title Filestore.
+    titled: dict[str, float] = {}
+
+    def credit(names: Iterable[str], score: float) -> None:
+        for name in names:
+            for key in titles[name]:
+                if key in allowed:
+                    titled[key] = max(titled.get(key, 0.0), score)
+
+    if not (named or aliased):
+        credit((name for name in titles if name.startswith(f"{bare}-")), _ALIAS_CUTOFF)
+    for score, name in _close(bare, titles, _ALIAS_CUTOFF):
+        credit([name], score)
+
+    # A key counts by the best of its comparisons, so aws-ec2 ranks by its whole
+    # spelling for aws-ec3 and by its service for ec3.
     whole = {key: score for score, key in _close(full, pool, _KEY_CUTOFF)}
     by_service: dict[str, list[str]] = {}
     for key in pool:
@@ -455,28 +477,30 @@ def _rank(
         for key in by_service[name]
     }
     best = {
-        key: max(whole.get(key, 0.0), service.get(key, 0.0))
-        for key in whole.keys() | service.keys()
+        key: max(whole.get(key, 0.0), service.get(key, 0.0), titled.get(key, 0.0))
+        for key in whole.keys() | service.keys() | titled.keys()
     }
     for key in sorted(best, key=lambda key: (-best[key], key)):
         take(
             [key],
-            grounds=key in service,
-            firmly=service.get(key, 0.0) >= _ALIAS_CUTOFF,
+            grounds=key in service or key in titled,
+            firmly=max(service.get(key, 0.0), titled.get(key, 0.0)) >= _ALIAS_CUTOFF,
         )
 
     if len(bare) <= _SHORT:
         take(sorted(key for key in pool if _within_one_edit(bare, _service(key))))
     if provider:
-        # When an alias names another provider's key exactly, the typed
+        # When a name leads to another provider's key exactly, the typed
         # provider has to answer it with a firm match of its own. A slight
         # likeness, such as eks to kms, is not an answer.
         named_elsewhere = any(_provider(key) != provider for key in exact)
         close = firm if named_elsewhere else grounded
         if any(_provider(key) == provider for key in close):
             found = [key for key in found if _provider(key) == provider]
-    named = [key for key in found if key in published]
-    return (named or found)[:limit]
+    if named:
+        meant = {*named, *spelled}
+        found = [key for key in found if key in meant] or found
+    return found[:limit]
 
 
 def suggest(
@@ -495,24 +519,33 @@ def suggest(
             returned.
         limit: How many to return at most.
         extra_aliases: Other names for some candidates, by key, the best known
-            first, added to `ALIASES` for this call and ranked before it. The
-            caller reads them from the same list it took the candidates from,
-            such as each ThreatModel's title, so a ThreatModel's official name
-            leads to it. A name for a key that is not a candidate leads
-            nowhere.
+            first, which count for this call only. The caller reads them from
+            the same list it took the candidates from, such as each
+            ThreatModel's title, so a ThreatModel's official name leads to it.
+            A name for a key that is not a candidate leads nowhere. Such a name
+            is evidence about one key and no more than that: typed exactly it
+            leads to its key, and its first words or a near miss of it count as
+            well as a close spelling of the key does, so a key typed with a slip
+            is never led away from by another ThreatModel's title that happens
+            to be a little like the slip.
 
     Returns:
         Up to ``limit`` of the candidates, best first, without repeats: those
-        an alias names exactly, then those whose alias begins with the query's
-        words, then those an alias nearly names, then those whose key or
-        service is spelled close to the query, then, for a query of four
-        characters or fewer, those whose service is one edit away. When the
-        query begins with a provider and one of its candidates is close by name
-        or by service, the other providers' candidates are left out, unless an
-        alias names the service exactly for another provider and none of the
-        typed provider's candidates is as close as an alias has to be. Empty
-        when nothing is close, when the query is itself a candidate, or when it
-        names only a vendor, such as ``aws``.
+        a published name or an alias names exactly, or whose service is the
+        query, then those whose alias begins with the query's words, then those
+        an alias nearly names, then those whose key or service is spelled close
+        to the query or whose published name begins with its words or is
+        spelled close to it, ranked together by how close each is, then, for a
+        query of four characters or fewer, those whose service is one edit
+        away. When the query begins with a provider and one of its candidates
+        is close by name or by service, the other providers' candidates are
+        left out, unless a name leads to another provider's key exactly, or
+        another provider's service is the query, and none of the typed
+        provider's candidates is as close as an alias has to be. Empty when
+        nothing is close, when the query is itself a candidate, or when it
+        names only a vendor, such as ``aws``. When the query is a published
+        name exactly, only the candidates that name leads to, and those whose
+        service is the query, are returned.
     """
     bare = normalize(query)
     if bare in _VENDORS:
@@ -526,10 +559,10 @@ def suggest(
         candidates,
         full=full,
         bare=bare,
-        aliases=_merged(published, ALIASES) if published else ALIASES,
+        aliases=ALIASES,
         limit=limit,
         provider=_PROVIDER_OF.get(full.partition("-")[0]),
-        published=published.get(bare, ()),
+        published=published,
     )
 
 
