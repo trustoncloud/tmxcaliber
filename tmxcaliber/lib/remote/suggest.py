@@ -362,16 +362,22 @@ def _rank(
            the query. A key named by its own spelling is as sure a match as one
            named by an alias, so ``Dataproc`` leads to ``gcp-dataproc`` before
            any title that is only like it.
-        2. Aliases whose first words are the query's words, which is how a name
-           is cut short, shortest first. Only when no name is exact.
-        3. Aliases it nearly names (`_ALIAS_CUTOFF`).
+        2. Published names and aliases whose first words are the query's
+           words, which is how a name is cut short, shortest first and a
+           published name first among names as long. Only when no name is
+           exact. For a short query (`_SHORT`), a published name gives way to
+           a key whose service is one edit from the query.
+        3. Aliases it nearly names (`_ALIAS_CUTOFF`), by how near, with the
+           published names that are as near as the weakest of them and nearer
+           than every key they do not lead to is spelled, first on a tie.
         4. Everything else together, by the best of three scores: how close the
            key's whole spelling is, how close its service is (both
            `_KEY_CUTOFF`), and how close a published name is, which is
            `_ALIAS_CUTOFF` for a name that begins with the query's words, as
            for an alias, and the ratio itself for a near miss. A slip of a key
-           therefore leads to that key, and not to a ThreatModel whose title
-           is a little like the slip.
+           therefore leads to that key ahead of a ThreatModel whose title is a
+           little like the slip. On a tie won by a published name, the key the
+           name reached first comes first.
         5. For a short query (`_SHORT`), keys whose service is one edit away.
 
         Nothing when the query is itself a candidate, because there is nothing
@@ -437,36 +443,11 @@ def _rank(
     spelled = sorted(key for key in pool if bare in (key, _service(key)))
     exact = list(dict.fromkeys((*named, *aliased, *spelled)))
     take(exact, firmly=True)
-    if not (named or aliased):
-        # A name that is already an alias is not cut short, so ``ec2`` does not
-        # also lead to ``ec2 auto scaling``. Words are compared whole, so
-        # ``gemini`` begins ``gemini agent platform`` and ``gem`` begins
-        # nothing. The shorter alias is the closer one.
-        leading = (name for name in aliases if name.startswith(f"{bare}-"))
-        for name in sorted(leading, key=lambda name: (len(name), name)):
-            take(aliases[name], firmly=True)
-    for _, name in _close(bare, aliases, _ALIAS_CUTOFF):
-        take(aliases[name], firmly=True)
 
-    # How close a name the caller published is, by key. It is scored beside the
-    # spellings below and not ranked above them, because a title that is a near
-    # miss of the query can belong to a key whose own spelling is a nearer one:
-    # "firestor" is a slip of Firestore, and a near miss of the title Filestore.
-    titled: dict[str, float] = {}
-
-    def credit(names: Iterable[str], score: float) -> None:
-        for name in names:
-            for key in titles[name]:
-                if key in allowed:
-                    titled[key] = max(titled.get(key, 0.0), score)
-
-    if not (named or aliased):
-        credit((name for name in titles if name.startswith(f"{bare}-")), _ALIAS_CUTOFF)
-    for score, name in _close(bare, titles, _ALIAS_CUTOFF):
-        credit([name], score)
-
-    # A key counts by the best of its comparisons, so aws-ec2 ranks by its whole
-    # spelling for aws-ec3 and by its service for ec3.
+    # How close each key is spelled to the query, by the best of its whole
+    # spelling and its service, so aws-ec2 ranks by its whole spelling for
+    # aws-ec3 and by its service for ec3. The tiers of names below are weighed
+    # against it as well, so it is worked out first.
     whole = {key: score for score, key in _close(full, pool, _KEY_CUTOFF)}
     by_service: dict[str, list[str]] = {}
     for key in pool:
@@ -476,11 +457,104 @@ def _rank(
         for score, name in _close(bare, by_service, _KEY_CUTOFF)
         for key in by_service[name]
     }
-    best = {
-        key: max(whole.get(key, 0.0), service.get(key, 0.0), titled.get(key, 0.0))
-        for key in whole.keys() | service.keys() | titled.keys()
+    spelling = {
+        key: max(whole.get(key, 0.0), service.get(key, 0.0))
+        for key in whole.keys() | service.keys()
     }
-    for key in sorted(best, key=lambda key: (-best[key], key)):
+
+    def crowded(name: str) -> bool:
+        # A query this short is as likely a slip of a service as the first word
+        # of a title, so a title gives way to a service one edit from it:
+        # "aws-q" begins the titles of Amazon Q and is one edit from aws-mq.
+        return len(bare) <= _SHORT and any(
+            _within_one_edit(bare, _service(key))
+            for key in pool
+            if key not in titles[name]
+        )
+
+    if not (named or aliased):
+        # A name that is already an alias is not cut short, so ``ec2`` does not
+        # also lead to ``ec2 auto scaling``. Words are compared whole, so
+        # ``gemini`` begins ``gemini agent platform`` and ``gem`` begins
+        # nothing. The shorter name is the closer one. A name the caller
+        # published takes part beside the curated ones, and comes first among
+        # names as long, because the list says what each of its ThreatModels
+        # is called and the curated table only guesses at what a pack is
+        # called. "AWS Systems" begins the title "AWS Systems Manager", so it
+        # leads to aws-ssm ahead of keys only spelled a little like it.
+        leading = [
+            (len(name), 0, name, titles[name])
+            for name in titles
+            if name.startswith(f"{bare}-") and not crowded(name)
+        ]
+        leading += [
+            (len(name), 1, name, aliases[name])
+            for name in aliases
+            if name.startswith(f"{bare}-")
+        ]
+        for *_, keys in sorted(leading, key=lambda entry: entry[:3]):
+            take(keys, firmly=True)
+
+    # A near miss of a curated alias is a likely slip, because the alias is the
+    # one name its pack goes by. A near miss of a name the caller published
+    # competes with it here, by ratio and first on a tie, so "Secret Manger"
+    # leads to the title Secret Manager before the alias "secrets manager". It
+    # is let in only to answer a curated near miss, at least as close as the
+    # weakest of them, and only when it is closer than every key it does not
+    # lead to is spelled. Otherwise it is scored with the keys below, where a
+    # key spelled nearer the query still comes first.
+    near_aliases = _close(bare, aliases, _ALIAS_CUTOFF)
+    near_titles = _close(bare, titles, _ALIAS_CUTOFF)
+    misses = [(score, 1, name, aliases[name]) for score, name in near_aliases]
+    if near_aliases:
+        weakest = near_aliases[-1][0]
+        misses += [
+            (score, 0, name, titles[name])
+            for score, name in near_titles
+            if score >= weakest
+            and all(
+                other < score
+                for key, other in spelling.items()
+                if key not in titles[name]
+            )
+        ]
+    for _, _, _, keys in sorted(misses, key=lambda miss: (-miss[0], *miss[1:3])):
+        take(keys, firmly=True)
+
+    # How close a name the caller published is, by key. It is scored beside the
+    # spellings below, because a title that is a near miss of the query can
+    # belong to a key whose own spelling is a nearer one: "firestor" is a slip
+    # of Firestore, and a near miss of the title Filestore.
+    titled: dict[str, float] = {}
+    # The order in which a published name first reaches each key. Two
+    # ThreatModels can publish the same name once a bracket is cut, as "API
+    # Gateway" is Google's title and AWS's cut short, and the one whose whole
+    # title it is was listed first by `_by_name`, so it keeps that place on a
+    # tie, where the keys' spelling would put them in any order.
+    reached: dict[str, int] = {}
+
+    def credit(names: Iterable[str], score: float) -> None:
+        for name in names:
+            for key in titles[name]:
+                if key in allowed:
+                    titled[key] = max(titled.get(key, 0.0), score)
+                    reached.setdefault(key, len(reached))
+
+    if not (named or aliased):
+        credit((name for name in titles if name.startswith(f"{bare}-")), _ALIAS_CUTOFF)
+    for score, name in near_titles:
+        credit([name], score)
+
+    best = {
+        key: max(spelling.get(key, 0.0), titled.get(key, 0.0))
+        for key in spelling.keys() | titled.keys()
+    }
+
+    def rank(key: str) -> tuple[float, int, str]:
+        by_title = titled.get(key, 0.0) >= best[key]
+        return (-best[key], reached[key] if by_title else len(reached), key)
+
+    for key in sorted(best, key=rank):
         take(
             [key],
             grounds=key in service or key in titled,
@@ -523,27 +597,27 @@ def suggest(
             the same list it took the candidates from, such as each
             ThreatModel's title, so a ThreatModel's official name leads to it.
             A name for a key that is not a candidate leads nowhere. Such a name
-            is evidence about one key and no more than that: typed exactly it
-            leads to its key, and its first words or a near miss of it count as
-            well as a close spelling of the key does, so a key typed with a slip
-            is never led away from by another ThreatModel's title that happens
-            to be a little like the slip.
+            says what its ThreatModel is called, so it outranks a curated alias
+            that is as close, and it is evidence about one key and no more than
+            that, so a key typed with a slip is never led away from by another
+            ThreatModel's title that happens to be a little like the slip.
 
     Returns:
         Up to ``limit`` of the candidates, best first, without repeats: those
         a published name or an alias names exactly, or whose service is the
-        query, then those whose alias begins with the query's words, then those
-        an alias nearly names, then those whose key or service is spelled close
-        to the query or whose published name begins with its words or is
-        spelled close to it, ranked together by how close each is, then, for a
-        query of four characters or fewer, those whose service is one edit
-        away. When the query begins with a provider and one of its candidates
-        is close by name or by service, the other providers' candidates are
-        left out, unless a name leads to another provider's key exactly, or
-        another provider's service is the query, and none of the typed
-        provider's candidates is as close as an alias has to be. Empty when
-        nothing is close, when the query is itself a candidate, or when it
-        names only a vendor, such as ``aws``. When the query is a published
+        query, then those whose published name or alias begins with the
+        query's words, then those an alias, or a published name nearer than
+        any other key is spelled, nearly names, then those whose key or service
+        is spelled close to the query or whose published name begins with its
+        words or is spelled close to it, ranked together by how close each is,
+        then, for a query of four characters or fewer, those whose service is
+        one edit away. When the query begins with a provider and one of its
+        candidates is close by name or by service, the other providers'
+        candidates are left out, unless a name leads to another provider's key
+        exactly, or another provider's service is the query, and none of the
+        typed provider's candidates is as close as an alias has to be. Empty
+        when nothing is close, when the query is itself a candidate, or when
+        it names only a vendor, such as ``aws``. When the query is a published
         name exactly, only the candidates that name leads to, and those whose
         service is the query, are returned.
     """

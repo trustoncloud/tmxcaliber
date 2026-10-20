@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import pathlib
 import re
+from types import MappingProxyType
 from typing import NamedTuple
 
 import pytest
 
+from tmxcaliber.lib.remote import suggest as suggest_module
 from tmxcaliber.lib.remote.suggest import (
     ALIASES,
     alternative_names,
@@ -764,6 +766,115 @@ def test_a_service_two_providers_share_leads_to_both_among_the_titles(
     assert found == ["azure-compute", "gcp-compute"]
 
 
+@PUBLISHED_AS
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        # A slip of a ThreatModel's own title, where a curated alias nearly
+        # names another ThreatModel: "secrets manager" is AWS's, "storage" is
+        # Azure's, "gemini enterprise agent platform" is Vertex AI's.
+        ("Secret Manger", "gcp-secretmanager"),
+        ("Clod Storage", "gcp-storage"),
+        ("Gemini Enterprse", "gcp-discoveryengine"),
+        ("AWS Sytems Manager", "aws-ssm"),
+        ("Azur Kubernetes Service", "azure-aks"),
+        ("AWS Tranform", "aws-transform"),
+        ("Cloud Taks", "gcp-cloudtasks"),
+        # The first words of a title, where a curated alias begins with a word
+        # a letter away.
+        ("AWS Systems", "aws-ssm"),
+    ],
+)
+def test_a_slip_of_a_published_title_leads_to_its_own_threatmodel(
+    names: dict[str, tuple[str, ...]], query: str, expected: str
+) -> None:
+    # The list says what each ThreatModel is called, and a curated alias is only
+    # a guess at what a pack is called, so the title typed with a slip leads.
+    assert suggest(query, THREATMODEL_IDS, extra_aliases=names)[0] == expected
+
+
+@PUBLISHED_AS
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("Azure AI", {"azure-botservice", "azure-cognitiveservices", "azure-search"}),
+        ("AWS Cost", {"aws-ce", "aws-costoptimizationhub"}),
+    ],
+)
+def test_the_first_words_of_several_titles_lead_to_each_of_them(
+    names: dict[str, tuple[str, ...]], query: str, expected: set[str]
+) -> None:
+    # Each title begins with the words typed, and a ThreatModel whose service is
+    # only spelled a little like the last word must not come before them.
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=names)
+
+    assert set(found[: len(expected)]) == expected
+
+
+def test_a_near_miss_of_a_title_waits_behind_a_key_spelled_nearer() -> None:
+    # "Secrets Manger" is a near miss of the curated "secrets manager" (0.97),
+    # of a key's service (0.96) and of the title Secret Manager (0.93). A title
+    # competes with the curated names only when no key it does not lead to is
+    # spelled nearer, so that key keeps its place ahead of the title.
+    readable = ["aws-secretsmanager", "gcp-secretmanager", "gcp-secretsmanger"]
+    names = {"gcp-secretmanager": ("Secret Manager",)}
+
+    assert suggest("Secrets Manger", readable, extra_aliases=names) == [
+        "aws-secretsmanager",
+        "gcp-secretsmanger",
+        "gcp-secretmanager",
+    ]
+    # Typed nearer the title than anything else, the title leads.
+    assert (
+        suggest("Secret Manger", readable, extra_aliases=names)[0]
+        == "gcp-secretmanager"
+    )
+
+
+def test_a_published_name_comes_before_a_curated_one_as_long() -> None:
+    # "key" begins the curated alias "key vault" and the published title "Key
+    # Store", both nine letters. The list says what its ThreatModel is called,
+    # and the curated table only guesses, so the title leads.
+    readable = ["azure-keyvault", "gcp-keystore"]
+    names = {"gcp-keystore": ("Key Store",)}
+
+    assert suggest("key", readable, extra_aliases=names) == [
+        "gcp-keystore",
+        "azure-keyvault",
+    ]
+
+
+@PUBLISHED_AS
+def test_a_short_query_one_edit_from_a_service_is_not_led_away_by_a_title(
+    names: dict[str, tuple[str, ...]],
+) -> None:
+    # "q" begins the titles of several Amazon Q ThreatModels, and "mq" is one
+    # edit from it. A query this short is as likely a slip of a service as the
+    # start of a title, so the service keeps its place.
+    assert suggest("aws-q", THREATMODEL_IDS, extra_aliases=names)[0] == "aws-mq"
+
+
+@PUBLISHED_AS
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        # "API Gateway" is Google's title, and the title of AWS's once its
+        # bracket is cut.
+        ("API Gatewy", ["gcp-apigateway", "aws-apigatewayv2"]),
+        # "Certificate Manager" is Google's title, and AWS's once cut.
+        ("Certificate Manger", ["gcp-certificatemanager", "aws-acm"]),
+    ],
+)
+def test_a_slip_of_a_name_two_threatmodels_publish_leads_to_its_own_title_first(
+    names: dict[str, tuple[str, ...]], query: str, expected: list[str]
+) -> None:
+    # The name is one ThreatModel's whole title and only a cut form of the
+    # other's, so the whole title comes first, as it does when typed exactly.
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=names)
+
+    assert found[: len(expected)] == expected
+
+
 def _single_edit_slips(tm_id: str) -> list[str]:
     """Spell a ThreatModel's id with one letter of its service missing or swapped.
 
@@ -824,6 +935,85 @@ def test_publishing_titles_never_moves_a_mistyped_id_off_its_threatmodel(
         plain = suggest(slip, THREATMODEL_IDS)
         if _place(named, tm_id) > _place(plain, tm_id):
             worse[slip] = (_place(plain, tm_id), _place(named, tm_id))
+
+    assert worse == {}
+
+
+@PUBLISHED_AS
+@pytest.mark.parametrize(
+    ("query", "tm_id"),
+    [("aws-ms", "aws-dms"), ("aws-ms", "aws-fms"), ("aws-es", "aws-eks")],
+)
+def test_a_near_miss_title_does_not_jump_ahead_of_a_key_spelled_as_near(
+    names: dict[str, tuple[str, ...]], query: str, tm_id: str
+) -> None:
+    # Two letters are as near to a short title, such as the "MSK" of Amazon
+    # MSK, or a short curated name, such as "kms", as to several services. A
+    # title answers a curated near miss only when it is nearer than every key
+    # it does not lead to, so here it waits with the keys, and the ThreatModel
+    # is placed no later than with no titles at all.
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=names)
+
+    assert _place(found, tm_id) <= _place(suggest(query, THREATMODEL_IDS), tm_id)
+
+
+def _title_slips(title: str) -> list[str]:
+    """Spell a title with one letter missing or two neighbouring letters swapped.
+
+    Args:
+        title: A published title, such as ``Secret Manager``.
+
+    Returns:
+        Each spelling that drops one letter or digit, or swaps two neighbouring
+        ones that differ, sorted, leaving out any that is a published name.
+    """
+    slips = {
+        title[:i] + title[i + 1 :] for i in range(len(title)) if title[i].isalnum()
+    }
+    slips |= {
+        title[:i] + title[i + 1] + title[i] + title[i + 2 :]
+        for i in range(len(title) - 1)
+        if title[i].isalnum() and title[i + 1].isalnum() and title[i] != title[i + 1]
+    }
+    published = {
+        normalize(name) for names in THREATMODEL_TITLES.values() for name in names
+    }
+    return sorted(slip for slip in slips if normalize(slip) not in published)
+
+
+def test_the_curated_names_never_move_a_mistyped_title_off_its_threatmodel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The curated table is a guess at what packs are called, and the list says
+    # what each ThreatModel is called. Typing a title with a slip must put its
+    # ThreatModel no later with the curated table than with an empty one. Every
+    # sixteenth slip is tried to keep the suite quick (all 8584 take a minute),
+    # which still reaches the titles round 4 found out of place, and the ones it
+    # named are pinned by the tests above.
+    slips = [
+        (row.tm_id, slip) for row in THREATMODELS for slip in _title_slips(row.title)
+    ]
+    # Only a slip whose ThreatModel is not first can be placed later, so the
+    # empty table is asked about those alone.
+    behind = [
+        (tm_id, slip, found)
+        for tm_id, slip in slips[::16]
+        if _place(
+            found := suggest(slip, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES),
+            tm_id,
+        )
+        > 0
+    ]
+    monkeypatch.setattr(suggest_module, "ALIASES", MappingProxyType({}))
+    worse = {
+        slip: (found, plain)
+        for tm_id, slip, found in behind
+        if _place(found, tm_id)
+        > _place(
+            plain := suggest(slip, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES),
+            tm_id,
+        )
+    }
 
     assert worse == {}
 
