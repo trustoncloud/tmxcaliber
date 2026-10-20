@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pathlib
 import re
 
 import pytest
@@ -36,6 +37,14 @@ KEYS: tuple[str, ...] = (
     "gcp-cloudkms",
     "gcp-iam",
     "gcp-compute",
+)
+
+#: Every ThreatModel the catalogue published when this was written, which is the
+#: list the ``threatmodels`` commands suggest from. It is a far larger and more
+#: crowded set than the packs, and the same name can exist under several
+#: providers, so it shows what the short pack list cannot.
+THREATMODEL_IDS: tuple[str, ...] = tuple(
+    pathlib.Path(__file__).with_name("threatmodel_ids.txt").read_text().splitlines()
 )
 
 
@@ -150,8 +159,158 @@ def test_a_vendor_alone_suggests_nothing(query: str) -> None:
     assert suggest(query, KEYS) == []
 
 
-def test_the_misspelled_colab_enterprise_still_reaches_vertex() -> None:
-    assert suggest("Collab Enterprise", KEYS) == ["gcp-vertex"]
+def test_the_threatmodels_spelling_and_googles_are_both_aliases() -> None:
+    # The gcp-vertex ThreatModel spells the product "Collab Enterprise", and
+    # Google spells it "Colab Enterprise". Each is an exact alias, so neither
+    # depends on a near miss to reach the pack.
+    assert ALIASES["collab-enterprise"] == ("gcp-vertex",)
+    assert ALIASES["colab-enterprise"] == ("gcp-vertex",)
+
+
+@pytest.mark.parametrize("query", ["Collab Enterprise", "Colab Enterprise"])
+def test_either_spelling_of_colab_enterprise_reaches_vertex(query: str) -> None:
+    assert suggest(query, KEYS) == ["gcp-vertex"]
+
+
+def test_a_slip_in_colab_enterprise_still_reaches_vertex() -> None:
+    # A near miss of the alias, which no longer carries either spelling alone.
+    assert suggest("Colaab Enterprise", KEYS) == ["gcp-vertex"]
+
+
+@pytest.mark.parametrize(
+    ("query", "first"),
+    [
+        # The names people shorten a service to, which no spelling rule reaches.
+        ("kms", "gcp-cloudkms"),
+        ("Key Management Service", "gcp-cloudkms"),
+        ("gemini", "gcp-vertex"),
+        ("gcp-gemini", "gcp-vertex"),
+        ("Gemini Enterprise", "gcp-vertex"),
+        # The first words of a longer name, which is how a name is cut short.
+        ("gemini agent", "gcp-vertex"),
+        ("gemini-agent", "gcp-vertex"),
+        ("Gemini Enterprise Agent", "gcp-vertex"),
+        ("elastic kubernetes", "aws-eks"),
+        ("agent", "aws-bedrockagentcore"),
+    ],
+)
+def test_a_shortened_name_suggests_its_pack_first(query: str, first: str) -> None:
+    assert suggest(query, KEYS)[0] == first
+
+
+@pytest.mark.parametrize(
+    ("query", "first"),
+    [
+        ("kms", "gcp-cloudkms"),
+        ("gcp-gemini", "gcp-vertex"),
+        ("gemini agent", "gcp-vertex"),
+    ],
+)
+def test_a_shortened_name_is_led_to_its_threatmodel_among_hundreds(
+    query: str, first: str
+) -> None:
+    assert suggest(query, THREATMODEL_IDS)[0] == first
+
+
+def test_a_shortened_name_names_every_provider_that_has_one() -> None:
+    # aws-kms is the KMS of AWS and gcp-cloudkms is Google's, and both are the
+    # ThreatModels of a service called KMS.
+    assert {"aws-kms", "gcp-cloudkms"} <= set(suggest("kms", THREATMODEL_IDS))
+
+
+@pytest.mark.parametrize("query", ["agen", "kubernet"])
+def test_a_piece_of_a_word_does_not_begin_an_alias(query: str) -> None:
+    # The words of an alias are compared whole: "agen" is the start of "agent
+    # core" letter for letter, and still names none of its words.
+    assert suggest(query, KEYS) == []
+
+
+def test_a_name_that_is_an_alias_is_not_taken_for_the_start_of_a_longer_one() -> None:
+    # "ec2" begins the alias "ec2 auto scaling" and is an alias itself, so it
+    # means EC2 alone.
+    assert suggest("Amazon EC2", KEYS) == ["aws-ec2"]
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [("aws-iamm", "aws-iam"), ("gcp-iamm", "gcp-iam"), ("Amazon IAMM", "aws-iam")],
+)
+def test_the_provider_typed_wins_over_another_providers_alias(
+    query: str, expected: str
+) -> None:
+    # Both providers have an IAM, and the alias for "iam" leads to Google's.
+    readable = ["aws-iam", "gcp-iam", "aws-acm"]
+
+    found = suggest(query, readable)
+
+    assert found[0] == expected
+    assert {key.partition("-")[0] for key in found} == {expected.partition("-")[0]}
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("gcp-storge", "gcp-storage"),
+        ("gcp-cloudstorage", "gcp-storage"),
+        ("Google Cloud Storage", "gcp-storage"),
+        ("azure-storge", "azure-storage"),
+    ],
+)
+def test_a_provider_and_a_service_of_two_providers_keeps_the_provider(
+    query: str, expected: str
+) -> None:
+    # "storage" is an alias of azure-storage, and gcp-storage is the pack of
+    # Google's. Naming Google must not lead to Azure's.
+    readable = ["azure-storage", "gcp-storage", "aws-s3"]
+
+    assert suggest(query, readable) == [expected]
+
+
+@pytest.mark.parametrize(
+    ("query", "first"),
+    [
+        ("aws-iamm", "aws-iam"),
+        ("gcp-storge", "gcp-storage"),
+        ("gcp-kms", "gcp-cloudkms"),
+        ("gcp-gemini", "gcp-vertex"),
+        ("azure-storge", "azure-storage"),
+        ("amazon kms", "aws-kms"),
+    ],
+)
+def test_a_provider_typed_keeps_the_suggestions_to_it_among_hundreds(
+    query: str, first: str
+) -> None:
+    found = suggest(query, THREATMODEL_IDS)
+
+    assert found[0] == first
+    provider = first.partition("-")[0]
+    assert {key.partition("-")[0] for key in found} == {provider}
+
+
+def test_a_cloud_prefixed_service_still_reaches_its_threatmodel() -> None:
+    # "cloud" begins a dozen Google services, so gcp-storage need not rank
+    # first. It has to be among the suggestions, with no other provider's
+    # beside it.
+    found = suggest("gcp-cloudstorage", THREATMODEL_IDS)
+
+    assert "gcp-storage" in found
+    assert {key.partition("-")[0] for key in found} == {"gcp"}
+
+
+def test_a_service_of_another_provider_is_kept_when_the_typed_one_has_none() -> None:
+    # Nothing of AWS is close to "bigquery", so the typed provider is a slip
+    # and the service is the better clue.
+    assert suggest("aws-bigquery", KEYS)[0] == "gcp-bigquery"
+    assert suggest("aws-bigquery", THREATMODEL_IDS)[0] == "gcp-bigquery"
+    assert suggest("gcp-storage", KEYS)[0] == "azure-storage"
+
+
+def test_a_provider_with_only_a_look_alike_does_not_hide_the_service() -> None:
+    # Every key of a provider shares its prefix with the query, so a key that is
+    # alike only by that prefix says nothing about what was meant.
+    readable = ["aws-bedrock", "gcp-bigquery"]
+
+    assert suggest("aws-bigquery", readable)[0] == "gcp-bigquery"
 
 
 @pytest.mark.parametrize("limit", [1, 2, 3, 5])

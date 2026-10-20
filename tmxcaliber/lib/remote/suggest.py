@@ -20,12 +20,25 @@ from difflib import SequenceMatcher
 from types import MappingProxyType
 from typing import Final
 
-#: Words that name a vendor and not a service. A leading one is dropped when it
-#: stands as its own word, so ``Amazon EC2``, ``AWS EC2`` and ``ec2`` read
-#: alike, while ``gcp`` inside ``gcpvertex`` is left alone.
-_VENDORS: Final[frozenset[str]] = frozenset(
-    {"amazon", "aws", "google", "gcp", "azure", "microsoft"}
+#: The provider each word that names a vendor stands for, as release keys spell
+#: the provider. Such a word names a vendor, never a service, so a leading one
+#: is dropped when it stands as its own word and ``Amazon EC2``, ``AWS EC2`` and
+#: ``ec2`` read alike, while ``gcp`` inside ``gcpvertex`` is left alone. It also
+#: tells which provider a person meant, which an alias for another provider's
+#: service must not override.
+_PROVIDER_OF: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "amazon": "aws",
+        "aws": "aws",
+        "google": "gcp",
+        "gcp": "gcp",
+        "azure": "azure",
+        "microsoft": "azure",
+    }
 )
+
+#: The words that name a vendor, which `normalize` drops from the front of a name.
+_VENDORS: Final[frozenset[str]] = frozenset(_PROVIDER_OF)
 
 #: A run of anything other than a lowercase letter or a digit. Spaces,
 #: underscores and slashes are the separators people type, and treating every
@@ -63,6 +76,13 @@ PROVIDERS: Final[tuple[str, ...]] = ("aws", "azure", "gcp")
 #: ``gcp-vertex``. It is a starting set. The names belong to the ThreatModel
 #: team, which should eventually publish them as metadata so this table can be
 #: read instead of kept by hand.
+#:
+#: The gcp-vertex ThreatModel spells one of its products "Collab Enterprise",
+#: and Google spells it "Colab Enterprise". Both are listed, so each is an exact
+#: name and neither relies on being a near miss of the other.
+#:
+#: A name that people shorten to a word, such as ``kms`` or ``gemini``, is
+#: listed as that word. Spelling rules cannot reach it from the full name.
 _NAMES: Final[Mapping[str, tuple[str, ...]]] = {
     "aws-s3": ("s3", "simple storage service"),
     "aws-ec2": ("ec2", "elastic compute cloud", "elastic block store", "ebs"),
@@ -82,12 +102,15 @@ _NAMES: Final[Mapping[str, tuple[str, ...]]] = {
         "vertex ai",
         "gemini agent platform",
         "gemini enterprise agent platform",
+        "gemini",
+        "gemini enterprise",
+        "collab enterprise",
         "colab enterprise",
     ),
     "gcp-notebooks": ("vertex ai workbench", "workbench", "notebooks"),
     "gcp-gke": ("gke", "kubernetes engine", "google kubernetes engine"),
     "gcp-cloudsql": ("cloud sql",),
-    "gcp-cloudkms": ("cloud kms",),
+    "gcp-cloudkms": ("cloud kms", "kms", "key management service"),
     "gcp-iam": ("iam",),
     "gcp-compute": ("compute engine", "gce"),
 }
@@ -245,6 +268,18 @@ def _within_one_edit(first: str, second: str) -> bool:
     return any(longer[:i] + longer[i + 1 :] == shorter for i in range(len(longer)))
 
 
+def _provider(key: str) -> str:
+    """Take the provider from a release key.
+
+    Args:
+        key: A release key, such as ``aws-ec2``.
+
+    Returns:
+        What precedes the first hyphen, as the API splits a key.
+    """
+    return key.partition("-")[0]
+
+
 def _rank(
     query: str,
     candidates: Iterable[str],
@@ -253,6 +288,7 @@ def _rank(
     bare: str,
     aliases: Mapping[str, tuple[str, ...]],
     limit: int,
+    provider: str | None = None,
 ) -> list[str]:
     """Choose the candidates a query most likely meant, best first.
 
@@ -264,15 +300,22 @@ def _rank(
             with each key's service.
         aliases: Each alternative name, and the keys it can mean.
         limit: How many to return at most.
+        provider: The provider the query names, when it begins with one.
 
     Returns:
         Up to ``limit`` candidates, in this order: aliases the query names
-        exactly; aliases it nearly names (`_ALIAS_CUTOFF`); keys whose whole
-        spelling or whose service is close (`_KEY_CUTOFF`); and, for a short
-        query (`_SHORT`), keys whose service is one edit away. Nothing when
-        the query is itself a candidate, because there is nothing to correct.
-        Only the candidate itself when the query spells one in another case
-        or with other separators, such as ``AWS_EC2``.
+        exactly; aliases whose first words are the query's words, which is how
+        a name is cut short; aliases it nearly names (`_ALIAS_CUTOFF`); keys
+        whose whole spelling or whose service is close (`_KEY_CUTOFF`); and,
+        for a short query (`_SHORT`), keys whose service is one edit away.
+        Nothing when the query is itself a candidate, because there is nothing
+        to correct. Only the candidate itself when the query spells one in
+        another case or with other separators, such as ``AWS_EC2``.
+
+        When the query names a provider and a candidate of that provider is
+        close by its name or its service, only the candidates of that provider
+        are returned. Otherwise the typed provider is the slip, as in
+        ``aws-bigquery``, and the service decides.
     """
     pool = list(dict.fromkeys(candidates))
     if limit < 1 or not bare or query in pool:
@@ -283,31 +326,55 @@ def _rank(
         # beside the key it plainly names those would only be noise.
         return [full]
     found: list[str] = []
+    # The keys found by a name or by a service. A key found only because its
+    # whole spelling shares the typed provider's prefix is not among them: it
+    # says nothing about which service was meant, so it must not be taken for a
+    # close candidate of the provider the query names.
+    grounded: set[str] = set()
 
-    def take(keys: Iterable[str]) -> None:
+    def take(keys: Iterable[str], *, grounds: bool = True) -> None:
         for key in keys:
-            if key in allowed and key not in found:
+            if key not in allowed:
+                continue
+            if grounds:
+                grounded.add(key)
+            if key not in found:
                 found.append(key)
 
     take(aliases.get(bare, ()))
+    if not found:
+        # A name that is already an alias is not cut short, so ``ec2`` does not
+        # also lead to ``ec2 auto scaling``. Words are compared whole, so
+        # ``gemini`` begins ``gemini agent platform`` and ``gem`` begins
+        # nothing. The shorter alias is the closer one.
+        leading = (name for name in aliases if name.startswith(f"{bare}-"))
+        for name in sorted(leading, key=lambda name: (len(name), name)):
+            take(aliases[name])
     for _, name in _close(bare, aliases, _ALIAS_CUTOFF):
         take(aliases[name])
 
     # A key counts by the better of its two comparisons, so aws-ec2 ranks by
     # its whole spelling for aws-ec3 and by its service for ec3.
-    best: dict[str, float] = {}
-    for score, key in _close(full, pool, _KEY_CUTOFF):
-        best[key] = max(best.get(key, 0.0), score)
+    whole = {key: score for score, key in _close(full, pool, _KEY_CUTOFF)}
     by_service: dict[str, list[str]] = {}
     for key in pool:
         by_service.setdefault(_service(key), []).append(key)
-    for score, service in _close(bare, by_service, _KEY_CUTOFF):
-        for key in by_service[service]:
-            best[key] = max(best.get(key, 0.0), score)
-    take(sorted(best, key=lambda key: (-best[key], key)))
+    service = {
+        key: score
+        for score, name in _close(bare, by_service, _KEY_CUTOFF)
+        for key in by_service[name]
+    }
+    best = {
+        key: max(whole.get(key, 0.0), service.get(key, 0.0))
+        for key in whole.keys() | service.keys()
+    }
+    for key in sorted(best, key=lambda key: (-best[key], key)):
+        take([key], grounds=key in service)
 
     if len(bare) <= _SHORT:
         take(sorted(key for key in pool if _within_one_edit(bare, _service(key))))
+    if provider and any(_provider(key) == provider for key in grounded):
+        found = [key for key in found if _provider(key) == provider]
     return found[:limit]
 
 
@@ -323,24 +390,29 @@ def suggest(query: str, candidates: Iterable[str], *, limit: int = 3) -> list[st
 
     Returns:
         Up to ``limit`` of the candidates, best first, without repeats: those
-        an alias names exactly, then those an alias nearly names, then those
-        whose key or service is spelled close to the query, then, for a query
-        of four characters or fewer, those whose service is one edit away.
-        Empty when nothing is close, when the query is itself a candidate, or
-        when it names only a vendor, such as ``aws``.
+        an alias names exactly, then those whose alias begins with the query's
+        words, then those an alias nearly names, then those whose key or
+        service is spelled close to the query, then, for a query of four
+        characters or fewer, those whose service is one edit away. When the
+        query begins with a provider and one of its candidates is close by name
+        or by service, the other providers' candidates are left out. Empty when
+        nothing is close, when the query is itself a candidate, or when it
+        names only a vendor, such as ``aws``.
     """
     bare = normalize(query)
     if bare in _VENDORS:
         # A vendor names no service. The keys closest to it in spelling are
         # just that vendor's shortest ones, which would read as a guess.
         return []
+    full = _canonical(query)
     return _rank(
         query,
         candidates,
-        full=_canonical(query),
+        full=full,
         bare=bare,
         aliases=ALIASES,
         limit=limit,
+        provider=_PROVIDER_OF.get(full.partition("-")[0]),
     )
 
 
