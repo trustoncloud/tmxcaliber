@@ -1542,7 +1542,7 @@ CATALOGUE_ROWS = [
         pytest.param(
             "aws-qconnet",
             "Did you mean aws-qconnect (Amazon Q in Connect), "
-            "aws-connect (Amazon Connect) or aws-cognito (Amazon Cognito)?",
+            "aws-connect (Amazon Connect) or aws-directconnect (AWS Direct Connect)?",
             id="slip of an id that another id nearly spells",
         ),
     ],

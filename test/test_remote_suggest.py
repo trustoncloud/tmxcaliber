@@ -162,15 +162,113 @@ def test_a_near_name_suggests_its_key_first(query: str, first: str) -> None:
         ("Gemini Agent Platform", ["gcp-vertex"]),
         ("Amazon EC2", ["aws-ec2"]),
         ("pub/sub", ["gcp-pubsub"]),
-        # The provider prefix counts, so the packs of the same provider whose
-        # service is closest come next.
-        ("aws-ec3", ["aws-ec2", "aws-s3", "aws-eks"]),
+        # Every AWS pack begins with "aws-", so that part of the query says
+        # which provider was meant and nothing about which service, and the
+        # AWS packs that share only it are left out.
+        ("aws-ec3", ["aws-ec2"]),
     ],
 )
 def test_a_near_name_suggests_only_what_is_close(
     query: str, expected: list[str]
 ) -> None:
     assert suggest(query, KEYS) == expected
+
+
+@pytest.mark.parametrize("query", ["aws-sns", "aws-xyz", "azure-xyz", "aws-dms"])
+def test_a_query_that_shares_only_its_provider_with_a_key_suggests_nothing(
+    query: str,
+) -> None:
+    # Each of these is a ThreatModel's id or a made-up one, typed as a pack. The
+    # 20 packs share the prefix with it and nothing else, which is no reason to
+    # offer any of them.
+    assert suggest(query, KEYS) == []
+
+
+@pytest.mark.parametrize(
+    ("candidates", "stride"),
+    [(KEYS, 1), (THREATMODEL_IDS, 5)],
+    ids=["packs", "threatmodels"],
+)
+def test_a_provider_typed_before_a_service_only_narrows_or_orders_the_suggestions(
+    candidates: tuple[str, ...], stride: int
+) -> None:
+    # The provider prefix is shared by every key of that provider, so it may
+    # decide which provider's keys are kept and in what order, and it may never
+    # bring in a key that the service typed alone would not. Every service of
+    # the catalogue is tried under each provider, every fifth one among the
+    # ThreatModels to keep the suite quick.
+    services = sorted({key.partition("-")[2] for key in (*KEYS, *THREATMODEL_IDS)})
+    added: dict[str, list[str]] = {}
+    for service in services[::stride]:
+        alone = set(suggest(service, candidates, limit=len(candidates)))
+        for provider in ("aws", "azure", "gcp"):
+            query = f"{provider}-{service}"
+            typed = set(suggest(query, candidates, limit=len(candidates)))
+            if typed - alone:
+                added[query] = sorted(typed - alone)
+
+    assert added == {}
+
+
+@pytest.mark.parametrize(
+    ("query", "first"),
+    [
+        ("asw-ec3", "aws-ec2"),
+        ("amazn ec3", "aws-ec2"),
+        ("gpc-iamm", "gcp-iam"),
+        ("awsec3", "aws-ec2"),
+        ("awss3", "aws-s3"),
+        ("gcpbigqeury", "gcp-bigquery"),
+    ],
+)
+def test_a_slipped_or_run_in_provider_is_read_past_to_the_service(
+    query: str, first: str
+) -> None:
+    # A provider typed with a slip, or run into the service, is no part of the
+    # service either, so the service is compared without it.
+    assert suggest(query, KEYS)[0] == first
+
+
+@PUBLISHED_AS
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [("Azrue Functions", "azure-web"), ("AS Private CA", "aws-acmpca")],
+)
+def test_a_vendor_typed_with_a_slip_still_names_its_provider(
+    names: dict[str, tuple[str, ...]], query: str, expected: str
+) -> None:
+    # Azure Functions is the title of azure-web, and AWS Private CA the title of
+    # aws-acmpca. The services left once the vendor is read past are spelled
+    # like aws-stepfunctions and gcp-privateca, and the vendor, slip and all,
+    # says which provider was meant.
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=names)
+
+    assert found[0] == expected
+    assert {key.partition("-")[0] for key in found} == {expected.partition("-")[0]}
+
+
+def test_a_word_that_names_a_service_is_never_read_as_a_vendor() -> None:
+    # "aks" is one edit from "aws", and it is the service of azure-aks, so it
+    # stays a word of the query and names no provider.
+    assert "aws-servicecatalog" not in suggest(
+        "AKS Service", ["azure-aks", "aws-servicecatalog"]
+    )
+
+
+def test_two_letters_swapped_count_as_one_slip() -> None:
+    # difflib scores "kfaka" 0.4 against "kafka", below any cutoff, although
+    # it is one slip, as "kafkx" is, which scores 0.8.
+    assert suggest("aws-kfaka", THREATMODEL_IDS)[0] == "aws-kafka"
+
+
+def test_a_tie_puts_the_typed_providers_key_first() -> None:
+    # "kms" names Google's Cloud KMS, and aws-eks and azure-eks are spelled
+    # alike against it, so the provider typed decides between them.
+    assert suggest("azure-kms", ["gcp-cloudkms", "aws-eks", "azure-eks"]) == [
+        "gcp-cloudkms",
+        "azure-eks",
+        "aws-eks",
+    ]
 
 
 def test_an_alias_whose_pack_is_not_a_candidate_suggests_nothing() -> None:
@@ -850,8 +948,21 @@ def test_a_short_query_one_edit_from_a_service_is_not_led_away_by_a_title(
 ) -> None:
     # "q" begins the titles of several Amazon Q ThreatModels, and "mq" is one
     # edit from it. A query this short is as likely a slip of a service as the
-    # start of a title, so the service keeps its place.
-    assert suggest("aws-q", THREATMODEL_IDS, extra_aliases=names)[0] == "aws-mq"
+    # start of a title, so the service keeps its place and the titles follow.
+    found = suggest("aws-q", THREATMODEL_IDS, extra_aliases=names)
+
+    assert found[0] == "aws-mq"
+    assert set(found[1:]) <= {"aws-qbusiness", "aws-qconnect", "aws-qdeveloper"}
+    assert len(found) == 3
+
+
+@PUBLISHED_AS
+def test_a_short_query_one_edit_from_a_published_name_reaches_it(
+    names: dict[str, tuple[str, ...]],
+) -> None:
+    # "awf" is the "waf" of AWS WAF with two letters swapped. Its service,
+    # wafv2, is further off, so the published name is what reaches it.
+    assert suggest("AWS AWF", THREATMODEL_IDS, extra_aliases=names) == ["aws-wafv2"]
 
 
 @PUBLISHED_AS
