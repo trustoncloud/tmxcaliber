@@ -199,14 +199,33 @@ tmxcaliber ccr fetch --file '*/terraform/*.rego' --out rules
 
 `ccr fetch` reads each pack's manifest and selects rules by control, mode,
 matcher and file glob. Repeating a flag widens it; different flags narrow each
-other. Without `--out` it prints the selected rules as JSON. With `--out` it
-downloads only the packs that matched, checks each archive against its
-manifest's digest, and writes the selected files to
-`<out>/<release key>/<rule id>/`. Every pack's files come from the one release
-its manifest names.
+other, and each row lists only the modes and matchers you asked for. Without
+`--out` it only previews: it prints the selected rules as JSON, writes
+nothing, and says so on stderr. With `--out` it downloads only the packs that
+matched, checks each archive against its manifest's digest, and writes the
+selected files to `<out>/<release key>/<rule id>/`. Every pack's files come
+from the one release its manifest names.
+
+On a terminal, `--out` shows each pack as it finishes, the files it wrote as a
+tree, and last the folder they are in:
+
+```text
+$ tmxcaliber ccr fetch aws-s3 --control S3.C20 --mode universal --matcher terraform --out ccr-try
+✔ aws-s3  1 rule, 2 files  (release 2adfa6b)
+C:\dreamcentre\trustoncloud\ccr-try
+└─ aws-s3  (release 2adfa6b)
+   └─ S3.C20
+      ├─ metadata.json
+      └─ universal/terraform/vpc_endpoint_org_restriction.rego
+✔ Wrote 2 files for 1 rule from 1 pack to C:\dreamcentre\trustoncloud\ccr-try
+```
+
+The tree is on stdout and the other lines on stderr. Piped or redirected,
+stdout is one written path per line, and messages carry neither color nor
+glyphs the stream cannot encode; `NO_COLOR` turns color off on a terminal too.
 
 A mistyped or renamed name gets a "Did you mean ...?" suggestion, drawn only
-from what your key can list: `ccr fetch ec3` ends its failure line with
+from what your key can list: `ccr fetch ec3` ends its failure with
 `Did you mean aws-ec2?`, and `ccr fetch --service "Gemini Agent Platform"`
 suggests `gcp-vertex`, which `--service` accepts as it is. `ccr packs get` and
 the `threatmodels` commands do the same, and also match a ThreatModel's title.
@@ -266,8 +285,10 @@ before relying on the files. A `PackFailure` carries the `stage` that failed
 on what to do. The stage, code and message tell a damaged archive (stage
 `archive`, where the server says the archive does not match its published
 digest) apart from an outage, and the request id is what support will ask
-for. The command line makes that check for you: it prints one line per failed
-pack on stderr and exits 1. A credential or rate limit failure, or an outage
+for. The command line makes that check for you: it prints each failed pack on
+stderr as soon as it fails and exits 1. To follow a fetch yourself, pass
+`on_pack` to `tmxcaliber.lib.remote.ccr.fetch`: it is called once per pack, in
+the order read, with a `PackOutcome` or the `PackFailure`. A credential or rate limit failure, or an outage
 that reaches the pack list or a manifest, still raises a `RemoteError`. Each
 option that repeats on the command line (`provider`, `service`, `control`,
 `mode`, `matcher` and `file`) takes one string or a list of strings. A `mode`
