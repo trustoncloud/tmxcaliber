@@ -1076,6 +1076,14 @@ def _no_pack_matched(
         filters combine. Its suggestions are, for each provider, the listed
         providers close to it, then, for each service, the listed packs whose
         key or service is close to it, without repeats.
+
+        A pack named by a service, or suggested for one, that the providers
+        asked for leave out is also said to belong to a provider they exclude.
+        A person answers "Did you mean gcp-bigquery?" by typing it as the
+        service and leaving ``--provider aws`` as it was, which would match
+        nothing again with no word about why. The exception is a pack whose
+        provider is itself among the suggestions, because a provider that was
+        mistyped is the one thing to change.
     """
     keys = [key for key in listed if key]
     present = {key.partition("-")[0] for key in keys}
@@ -1084,17 +1092,36 @@ def _no_pack_matched(
         for flag, values in (("provider", providers), ("service", services))
         if values
     ]
-    found: list[str] = []
+    near_providers: list[str] = []
     for value in providers:
-        found += [
+        near_providers += [
             provider for provider in suggest_provider(value) if provider in present
         ]
+    near_packs: list[str] = []
     for value in services:
-        found += suggest(value, keys)
-    suggestions = tuple(dict.fromkeys(found))
+        near_packs += suggest(value, keys)
+    suggestions = tuple(dict.fromkeys([*near_providers, *near_packs]))
     message = f"No pack this key can read matches {' and '.join(named)}."
     if suggestions:
         message += f" {did_you_mean(suggestions)}"
+    # The packs the services name, either as typed (a whole release key is
+    # accepted as a service) or by suggestion, grouped by the provider they
+    # belong to.
+    given = [value for value in services if value in keys]
+    left_out: dict[str, list[str]] = {}
+    for key in dict.fromkeys([*given, *near_packs]):
+        provider = key.partition("-")[0]
+        if providers and provider not in providers and provider not in near_providers:
+            left_out.setdefault(provider, []).append(key)
+    excluded = " or ".join(repr(value) for value in providers)
+    for provider, group in left_out.items():
+        subject = (
+            group[0] if len(group) == 1 else f"{', '.join(group[:-1])} and {group[-1]}"
+        )
+        verb = "belongs" if len(group) == 1 else "belong"
+        message += (
+            f" {subject} {verb} to {provider}, which --provider {excluded} leaves out."
+        )
     return NoPackMatched(message, suggestions=suggestions)
 
 

@@ -1004,6 +1004,37 @@ def test_the_service_a_refusal_suggests_is_accepted_when_typed_back(
     assert {row["releaseKey"] for row in json.loads(captured.out)} == {"gcp-vertex"}
 
 
+def test_the_service_a_refusal_suggests_beside_a_provider_names_that_provider(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client = PackClient(two_packs())
+    first = run_ccr_fetch(
+        _fetch_params(monkeypatch, "--provider", "aws", "--service", "bigquery"),
+        client=client,  # type: ignore[arg-type]
+    )
+    assert first == 1
+    assert capsys.readouterr().err == (
+        Fore.RED + "No pack this key can read matches --provider 'aws' and --service "
+        "'bigquery'. Did you mean gcp-bigquery? gcp-bigquery belongs to gcp, which "
+        "--provider 'aws' leaves out." + Fore.RESET + "\n"
+    )
+
+    # The suggestion typed back, with --provider left as it was.
+    again = run_ccr_fetch(
+        _fetch_params(monkeypatch, "--provider", "aws", "--service", "gcp-bigquery"),
+        client=client,  # type: ignore[arg-type]
+    )
+
+    captured = capsys.readouterr()
+    assert again == 1
+    assert captured.out == ""
+    assert captured.err == (
+        Fore.RED + "No pack this key can read matches --provider 'aws' and --service "
+        "'gcp-bigquery'. gcp-bigquery belongs to gcp, which --provider 'aws' "
+        "leaves out." + Fore.RESET + "\n"
+    )
+
+
 def test_main_reports_a_narrowing_no_pack_has_on_stderr(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

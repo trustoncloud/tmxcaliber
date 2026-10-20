@@ -1687,9 +1687,41 @@ def test_a_pack_list_that_cannot_be_read_leaves_the_fetch_as_it_was(
         pytest.param(
             {"providers": ("aws",), "services": ("bigquery",)},
             "No pack this key can read matches --provider 'aws' and --service "
-            "'bigquery'. Did you mean gcp-bigquery?",
+            "'bigquery'. Did you mean gcp-bigquery? gcp-bigquery belongs to gcp, "
+            "which --provider 'aws' leaves out.",
             ("gcp-bigquery",),
             id="service of another provider",
+        ),
+        pytest.param(
+            {"providers": ("gcp",), "services": ("s3",)},
+            "No pack this key can read matches --provider 'gcp' and --service "
+            "'s3'. Did you mean aws-s3? aws-s3 belongs to aws, which --provider "
+            "'gcp' leaves out.",
+            ("aws-s3",),
+            id="service of a provider the other flag leaves out",
+        ),
+        pytest.param(
+            {"providers": ("aws",), "services": ("gcp-bigquery",)},
+            "No pack this key can read matches --provider 'aws' and --service "
+            "'gcp-bigquery'. gcp-bigquery belongs to gcp, which --provider 'aws' "
+            "leaves out.",
+            (),
+            id="listed key of another provider",
+        ),
+        pytest.param(
+            {"providers": ("aws", "azure"), "services": ("vertex ai",)},
+            "No pack this key can read matches --provider 'aws' or 'azure' and "
+            "--service 'vertex ai'. Did you mean gcp-vertex? gcp-vertex belongs "
+            "to gcp, which --provider 'aws' or 'azure' leaves out.",
+            ("gcp-vertex",),
+            id="several providers left out",
+        ),
+        pytest.param(
+            {"providers": ("gpc",), "services": ("bigquery",)},
+            "No pack this key can read matches --provider 'gpc' and --service "
+            "'bigquery'. Did you mean gcp or gcp-bigquery?",
+            ("gcp", "gcp-bigquery"),
+            id="provider misspelled beside a service",
         ),
         pytest.param(
             {"services": ("nothing", "lambda")},
@@ -1765,6 +1797,43 @@ def test_the_pack_a_refused_service_suggests_can_be_given_back_as_the_service(
 
     assert suggested == "gcp-vertex"
     assert {row["releaseKey"] for row in result.rows} == {suggested}
+
+
+@pytest.mark.parametrize(
+    ("providers", "typed"),
+    [
+        (("aws",), "bigquery"),
+        (("gcp",), "s3"),
+        (("aws",), "Gemini Agent Platform"),
+        (("azure",), "bigqeury"),
+        (("gpc",), "bigquery"),
+    ],
+)
+def test_following_a_suggestion_with_the_provider_still_given_never_dead_ends(
+    providers: tuple[str, ...], typed: str
+) -> None:
+    # A person answers "Did you mean gcp-bigquery?" by typing it as the service
+    # and leaving --provider as it was. That has to read the pack, or say that
+    # the provider excludes it, so that the person can see the way out.
+    client = PackClient(readable_packs("gcp-vertex"))
+
+    with pytest.raises(NoPackMatched) as refused:
+        fetch(client, providers=providers, services=(typed,))  # type: ignore[arg-type]
+    for suggested in refused.value.suggestions:
+        if "-" not in suggested:
+            continue
+        try:
+            result = fetch(client, providers=providers, services=(suggested,))  # type: ignore[arg-type]
+        except NoPackMatched as again:
+            provider = suggested.partition("-")[0]
+            # Either the refusal names the provider that excludes the pack, or
+            # it suggests the provider that was mistyped.
+            assert (
+                f"{suggested} belongs to {provider}, which --provider " in str(again)
+                or provider in again.suggestions
+            ), str(again)
+        else:
+            assert {row["releaseKey"] for row in result.rows} == {suggested}
 
 
 def test_a_pack_the_key_cannot_read_is_never_suggested() -> None:

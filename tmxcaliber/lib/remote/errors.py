@@ -82,7 +82,10 @@ class NoPackMatched(NotFound):
     is of that provider or service. It is a `NotFound`, because the API cannot
     say either whether the pack exists or whether the key may read it. The
     message names the filter and its value, and ends with a suggestion when a
-    listed pack or provider is close to what was typed.
+    listed pack or provider is close to what was typed. When a pack it names
+    belongs to a provider that ``--provider`` leaves out, it says so, because
+    typing the suggestion back with that provider still given would match
+    nothing again.
 
     Args:
         message: Which filters matched nothing, and what was close.
