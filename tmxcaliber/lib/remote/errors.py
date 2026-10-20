@@ -78,8 +78,8 @@ class NotFound(RemoteError):
 class NoPackMatched(NotFound):
     """No pack this key can read matches the provider or service asked for.
 
-    Local rather than served: the pack list answered, and none of its packs
-    is of that provider or service. It is a `NotFound`, because the API cannot
+    Raised here once the pack list has answered, when none of its packs is
+    of that provider or service. It is a `NotFound`, because the API cannot
     say either whether the pack exists or whether the key may read it. The
     message names the filter and its value, and ends with a suggestion when a
     listed pack or provider is close to what was typed. When a pack it names

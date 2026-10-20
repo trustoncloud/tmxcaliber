@@ -21,9 +21,10 @@ from types import MappingProxyType
 from typing import Final
 
 #: The provider each word that names a vendor stands for, as release keys spell
-#: the provider. Such a word names a vendor, never a service, so a leading one
+#: the provider. Such a word names a vendor and no service, so a leading one
 #: is dropped when it stands as its own word and ``Amazon EC2``, ``AWS EC2`` and
-#: ``ec2`` read alike, while ``gcp`` inside ``gcpvertex`` is left alone. It also
+#: ``ec2`` read alike. `normalize` leaves ``gcp`` inside ``gcpvertex`` alone,
+#: and `suggest` still reads it as the provider (`_typed_provider`). It also
 #: tells which provider a person meant, which an alias for another provider's
 #: service must not override.
 _PROVIDER_OF: Final[Mapping[str, str]] = MappingProxyType(
@@ -81,15 +82,17 @@ PROVIDERS: Final[tuple[str, ...]] = ("aws", "azure", "gcp")
 #: each ThreatModel, and the user's note that Google renamed Vertex AI to
 #: Gemini Agent Platform while the ThreatModel and the pack keep the key
 #: ``gcp-vertex``. It is a starting set. The names belong to the ThreatModel
-#: team, which should eventually publish them as metadata so this table can be
-#: read instead of kept by hand.
+#: team, which should eventually publish them as metadata, so that this table
+#: no longer has to be kept by hand.
 #:
 #: The gcp-vertex ThreatModel spells one of its products "Collab Enterprise",
 #: and Google spells it "Colab Enterprise". Both are listed, so each is an exact
 #: name and neither relies on being a near miss of the other.
 #:
-#: A name that people shorten to a word, such as ``kms`` or ``gemini``, is
-#: listed as that word. Spelling rules cannot reach it from the full name.
+#: A name cut short to its first words, such as ``gemini`` for Gemini Agent
+#: Platform, needs no entry, because those words begin an alias that is
+#: listed. A short form that begins no listed name, such as ``kms`` for Cloud
+#: KMS, is listed as it is, since no rule reaches it from the full name.
 _NAMES: Final[Mapping[str, tuple[str, ...]]] = {
     "aws-s3": ("s3", "simple storage service"),
     "aws-ec2": ("ec2", "elastic compute cloud", "elastic block store", "ebs"),
@@ -109,8 +112,6 @@ _NAMES: Final[Mapping[str, tuple[str, ...]]] = {
         "vertex ai",
         "gemini agent platform",
         "gemini enterprise agent platform",
-        "gemini",
-        "gemini enterprise",
         "collab enterprise",
         "colab enterprise",
     ),

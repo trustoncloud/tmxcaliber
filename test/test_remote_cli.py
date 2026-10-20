@@ -950,6 +950,19 @@ def test_an_unknown_pack_ends_with_what_it_probably_meant(
     assert line.endswith("Did you mean aws-ec2?" + Fore.RESET)
 
 
+def test_an_unknown_pack_typed_with_a_release_ends_with_what_it_meant(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "ec3@1611187200")
+
+    status = run_ccr_fetch(params, client=PackClient(readable_packs("aws-ec2")))  # type: ignore[arg-type]
+
+    [line] = capsys.readouterr().err.splitlines()
+    assert status == 1
+    assert line.startswith(Fore.RED + "ec3@1611187200: manifest failed: ")
+    assert line.endswith("Did you mean aws-ec2?" + Fore.RESET)
+
+
 @pytest.mark.parametrize(
     ("words", "expected"),
     [
@@ -1257,7 +1270,7 @@ def test_a_name_the_api_does_not_know_is_followed_by_what_it_probably_meant(
                 http_error(404, MISSING),
                 _listing(("threatmodels", "list"), THREATMODELS),
             ],
-            id="the name is listed, its release is not",
+            id="a listed name with an unknown release",
         ),
         pytest.param(
             ["ccr", "packs", "get", "aws-ec3"],

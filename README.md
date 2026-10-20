@@ -205,23 +205,11 @@ manifest's digest, and writes the selected files to
 `<out>/<release key>/<rule id>/`. Every pack's files come from the one release
 its manifest names.
 
-A mistyped or renamed pack or service name gets a "Did you mean ...?"
-suggestion drawn only from the packs your key can read. `ccr fetch ec3` ends
-its failure line with `Did you mean aws-ec2?`, and `ccr fetch --service
-"Gemini Agent Platform"` exits 1 with `Did you mean gcp-vertex?`, because the
-pack keeps Vertex AI's key. `--service` accepts that whole key (`--service
-gcp-vertex`), so a suggestion can be pasted back as it is. If `--provider` is
-also given and leaves that pack out, the failure says which provider the pack
-belongs to. A name with spaces in it, such as `ccr fetch "Gemini Agent
-Platform"`, is a name to correct like any other. When you give a provider
-first, as in `gcp-storge`, the suggestions stay with that provider whenever one
-of its services is close. `ccr packs get` and the `threatmodels` commands that
-take a ThreatModel do the same from `ccr packs list` and `threatmodels list`,
-and there a ThreatModel is also found by the title it is published under, the
-short form in that title's brackets, or a service it covers, so `threatmodels
-get "Azure Kubernetes Service"` suggests `azure-aks`. From Python, a provider
-or service that matches no readable pack raises `NoPackMatched`, whose
-`suggestions` hold the same names.
+A mistyped or renamed name gets a "Did you mean ...?" suggestion, drawn only
+from what your key can list: `ccr fetch ec3` ends its failure line with
+`Did you mean aws-ec2?`, and `ccr fetch --service "Gemini Agent Platform"`
+suggests `gcp-vertex`, which `--service` accepts as it is. `ccr packs get` and
+the `threatmodels` commands do the same, and also match a ThreatModel's title.
 
 Collections are read in full; paging is handled for you. When the API reports
 that an answer is incomplete (for example, compliance mappings for

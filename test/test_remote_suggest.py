@@ -53,7 +53,9 @@ class ThreatModelRow(NamedTuple):
 
 
 #: Every ThreatModel the catalogue published when this was written, which is the
-#: list the ``threatmodels`` commands suggest from. It is a far larger and more
+#: list the ``threatmodels`` commands suggest from. The rows are the public list
+#: at https://trustoncloud.com/coverage/ (the ids, titles and covered services),
+#: which is where TrustOnCloud publishes this data. It is a far larger and more
 #: crowded set than the packs, and the same name can exist under several
 #: providers, so it shows what the short pack list cannot. Each line holds the
 #: id, the title and the other services it covers, separated by tabs, with the
@@ -423,6 +425,15 @@ def test_a_shortened_name_suggests_its_pack_first(query: str, first: str) -> Non
     assert suggest(query, KEYS)[0] == first
 
 
+@pytest.mark.parametrize("name", ["gemini", "gemini-enterprise"])
+def test_a_name_cut_to_its_first_words_needs_no_alias_of_its_own(name: str) -> None:
+    # The words begin the alias "gemini enterprise agent platform", which the
+    # word-prefix rule reaches, so an entry of their own would be one more name
+    # to keep and would change nothing.
+    assert name not in ALIASES
+    assert suggest(name, KEYS) == ["gcp-vertex"]
+
+
 @pytest.mark.parametrize(
     ("query", "first"),
     [
@@ -583,9 +594,8 @@ def test_an_exact_alias_of_another_provider_survives_among_hundreds(
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
-        # A service of the typed provider that is spelled like the alias, not
-        # just a little like the query, is a real match, and the typed provider
-        # stays with it.
+        # A service of the typed provider spelled as close as an alias has to
+        # be is a real match, and the typed provider stays with it.
         ("amazon kms", "aws"),
         ("aws-iamm", "aws"),
         ("gcp-storge", "gcp"),
@@ -643,7 +653,7 @@ def test_every_threatmodel_is_reached_by_the_title_it_was_published_under(
     names: dict[str, tuple[str, ...]],
 ) -> None:
     # The list rows say what each ThreatModel is called, so its own title typed
-    # back has to lead to it, and not to a stranger's, whatever the provider.
+    # back has to lead to it first, whatever the provider.
     missed = {
         row.title: found[:3]
         for row in THREATMODELS
@@ -761,7 +771,7 @@ def test_names_given_for_the_call_are_added_to_the_aliases_and_replace_none() ->
 def test_a_slip_of_a_key_is_not_outranked_by_a_near_miss_title() -> None:
     # "firestor" is a slip of Firestore, and a near miss (0.82) of the other
     # ThreatModel's title, Filestore. The key is the closer of the two (0.95), so
-    # the published title must weigh in beside the key, not above it.
+    # the published title is weighed beside the key, and the key leads.
     readable = ["gcp-filestore", "gcp-firestore", "gcp-firebase"]
     names = {
         "gcp-filestore": ("Filestore",),

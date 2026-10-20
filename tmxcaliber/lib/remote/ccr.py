@@ -1170,7 +1170,7 @@ def _pack_keys(
 
 
 def _readable_keys(client: TocClient) -> list[str]:
-    """Read the packs this key can read, for suggestions, never failing.
+    """Read the packs this key can read, for suggestions, surviving any failure.
 
     A suggestion is a courtesy on a pack that has already failed, so a list
     that cannot be read costs the caller the suggestion and nothing else.
@@ -1200,6 +1200,13 @@ _PACK_ERRORS: Final[Mapping[str, tuple[type[RemoteError], ...]]] = {
     "verify": (ContractViolation,),
     "extract": (ContractViolation,),
 }
+
+
+#: The codes a manifest that names an unknown pack fails with: the API's own,
+#: and the class name `_failure` gives a bare 404 that arrived without the
+#: API's envelope, from whatever sits in front of it. Either way the name
+#: typed was not found, so either gets a suggestion.
+_UNKNOWN_PACK: Final[frozenset[str]] = frozenset({"not_found", NotFound.__name__})
 
 
 def _failure(
@@ -1359,13 +1366,18 @@ def fetch(
         if isinstance(outcome, PackFailure):
             # Only a name the caller typed can be mistyped. A listed pack that
             # is not found was withdrawn between the two reads.
-            if release_keys and (outcome.stage, outcome.code) == (
-                "manifest",
-                "not_found",
+            if (
+                release_keys
+                and outcome.stage == "manifest"
+                and outcome.code in _UNKNOWN_PACK
             ):
                 if readable is None:
                     readable = _readable_keys(client)
-                outcome = replace(outcome, suggestions=tuple(suggest(key, readable)))
+                # A release pins a version of the name and is no part of it,
+                # as the derived commands read it. A listed name is then left
+                # with nothing to correct, because only its release is wrong.
+                typed = key.partition("@")[0]
+                outcome = replace(outcome, suggestions=tuple(suggest(typed, readable)))
             result.failed[key] = outcome
             continue
         rows, written = outcome

@@ -343,8 +343,8 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
         )
     except NoPackMatched as exc:
         # Said on stderr like a failed pack, because the narrowing is what went
-        # wrong. Printing "[]" and "No rule matched" instead would read as packs
-        # that lack such a rule.
+        # wrong. Printing "[]" and "No rule matched" would read as packs that
+        # lack such a rule.
         print(Fore.RED + str(exc) + Fore.RESET, file=sys.stderr)
         return 1
     if params.out:
@@ -505,8 +505,8 @@ def _then(message: str, sentence: str) -> str:
 
     Returns:
         The two, with a full stop between them when the message has none, which
-        would otherwise run the two sentences together, and not a second one
-        when it has, which would read as a typing slip.
+        would otherwise run the two sentences together. A message that already
+        ends a sentence gets no second stop, which would read as a typing slip.
     """
     stop = "" if message.endswith((".", "!", "?")) else "."
     return f"{message}{stop} {sentence}"

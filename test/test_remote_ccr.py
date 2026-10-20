@@ -1574,6 +1574,39 @@ def test_an_unknown_named_pack_suggests_a_pack_the_key_can_read() -> None:
     )
 
 
+def test_a_release_typed_after_a_pack_is_left_out_of_its_suggestion() -> None:
+    # A release pins a version of the name and is no part of the name, as the
+    # derived commands read it. A listed name with a release can only have
+    # the release wrong, so there is no name to correct.
+    client = PackClient(readable_packs("aws-ec2"))
+
+    result = fetch(client, release_keys=("ec3@1611187200", "aws-ec2@1"))  # type: ignore[arg-type]
+
+    assert result.failed["ec3@1611187200"].suggestions == ("aws-ec2",)
+    assert result.failed["aws-ec2@1"].suggestions == ()
+
+
+class BareNotFound(PackClient):
+    """A client whose unknown packs answer a bare 404, with no envelope."""
+
+    def get(self, path: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
+        self.calls.append((path, dict(params or {})))
+        key = path.rsplit("/", 1)[-1]
+        if key not in self.packs:
+            raise NotFound("The API answered 404.", status=404)
+        return self.packs[key][1]
+
+
+def test_an_unknown_pack_answered_by_a_bare_404_gets_a_suggestion() -> None:
+    # Whatever sits in front of the API can answer 404 without the API's
+    # envelope, and the pack typed is just as unknown.
+    result = fetch(BareNotFound(readable_packs("aws-ec2")), release_keys=("ec3",))  # type: ignore[arg-type]
+
+    failure = result.failed["ec3"]
+    assert (failure.stage, failure.code) == ("manifest", "NotFound")
+    assert failure.suggestions == ("aws-ec2",)
+
+
 def test_the_pack_list_is_read_once_however_many_named_packs_are_unknown() -> None:
     client = PackClient(readable_packs("aws-ec2"))
 
