@@ -435,8 +435,11 @@ def _rank(
 
         The provider a query names is used only to narrow and to order. When
         a candidate of that provider is close, only the candidates of that
-        provider are returned. Otherwise the typed provider is the slip, as in
-        ``aws-bigquery``, and the service decides.
+        provider are returned, with any other provider's candidate whose
+        service is exactly the one typed, after the typed provider's firm
+        matches and within ``limit``, so ``aws-aks`` still offers Azure's AKS.
+        Otherwise the typed provider is the slip, as in ``aws-bigquery``, and
+        the service decides.
 
         A candidate that is only a little like the service (below
         `_ALIAS_CUTOFF`) does not count as close when a name leads to another
@@ -636,7 +639,16 @@ def _rank(
         named_elsewhere = any(_provider(key) != provider for key in exact)
         close = firm if named_elsewhere else set(found)
         if any(_provider(key) == provider for key in close):
-            found = [key for key in found if _provider(key) == provider]
+            # A key whose service is exactly what was typed stays, whatever its
+            # provider, because the typed provider may be the slip, as in
+            # aws-aks for Azure's AKS. It follows the typed provider's firm
+            # matches, as aws-secretsmanager comes before gcp-secretmanager
+            # for aws-secretmanager, and is never cut by the limit.
+            own = [key for key in found if _provider(key) == provider]
+            elsewhere = [key for key in spelled if _provider(key) != provider]
+            room = max(limit - len(elsewhere), 0)
+            sure = [key for key in own if key in firm][:room]
+            found = [*sure, *elsewhere, *(key for key in own if key not in sure)]
     if named:
         meant = {*named, *spelled}
         found = [key for key in found if key in meant] or found
@@ -683,7 +695,10 @@ def suggest(
         its candidates is close by name or by service, the other providers'
         candidates are left out, unless a name leads to another provider's key
         exactly, or another provider's service is the query, and none of the
-        typed provider's candidates is as close as an alias has to be. Empty
+        typed provider's candidates is as close as an alias has to be. A
+        candidate whose service is exactly the one typed is never left out,
+        whatever its provider, and follows the typed provider's firm matches.
+        Empty
         when nothing is close, when the query is itself a candidate, or when
         it names only a vendor, such as ``aws``. When the query is a published
         name exactly, only the candidates that name leads to, and those whose

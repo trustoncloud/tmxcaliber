@@ -261,6 +261,88 @@ def test_two_letters_swapped_count_as_one_slip() -> None:
     assert suggest("aws-kfaka", THREATMODEL_IDS)[0] == "aws-kafka"
 
 
+@pytest.mark.parametrize(
+    ("query", "offered", "own"),
+    [
+        # "aks" is Azure's, and aws-eks is spelled a letter away.
+        ("aws-aks", "azure-aks", "aws-eks"),
+        # "kms" is AWS's, and Google's Cloud KMS is what the alias names.
+        ("gcp-kms", "aws-kms", "gcp-cloudkms"),
+        # "network" is Azure's, and AWS has titles that begin with it.
+        ("aws-network", "azure-network", "aws-networkmanager"),
+        ("gcp-sqs", "aws-sqs", None),
+        ("azure-bigquery", "gcp-bigquery", None),
+    ],
+)
+def test_a_service_another_provider_has_exactly_is_offered_beside_the_typed_ones(
+    query: str, offered: str, own: str | None
+) -> None:
+    # The service typed is exactly that provider's, so the typed provider may
+    # be the slip, and its own close matches may be what was meant as well.
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert offered in found
+    if own is not None:
+        assert own in found
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("aws-secretmanager", ["aws-secretsmanager", "gcp-secretmanager"]),
+        ("gcp-ds", ["gcp-dns", "aws-ds"]),
+    ],
+)
+def test_the_typed_providers_near_match_leads_the_exact_service_of_another(
+    query: str, expected: list[str]
+) -> None:
+    # Each is a slip of the typed provider's own key, and the other provider's
+    # service happens to be spelled exactly as the slip. Both are offered, and
+    # the typed provider's, as near as an alias has to be, comes first.
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert found[: len(expected)] == expected
+
+
+def _exact_elsewhere(candidates: tuple[str, ...]) -> list[tuple[str, str]]:
+    """Type each candidate's service under each other provider.
+
+    Args:
+        candidates: Release keys or ThreatModel ids.
+
+    Returns:
+        Each query and the candidate whose service it spells exactly, leaving
+        out a query that is itself a candidate.
+    """
+    pairs = []
+    for key in candidates:
+        provider, _, service = key.partition("-")
+        for other in ("aws", "azure", "gcp"):
+            query = f"{other}-{service}"
+            if other != provider and query not in candidates:
+                pairs.append((query, key))
+    return pairs
+
+
+@pytest.mark.parametrize(
+    ("candidates", "names"),
+    [(KEYS, None), (THREATMODEL_IDS, None), (THREATMODEL_IDS, THREATMODEL_TITLES)],
+    ids=["packs", "threatmodels", "threatmodels-titled"],
+)
+def test_every_service_typed_under_another_provider_offers_its_key(
+    candidates: tuple[str, ...], names: dict[str, tuple[str, ...]] | None
+) -> None:
+    # Whatever the typed provider has that looks alike, the key whose service
+    # is exactly what was typed is among the suggestions.
+    missed = {
+        query: found
+        for query, key in _exact_elsewhere(candidates)
+        if key not in (found := suggest(query, candidates, extra_aliases=names))
+    }
+
+    assert missed == {}
+
+
 def test_a_tie_puts_the_typed_providers_key_first() -> None:
     # "kms" names Google's Cloud KMS, and aws-eks and azure-eks are spelled
     # alike against it, so the provider typed decides between them.
@@ -426,8 +508,12 @@ def test_a_provider_typed_keeps_the_suggestions_to_it_among_hundreds(
     found = suggest(query, THREATMODEL_IDS)
 
     assert found[0] == first
+    # Another provider's key stays only when its service is exactly the one
+    # typed, as aws-kms is for gcp-kms.
     provider = first.partition("-")[0]
-    assert {key.partition("-")[0] for key in found} == {provider}
+    typed = normalize(query)
+    others = [key for key in found if key.partition("-")[2] != typed]
+    assert {key.partition("-")[0] for key in others} <= {provider}
 
 
 def test_a_cloud_prefixed_service_still_reaches_its_threatmodel() -> None:
@@ -599,10 +685,13 @@ def test_a_name_the_list_publishes_leads_to_its_threatmodel_first(
     found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES)
 
     assert found[0] == expected
-    # The typed AWS is a clue too, so no other provider's ThreatModel follows.
+    # The typed AWS is a clue too, so no other provider's ThreatModel follows
+    # unless its service is exactly the name typed, as Azure's PrivateLink is.
     provider = query.split()[0].lower()
+    typed = normalize(query)
+    others = [key for key in found if key.partition("-")[2] != typed]
     if provider in ("aws", "azure"):
-        assert {key.partition("-")[0] for key in found} == {provider}
+        assert {key.partition("-")[0] for key in others} <= {provider}
 
 
 @pytest.mark.parametrize(
@@ -783,11 +872,11 @@ def test_a_typed_provider_whose_titles_begin_with_a_service_keeps_the_provider(
 ) -> None:
     # Azure's service is exactly "network", and a title of each other provider
     # begins with that word. Typing either of them names the provider as well,
-    # and a title of its own is a firm answer to Azure's exact service.
+    # so its own titles stay, and Azure's exact service is offered beside them.
     found = suggest(f"{provider}-network", THREATMODEL_IDS, extra_aliases=names)
 
-    assert found
-    assert {key.partition("-")[0] for key in found} == {provider}
+    assert "azure-network" in found
+    assert {key.partition("-")[0] for key in found} == {provider, "azure"}
 
 
 @PUBLISHED_AS
