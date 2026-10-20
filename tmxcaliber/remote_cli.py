@@ -324,8 +324,10 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
     JSON reads like the files themselves, so without --out the command says it
     was only a preview and how to write the selection, and with --out it says
     how many files it wrote and the folder they are in, in full, or that it
-    wrote nothing. Stdout stays the results alone: the JSON, or one path per
-    line.
+    wrote nothing. Stdout stays the results alone: the JSON, or the files
+    written. Those are one path per line, as a script reads them, unless
+    stdout is a terminal, where a person reads them as a tree under the
+    folder, by pack and rule.
 
     Args:
         params: The parsed arguments.
@@ -344,13 +346,16 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
             "Name packs, or narrow by --provider and --service, not both."
         )
         return 2
+    finished: list[PackOutcome] = []
 
     def on_pack(key: str, outcome: PackOutcome | PackFailure) -> None:
         # Looked up for each pack, so a stream replaced meanwhile is honored.
         err = console.stderr()
         if isinstance(outcome, PackFailure):
             report_pack_failure(err, key, outcome)
-        elif params.out and outcome.rows:
+            return
+        finished.append(outcome)
+        if params.out and outcome.rows:
             release = (
                 f"  (release {outcome.release_id[:7]})" if outcome.release_id else ""
             )
@@ -383,12 +388,45 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
         console.stderr().error(exc)
         return 1
     if params.out:
-        for path in result.written:
-            print(path)
+        stdout = console.stdout()
+        if not stdout.terminal:
+            for path in result.written:
+                print(path)
+        elif result.written:
+            stdout.tree(os.path.abspath(params.out), _written_tree(finished))
     else:
         print(json.dumps(result.rows, indent=2))
     _report_outcome(console.stderr(), result, params.out)
     return 1 if result.failed else 0
+
+
+def _written_tree(finished: list[PackOutcome]) -> list[console.Branch]:
+    """Arrange what a fetch wrote as a tree under the output folder.
+
+    Args:
+        finished: The packs that completed, in the order they were read.
+
+    Returns:
+        A branch per pack that wrote anything, labeled with its release, then
+        a branch per rule that had files, in manifest order, then one per file,
+        relative to the rule's folder, in the order written.
+    """
+    return [
+        console.Branch(
+            outcome.release_key
+            + (f"  (release {outcome.release_id[:7]})" if outcome.release_id else ""),
+            tuple(
+                console.Branch(
+                    str(row["ruleId"]),
+                    tuple(console.Branch(str(file)) for file in row["files"]),
+                )
+                for row in outcome.rows
+                if row["files"]
+            ),
+        )
+        for outcome in finished
+        if outcome.written
+    ]
 
 
 def _report_outcome(err: console.Console, result: FetchResult, out: str) -> None:

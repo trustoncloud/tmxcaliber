@@ -14,7 +14,7 @@ from typing import Any, NoReturn
 import pytest
 
 from tmxcaliber import cli as cli_module
-from tmxcaliber import remote_cli
+from tmxcaliber import console, remote_cli
 from tmxcaliber.lib.remote.ccr import PackFailure
 from tmxcaliber.lib.remote.client import TocClient
 from tmxcaliber.lib.remote.config import Settings
@@ -32,6 +32,7 @@ from tmxcaliber.remote_cli import (
     run_ccr_fetch,
 )
 
+from .test_console import Stream
 from .test_remote_api import page
 from .test_remote_assemble import DETAIL, DFD, PARTS, _at_release
 from .test_remote_ccr import UNKNOWN_HINT, PackClient, readable_packs, two_packs
@@ -1301,6 +1302,101 @@ def test_out_reports_only_the_packs_that_had_something_selected(
         "\u2714 aws-s3  1 rule, 2 files  (release d07d6ae)",
         f"\u2714 Wrote 2 files for 1 rule from 1 pack to {tmp_path}",
     ]
+
+
+def terminal_stdout(monkeypatch: pytest.MonkeyPatch) -> Stream:
+    """Put a UTF-8 terminal in place of stdout.
+
+    Args:
+        monkeypatch: Replaces stdout, and the Windows console fix, which could
+            replace stdout again on an older console.
+
+    Returns:
+        The terminal, which keeps what was written to it.
+    """
+    stream = Stream(tty=True)
+    monkeypatch.setattr(sys, "stdout", stream)
+    monkeypatch.setattr(console, "_windows_fixed", True)
+    return stream
+
+
+def test_out_on_a_terminal_shows_the_files_written_as_a_tree(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    stdout = terminal_stdout(monkeypatch)
+    params = _fetch_params(monkeypatch, "--out", "rules")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    assert status == 0
+    # The root is the folder in full, packs come in the order read, rules in
+    # manifest order and files as each rule's folder holds them.
+    assert stdout.getvalue() == (
+        f"{tmp_path / 'rules'}\n"
+        "\u251c\u2500 aws-s3  (release d07d6ae)\n"
+        "\u2502  \u251c\u2500 S3.C20\n"
+        "\u2502  \u2502  \u251c\u2500 metadata.json\n"
+        "\u2502  \u2502  \u2514\u2500 allowlist/cloud/check.rego\n"
+        "\u2502  \u2514\u2500 S3.C21\n"
+        "\u2502     \u2514\u2500 metadata.json\n"
+        "\u2514\u2500 gcp-bigquery  (release d07d6ae)\n"
+        "   \u2514\u2500 Bigquery.C102\n"
+        "      \u2514\u2500 metadata.json\n"
+    )
+    assert capsys.readouterr().err.splitlines()[-1].startswith("\u2714 Wrote 4 files")
+
+
+def test_out_on_a_terminal_that_wrote_nothing_draws_no_tree(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stdout = terminal_stdout(monkeypatch)
+    params = _fetch_params(
+        monkeypatch, "--control", "Nothing.C1", "--out", str(tmp_path)
+    )
+
+    run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    assert stdout.getvalue() == ""
+
+
+def test_out_into_a_pipe_prints_one_path_per_line_as_before(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A script reads these, so they are the paths as given, one per line,
+    # with nothing else on stdout.
+    monkeypatch.chdir(tmp_path)
+    params = _fetch_params(monkeypatch, "--out", "rules")
+
+    run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    rules = pathlib.Path("rules")
+    assert capsys.readouterr().out == "".join(
+        f"{path}\n"
+        for path in (
+            rules / "aws-s3" / "S3.C20" / "metadata.json",
+            rules / "aws-s3" / "S3.C20" / "allowlist" / "cloud" / "check.rego",
+            rules / "aws-s3" / "S3.C21" / "metadata.json",
+            rules / "gcp-bigquery" / "Bigquery.C102" / "metadata.json",
+        )
+    )
+
+
+def test_a_preview_on_a_terminal_prints_the_same_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "--control", "S3.C20")
+    run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+    piped = capsys.readouterr().out
+    stdout = terminal_stdout(monkeypatch)
+
+    run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    assert stdout.getvalue() == piped
 
 
 def test_main_runs_fetch_and_exits_with_its_status(
