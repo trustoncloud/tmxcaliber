@@ -506,6 +506,14 @@ def output_result(
             raise TypeError("Binary output needs a file to write to")
         with open(output_param, "wb") as file:
             file.write(result)
+        # On stderr, and with the whole path, so the reader knows the archive
+        # arrived and where it is wherever the command was run.
+        console.stderr().status(
+            "ok",
+            "green",
+            f"Wrote {console.plural(len(result), 'byte')} to "
+            f"{os.path.abspath(output_param)}",
+        )
         return
 
     removed_json = output_removed_json or {}

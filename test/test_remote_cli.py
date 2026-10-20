@@ -745,6 +745,23 @@ def test_the_archive_command_writes_the_bytes(tmp_path: pathlib.Path) -> None:
     ]
 
 
+def test_the_archive_command_says_how_much_it_wrote_and_where(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A relative --output still names the file wherever the command was run.
+    monkeypatch.chdir(tmp_path)
+    archive = bytes(range(256)) * 360 + b"PK"
+
+    cli_module.output_result("pack.zip", archive, "bytes")
+
+    captured = capsys.readouterr()
+    assert (tmp_path / "pack.zip").read_bytes() == archive
+    assert captured.out == ""
+    assert captured.err == f"✔ Wrote 92,162 bytes to {tmp_path / 'pack.zip'}\n"
+
+
 def _fetch_params(monkeypatch: pytest.MonkeyPatch, *words: str) -> Namespace:
     """Parse a `ccr fetch` command through the real parser.
 
@@ -826,7 +843,117 @@ def test_fetch_with_no_match_prints_an_empty_list_and_a_note(
     captured = capsys.readouterr()
     assert status == 0
     assert json.loads(captured.out) == []
-    assert "No rule matched" in captured.err
+    assert captured.err == "ⓘ No rule matched the filters given.\n"
+
+
+def test_fetch_with_no_match_and_out_says_nothing_was_written(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    params = _fetch_params(
+        monkeypatch, "--control", "Nothing.C1", "--out", str(tmp_path)
+    )
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert captured.out == ""
+    assert captured.err == (
+        "ⓘ No rule matched the filters given. Nothing was written.\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("words", "counts"),
+    [
+        (("aws-s3", "--control", "S3.C21"), "1 rule and 1 file selected from 1 pack"),
+        (("aws-s3", "--control", "S3.C20"), "1 rule and 2 files selected from 1 pack"),
+        ((), "3 rules and 4 files selected from 2 packs"),
+    ],
+    ids=["one of each", "two files", "many of each"],
+)
+def test_a_preview_says_nothing_was_written_and_how_to_write(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    words: tuple[str, ...],
+    counts: str,
+) -> None:
+    # A preview's JSON reads like the files themselves, so stderr says plainly
+    # that nothing was downloaded, while stdout stays pure JSON.
+    params = _fetch_params(monkeypatch, *words)
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert isinstance(json.loads(captured.out), list)
+    assert captured.err == (
+        f"ⓘ Preview only, nothing was written: {counts}.\n"
+        "  Add --out DIR to download and write them.\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("words", "counts"),
+    [
+        (("aws-s3", "--file", "*.rego"), "1 file for 1 rule from 1 pack"),
+        ((), "4 files for 3 rules from 2 packs"),
+    ],
+    ids=["one of each", "many of each"],
+)
+def test_out_says_what_it_wrote_and_names_the_folder_in_full(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    words: tuple[str, ...],
+    counts: str,
+) -> None:
+    # Given as a relative folder, so the line has to resolve it for the reader
+    # to find the files, while stdout keeps the paths as they were given.
+    monkeypatch.chdir(tmp_path)
+    params = _fetch_params(monkeypatch, *words, "--out", "rules")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert all(line.startswith("rules") for line in captured.out.splitlines())
+    assert captured.err.splitlines()[-1] == (
+        f"✔ Wrote {counts} to {tmp_path / 'rules'}"
+    )
+
+
+def test_out_with_every_selected_pack_failed_says_nothing_was_written(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = PackClient(two_packs())
+    client.archive_errors["aws-s3"] = ServiceUnavailable(
+        "Refused.", code="unavailable", status=503
+    )
+    params = _fetch_params(monkeypatch, "--control", "S3.C20", "--out", str(tmp_path))
+
+    status = run_ccr_fetch(params, client=client)  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    assert status == 1
+    assert captured.out == ""
+    assert captured.err.splitlines()[0].startswith("✖ aws-s3: archive failed: ")
+    assert captured.err.splitlines()[-1] == f"✖ Nothing was written to {tmp_path}"
+
+
+def test_the_fetch_help_says_it_only_previews_without_out(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = " ".join(_help_of(monkeypatch, capsys, ["ccr", "fetch"]).split())
+
+    assert "Without --out it only previews" in text
+    assert "prints the selection as JSON and writes nothing" in text
+    assert "downloads each pack's archive and writes the selected files under " in text
+    assert "DIR/<release key>/<rule id>/" in text
 
 
 # The tests above that parse a command only read the namespace, so each filter
@@ -1038,7 +1165,8 @@ def test_the_service_a_refusal_suggests_is_accepted_when_typed_back(
 
     captured = capsys.readouterr()
     assert status == 0
-    assert captured.err == ""
+    # Only the note that this was a preview, and no refusal.
+    assert captured.err.startswith("ⓘ Preview only, nothing was written: ")
     assert {row["releaseKey"] for row in json.loads(captured.out)} == {"gcp-vertex"}
 
 

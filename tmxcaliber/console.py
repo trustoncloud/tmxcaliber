@@ -74,6 +74,20 @@ INDENT: Final[str] = "    "
 _windows_fixed = False
 
 
+def plural(number: int, noun: str) -> str:
+    """Count something in words.
+
+    Args:
+        number: How many.
+        noun: What, in the singular, such as ``file``.
+
+    Returns:
+        The number with thousands separators and the noun, such as ``1 file``
+        or ``92,345 bytes``.
+    """
+    return f"{number:,} {noun}{'' if number == 1 else 's'}"
+
+
 def _fix_windows_console() -> None:
     """Let an older Windows console render escape codes, once per process.
 

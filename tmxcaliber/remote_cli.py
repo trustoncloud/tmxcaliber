@@ -28,7 +28,14 @@ from pathlib import Path
 from typing import Any
 
 from . import console
-from .lib.remote.ccr import MATCHERS, MODES, PackFailure, RuleFilter, fetch
+from .lib.remote.ccr import (
+    MATCHERS,
+    MODES,
+    FetchResult,
+    PackFailure,
+    RuleFilter,
+    fetch,
+)
 from .lib.remote.client import TocClient
 from .lib.remote.config import (
     SECTION,
@@ -248,11 +255,13 @@ def _add_ccr_fetch(ccr: _SubParsersAction[ArgumentParser]) -> None:
     Args:
         ccr: The `ccr` group's subparser action.
     """
-    summary = (
-        "Select CCR rules by pack, control, mode, matcher or file, and write "
-        "their Rego and metadata with --out."
+    summary = "Select CCR rules by pack, control, mode, matcher or file."
+    description = (
+        f"{summary} Without --out it only previews: it prints the selection as "
+        "JSON and writes nothing. With --out it downloads each pack's archive "
+        "and writes the selected files under DIR/<release key>/<rule id>/."
     )
-    parser = ccr.add_parser("fetch", help=summary, description=summary)
+    parser = ccr.add_parser("fetch", help=summary, description=description)
     parser.add_argument(
         "release_keys",
         nargs="*",
@@ -292,8 +301,9 @@ def _add_ccr_fetch(ccr: _SubParsersAction[ArgumentParser]) -> None:
         "--out",
         default="",
         metavar="DIR",
-        help="write the selected files to DIR/<release key>/<rule id>/. "
-        "Prints the selected rules as JSON when omitted.",
+        help="download each pack's archive and write the selected files under "
+        "DIR/<release key>/<rule id>/. Without it the command only previews: "
+        "it prints the selection as JSON and writes nothing.",
     )
     parser.set_defaults(ccr_fetch=True)
 
@@ -305,6 +315,13 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
     another pack failed, and each failed pack gets a block on stderr saying
     at which stage it failed, why and what to do, ending with the packs it
     was probably meant to be when it was named and is unknown.
+
+    **The last line on stderr says whether anything was written.** A preview's
+    JSON reads like the files themselves, so without --out the command says it
+    was only a preview and how to write the selection, and with --out it says
+    how many files it wrote and the folder they are in, in full, or that it
+    wrote nothing. Stdout stays the results alone: the JSON, or one path per
+    line.
 
     Args:
         params: The parsed arguments.
@@ -349,11 +366,57 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
     else:
         print(json.dumps(result.rows, indent=2))
     err = console.stderr()
-    if not result.rows and not result.failed:
-        err.status("info", "yellow", "No rule matched the filters given.")
     for key, failure in result.failed.items():
         report_pack_failure(err, key, failure)
+    _report_outcome(err, result, params.out)
     return 1 if result.failed else 0
+
+
+def _report_outcome(err: console.Console, result: FetchResult, out: str) -> None:
+    """Say, last, whether the fetch wrote anything and where.
+
+    No line ends with a full stop right after a path, so the path is never
+    read as ending in one.
+
+    Args:
+        err: Where to say it.
+        result: What the fetch found and wrote.
+        out: The folder given with --out, or empty for a preview.
+    """
+    if not result.rows and not result.failed:
+        nothing = " Nothing was written." if out else ""
+        err.status("info", "yellow", f"No rule matched the filters given.{nothing}")
+        return
+    if not out:
+        if result.rows:
+            files = sum(len(row["files"]) for row in result.rows)
+            packs = {row["releaseKey"] for row in result.rows}
+            err.status(
+                "info",
+                "yellow",
+                "Preview only, nothing was written: "
+                f"{console.plural(len(result.rows), 'rule')} and "
+                f"{console.plural(files, 'file')} selected from "
+                f"{console.plural(len(packs), 'pack')}.",
+                "Add --out DIR to download and write them.",
+            )
+        return
+    # Wherever the command was run, the reader can find the files from here.
+    where = os.path.abspath(out)
+    if not result.written:
+        err.status("fail", "red", f"Nothing was written to {where}")
+        return
+    # A failed pack has no rows, so these are the rules whose files were
+    # written, counted from what reached the disk.
+    rules = [row for row in result.rows if row["files"]]
+    packs = {row["releaseKey"] for row in rules}
+    err.status(
+        "ok",
+        "green",
+        f"Wrote {console.plural(len(result.written), 'file')} for "
+        f"{console.plural(len(rules), 'rule')} from "
+        f"{console.plural(len(packs), 'pack')} to {where}",
+    )
 
 
 def report_pack_failure(err: console.Console, key: str, failure: PackFailure) -> None:
