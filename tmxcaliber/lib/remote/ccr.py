@@ -969,6 +969,25 @@ _GENERAL_HINT: Final[str] = (
 
 
 @dataclass(frozen=True)
+class FailureParts:
+    """The pieces a failed pack is told in, as `PackFailure.parts` splits them.
+
+    Attributes:
+        headline: ``<stage> failed: <message>``.
+        details: The code, the HTTP status, the request id and the release,
+            each when known, joined by commas; empty when none is.
+        hint: What to do about it, in one sentence.
+        did_you_mean: ``Did you mean ...?`` when there are suggestions, else
+            empty.
+    """
+
+    headline: str
+    details: str
+    hint: str
+    did_you_mean: str
+
+
+@dataclass(frozen=True)
 class PackFailure:
     """One pack that could not be fetched, and why.
 
@@ -1016,15 +1035,16 @@ class PackFailure:
             or _GENERAL_HINT
         )
 
-    def __str__(self) -> str:
-        """Render the failure as the line ``ccr fetch`` prints for it.
+    def parts(self) -> FailureParts:
+        """Split the failure into the pieces it is told in.
+
+        ``str()`` joins them into one line, and the command line sets each on
+        a line of its own, so both are built from this one place and cannot
+        drift apart.
 
         Returns:
-            ``<stage> failed: <message> [<code>, HTTP <status>, request <id>,
-            release <id>]. <hint>``, leaving out each detail that is not known,
-            and the brackets when none is, then ``Did you mean ...?`` when
-            there are suggestions. The release id is cut to seven characters,
-            which tell releases apart as a short commit hash does.
+            The pieces. The release id is cut to seven characters, which tell
+            releases apart as a short commit hash does.
         """
         details = [
             detail
@@ -1036,18 +1056,32 @@ class PackFailure:
             )
             if detail
         ]
-        if details:
-            line = (
-                f"{self.stage} failed: {self.message} [{', '.join(details)}]. "
-                f"{self.hint}"
-            )
+        return FailureParts(
+            headline=f"{self.stage} failed: {self.message}",
+            details=", ".join(details),
+            hint=self.hint,
+            did_you_mean=did_you_mean(self.suggestions) if self.suggestions else "",
+        )
+
+    def __str__(self) -> str:
+        """Render the failure as one line.
+
+        Returns:
+            ``<stage> failed: <message> [<code>, HTTP <status>, request <id>,
+            release <id>]. <hint>``, leaving out each detail that is not known,
+            and the brackets when none is, then ``Did you mean ...?`` when
+            there are suggestions.
+        """
+        parts = self.parts()
+        if parts.details:
+            line = f"{parts.headline} [{parts.details}]. {parts.hint}"
         else:
             # The message is a sentence of its own, so a second full stop after
             # it would read as a typing slip.
             stop = "" if self.message.endswith((".", "!", "?")) else "."
-            line = f"{self.stage} failed: {self.message}{stop} {self.hint}"
-        if self.suggestions:
-            line += f" {did_you_mean(self.suggestions)}"
+            line = f"{parts.headline}{stop} {parts.hint}"
+        if parts.did_you_mean:
+            line += f" {parts.did_you_mean}"
         return line
 
 
@@ -1104,7 +1138,9 @@ def _no_pack_matched(
         one filter joined by "or" and different filters by "and", as the
         filters combine. Its suggestions are, for each provider, the listed
         providers close to it, then, for each service, the listed packs whose
-        key or service is close to it, without repeats.
+        key or service is close to it, without repeats, and its
+        ``did_you_mean`` is the sentence that names them, which ``str()``
+        puts after the message.
 
         A pack named by a service, or suggested for one, that the providers
         asked for leave out is also said to belong to a provider they exclude.
@@ -1131,8 +1167,6 @@ def _no_pack_matched(
         near_packs += suggest(value, keys)
     suggestions = tuple(dict.fromkeys([*near_providers, *near_packs]))
     message = f"No pack this key can read matches {' and '.join(named)}."
-    if suggestions:
-        message += f" {did_you_mean(suggestions)}"
     # The packs the services name, either as typed (a whole release key is
     # accepted as a service) or by suggestion, grouped by the provider they
     # belong to.
@@ -1143,15 +1177,24 @@ def _no_pack_matched(
         if providers and provider not in providers and provider not in near_providers:
             left_out.setdefault(provider, []).append(key)
     excluded = " or ".join(repr(value) for value in providers)
+    notes: list[str] = []
     for provider, group in left_out.items():
         subject = (
             group[0] if len(group) == 1 else f"{', '.join(group[:-1])} and {group[-1]}"
         )
         verb = "belongs" if len(group) == 1 else "belong"
-        message += (
-            f" {subject} {verb} to {provider}, which --provider {excluded} leaves out."
+        notes.append(
+            f"{subject} {verb} to {provider}, which --provider {excluded} leaves out."
         )
-    return NoPackMatched(message, suggestions=suggestions)
+    if suggestions:
+        # What is said about a suggested pack's provider belongs with the
+        # suggestion, so it follows it on the line the command line gives it.
+        return NoPackMatched(
+            message,
+            suggestions=suggestions,
+            did_you_mean=" ".join([did_you_mean(suggestions), *notes]),
+        )
+    return NoPackMatched(" ".join([message, *notes]), suggestions=suggestions)
 
 
 def _pack_keys(

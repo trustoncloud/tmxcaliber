@@ -22,6 +22,11 @@ class RemoteError(Exception):
         code: The API's error code, or a local code for a client-side failure.
         request_id: The server-generated request identifier, when one arrived.
         status: The HTTP status, when the failure reached one.
+        did_you_mean: A sentence that names what the caller probably meant,
+            such as ``Did you mean aws-ec2?``, with anything said about it,
+            or empty when nothing is close. It is kept apart from the message
+            so the command line can set it on a line of its own, while
+            ``str()`` still reads as one line.
     """
 
     def __init__(
@@ -31,19 +36,48 @@ class RemoteError(Exception):
         code: str = "",
         request_id: str | None = None,
         status: int | None = None,
+        did_you_mean: str = "",
     ) -> None:
         self.code = code
         self.request_id = request_id
         self.status = status
+        self.did_you_mean = did_you_mean
         super().__init__(message)
+
+    @property
+    def headline(self) -> str:
+        """Render the failure without its suggestion.
+
+        Returns:
+            The message, followed by the request id when the server sent one,
+            for a printer that writes ``did_you_mean`` after it on its own.
+        """
+        return self._render("")
 
     def __str__(self) -> str:
         """Render the failure with the identifier support will ask for.
 
         Returns:
-            The message, followed by the request id when the server sent one.
+            The message, then ``did_you_mean`` as a sentence of its own when
+            there is one, then the request id when the server sent one.
+        """
+        return self._render(self.did_you_mean)
+
+    def _render(self, did_you_mean: str) -> str:
+        """Render the message, a suggestion when given, and the request id.
+
+        Args:
+            did_you_mean: The suggestion to follow the message, or empty.
+
+        Returns:
+            The text. A full stop is put between a message that has none and
+            the suggestion, which would otherwise run the two sentences
+            together, and none after a message that already ends a sentence.
         """
         base = super().__str__()
+        if did_you_mean:
+            stop = "" if not base or base.endswith((".", "!", "?")) else "."
+            base = f"{base}{stop} {did_you_mean}".strip()
         if self.request_id:
             return f"{base} (request {self.request_id})"
         return base
@@ -88,13 +122,21 @@ class NoPackMatched(NotFound):
     nothing again.
 
     Args:
-        message: Which filters matched nothing, and what was close.
+        message: Which filters matched nothing.
         suggestions: The listed packs or providers that were close, best
             first; empty when none was.
+        did_you_mean: The sentence that names them, with what it says about
+            a provider ``--provider`` leaves out; empty when none was close.
     """
 
-    def __init__(self, message: str, *, suggestions: tuple[str, ...] = ()) -> None:
-        super().__init__(message, code="no_pack_matched")
+    def __init__(
+        self,
+        message: str,
+        *,
+        suggestions: tuple[str, ...] = (),
+        did_you_mean: str = "",
+    ) -> None:
+        super().__init__(message, code="no_pack_matched", did_you_mean=did_you_mean)
         self.suggestions = suggestions
 
 

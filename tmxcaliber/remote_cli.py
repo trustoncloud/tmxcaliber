@@ -27,9 +27,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from colorama import Fore
-
-from .lib.remote.ccr import MATCHERS, MODES, RuleFilter, fetch
+from . import console
+from .lib.remote.ccr import MATCHERS, MODES, PackFailure, RuleFilter, fetch
 from .lib.remote.client import TocClient
 from .lib.remote.config import (
     SECTION,
@@ -303,9 +302,9 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
     """Execute `ccr fetch`.
 
     The files written for the packs that completed are printed even when
-    another pack failed, and each failed pack gets one line on stderr saying
-    at which stage it failed and why, ending with the packs it was probably
-    meant to be when it was named and is unknown.
+    another pack failed, and each failed pack gets a block on stderr saying
+    at which stage it failed, why and what to do, ending with the packs it
+    was probably meant to be when it was named and is unknown.
 
     Args:
         params: The parsed arguments.
@@ -320,11 +319,8 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
             credential failure.
     """
     if params.release_keys and (params.provider or params.service):
-        print(
-            Fore.RED
-            + "Name packs, or narrow by --provider and --service, not both."
-            + Fore.RESET,
-            file=sys.stderr,
+        console.stderr().failure(
+            "Name packs, or narrow by --provider and --service, not both."
         )
         return 2
     try:
@@ -345,21 +341,36 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
         # Said on stderr like a failed pack, because the narrowing is what went
         # wrong. Printing "[]" and "No rule matched" would read as packs that
         # lack such a rule.
-        print(Fore.RED + str(exc) + Fore.RESET, file=sys.stderr)
+        console.stderr().error(exc)
         return 1
     if params.out:
         for path in result.written:
             print(path)
     else:
         print(json.dumps(result.rows, indent=2))
+    err = console.stderr()
     if not result.rows and not result.failed:
-        print(
-            Fore.YELLOW + "No rule matched the filters given." + Fore.RESET,
-            file=sys.stderr,
-        )
+        err.status("info", "yellow", "No rule matched the filters given.")
     for key, failure in result.failed.items():
-        print(Fore.RED + f"{key}: {failure}" + Fore.RESET, file=sys.stderr)
+        report_pack_failure(err, key, failure)
     return 1 if result.failed else 0
+
+
+def report_pack_failure(err: console.Console, key: str, failure: PackFailure) -> None:
+    """Write a failed pack as a block, from the parts its one line is made of.
+
+    Args:
+        err: Where to write it.
+        key: The pack, as it was asked for.
+        failure: Why it failed.
+    """
+    parts = failure.parts()
+    details = [f"[{parts.details}]"] if parts.details else []
+    err.failure(
+        f"{key}: {parts.headline}",
+        [*details, parts.hint],
+        parts.did_you_mean,
+    )
 
 
 def selected_route(params: Namespace) -> Route | None:
@@ -389,10 +400,7 @@ def _report_envelope(envelope: Mapping[str, Any]) -> None:
     for name, value in envelope.items():
         if value in (None, "", [], {}):
             continue
-        print(
-            Fore.YELLOW + f"{name}: {json.dumps(value)}" + Fore.RESET,
-            file=sys.stderr,
-        )
+        console.stderr().line(f"{name}: {json.dumps(value)}", "yellow")
 
 
 #: Stored-endpoint notes this process has already written. A process is one
@@ -419,7 +427,7 @@ def _note_stored_endpoint(settings: Settings) -> None:
     if said in _noted:
         return
     _noted.add(said)
-    print(Fore.YELLOW + settings.stored_endpoint_note + Fore.RESET, file=sys.stderr)
+    console.stderr().line(settings.stored_endpoint_note, "yellow")
 
 
 def connect(env: Mapping[str, str] | None = None) -> TocClient:
@@ -494,22 +502,6 @@ def _published_names(row: Mapping[str, Any], title_field: str) -> tuple[str, ...
         for service in row[field]
     ]
     return alternative_names(str(row.get(title_field) or ""), *covered)
-
-
-def _then(message: str, sentence: str) -> str:
-    """Follow a message with a sentence of its own.
-
-    Args:
-        message: What an error said.
-        sentence: What to add.
-
-    Returns:
-        The two, with a full stop between them when the message has none, which
-        would otherwise run the two sentences together. A message that already
-        ends a sentence gets no second stop, which would read as a typing slip.
-    """
-    stop = "" if message.endswith((".", "!", "?")) else "."
-    return f"{message}{stop} {sentence}"
 
 
 def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
@@ -595,9 +587,10 @@ def run_api_command(
 
     Raises:
         NotFound: If the API does not know the ThreatModel or pack named.
-            When one this key can list is close to the name typed, the
-            message ends with ``Did you mean ...?``, and the code, status and
-            request id stay the API's. A ThreatModel typed in a shape no
+            When one this key can list is close to the name typed, its
+            ``did_you_mean`` holds the ``Did you mean ...?`` sentence, which
+            ``str()`` puts after the message, and the code, status and request
+            id stay the API's. A ThreatModel typed in a shape no
             reference has, such as ``Amazon EC2``, is refused before the API
             is asked, and raises this too, with no status or request id, when
             a listed one is close to it.
@@ -618,10 +611,11 @@ def run_api_command(
         if not sentence:
             raise
         raise NotFound(
-            _then(Exception.__str__(exc), sentence),
+            Exception.__str__(exc),
             code=exc.code,
             request_id=exc.request_id,
             status=exc.status,
+            did_you_mean=sentence,
         ) from exc
     except ValueError as exc:
         # A ThreatModel typed as "Amazon EC2" is refused by the reference
@@ -637,7 +631,7 @@ def run_api_command(
         if not sentence:
             raise
         # The API never saw the name, so there is no status or request id.
-        raise NotFound(_then(str(exc), sentence), code="not_found") from exc
+        raise NotFound(str(exc), code="not_found", did_you_mean=sentence) from exc
     if route.paged:
         _report_envelope(answer.envelope)
     if incomplete is not None:
@@ -789,10 +783,11 @@ def run_init(
     if environ.get("TOC_API_KEY", "").strip():
         # It silently wins over the file, so someone who just ran this and
         # still sees the old tenant would have no way to find out why.
-        print(
-            Fore.YELLOW + "Note: TOC_API_KEY is set, and it takes precedence over "
-            "this file. The check below is of the key just stored; commands will "
-            "use the environment one until you unset it." + Fore.RESET
+        console.stdout().line(
+            "Note: TOC_API_KEY is set, and it takes precedence over this file. "
+            "The check below is of the key just stored; commands will use the "
+            "environment one until you unset it.",
+            "yellow",
         )
 
     return _verify(settings, client)
@@ -824,7 +819,7 @@ def _verify(settings: Settings, client: TocClient | None) -> int:
         api = client or TocClient(settings)
         who = api.get("/v1/me")
     except RemoteError as exc:
-        print(Fore.YELLOW + f"Stored, but the key did not work: {exc}" + Fore.RESET)
+        console.stdout().line(f"Stored, but the key did not work: {exc}", "yellow")
         print(
             "If this says not found, the API may not be enabled for your "
             "organization yet, or your address may not be on its allow list."

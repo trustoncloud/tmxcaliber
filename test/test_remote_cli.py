@@ -11,10 +11,10 @@ from collections.abc import Iterator, Mapping
 from typing import Any, NoReturn
 
 import pytest
-from colorama import Fore
 
 from tmxcaliber import cli as cli_module
 from tmxcaliber import remote_cli
+from tmxcaliber.lib.remote.ccr import PackFailure
 from tmxcaliber.lib.remote.client import TocClient
 from tmxcaliber.lib.remote.config import Settings
 from tmxcaliber.lib.remote.contract import route_for
@@ -33,7 +33,7 @@ from tmxcaliber.remote_cli import (
 
 from .test_remote_api import page
 from .test_remote_assemble import DETAIL, DFD, PARTS, _at_release
-from .test_remote_ccr import PackClient, readable_packs, two_packs
+from .test_remote_ccr import UNKNOWN_HINT, PackClient, readable_packs, two_packs
 from .test_remote_client import FakeOpener, FakeResponse, StrictOpener, http_error
 from .test_remote_client import settings as client_settings
 from .test_remote_config import (
@@ -351,8 +351,11 @@ def test_no_credential_exits_one_and_opens_no_socket(
     with pytest.raises(SystemExit) as caught:
         cli_module.main()
 
+    captured = capsys.readouterr()
     assert caught.value.code == 1
-    assert "TOC_API_KEY" in capsys.readouterr().out
+    # On stderr, so a redirected command keeps only results in the redirect.
+    assert captured.out == ""
+    assert "TOC_API_KEY" in captured.err
 
 
 def test_the_api_commands_are_reachable_from_the_parser(
@@ -960,10 +963,14 @@ def test_an_unknown_pack_ends_with_what_it_probably_meant(
 
     status = run_ccr_fetch(params, client=PackClient(readable_packs("aws-ec2")))  # type: ignore[arg-type]
 
-    [line] = capsys.readouterr().err.splitlines()
+    lines = capsys.readouterr().err.splitlines()
     assert status == 1
-    assert line.startswith(Fore.RED + "ec3: manifest failed: ")
-    assert line.endswith("Did you mean aws-ec2?" + Fore.RESET)
+    assert lines == [
+        "\u2716 ec3: manifest failed: No such pack.",
+        "    [not_found, HTTP 404]",
+        f"    {UNKNOWN_HINT}",
+        "    \u2192 Did you mean aws-ec2?",
+    ]
 
 
 def test_an_unknown_pack_typed_with_a_release_ends_with_what_it_meant(
@@ -973,10 +980,10 @@ def test_an_unknown_pack_typed_with_a_release_ends_with_what_it_meant(
 
     status = run_ccr_fetch(params, client=PackClient(readable_packs("aws-ec2")))  # type: ignore[arg-type]
 
-    [line] = capsys.readouterr().err.splitlines()
+    lines = capsys.readouterr().err.splitlines()
     assert status == 1
-    assert line.startswith(Fore.RED + "ec3@1611187200: manifest failed: ")
-    assert line.endswith("Did you mean aws-ec2?" + Fore.RESET)
+    assert lines[0] == "\u2716 ec3@1611187200: manifest failed: No such pack."
+    assert lines[-1] == "    \u2192 Did you mean aws-ec2?"
 
 
 @pytest.mark.parametrize(
@@ -984,12 +991,13 @@ def test_an_unknown_pack_typed_with_a_release_ends_with_what_it_meant(
     [
         (
             ("--service", "gemini-agent-platform"),
-            "No pack this key can read matches --service 'gemini-agent-platform'. "
-            "Did you mean gcp-vertex?",
+            "No pack this key can read matches --service 'gemini-agent-platform'.\n"
+            "    \u2192 Did you mean gcp-vertex?",
         ),
         (
             ("--provider", "gpc"),
-            "No pack this key can read matches --provider 'gpc'. Did you mean gcp?",
+            "No pack this key can read matches --provider 'gpc'.\n"
+            "    \u2192 Did you mean gcp?",
         ),
     ],
     ids=["service", "provider"],
@@ -1009,7 +1017,7 @@ def test_a_narrowing_no_pack_has_exits_one_and_says_what_was_close(
     # Nothing was selected, so there are no rows to print, and the one line
     # on stderr puts the blame on the narrowing.
     assert captured.out == ""
-    assert captured.err == Fore.RED + expected + Fore.RESET + "\n"
+    assert captured.err == "\u2716 " + expected + "\n"
 
 
 def test_the_service_a_refusal_suggests_is_accepted_when_typed_back(
@@ -1043,10 +1051,12 @@ def test_the_service_a_refusal_suggests_beside_a_provider_names_that_provider(
         client=client,  # type: ignore[arg-type]
     )
     assert first == 1
+    # What is said about the suggested pack's provider follows the suggestion.
     assert capsys.readouterr().err == (
-        Fore.RED + "No pack this key can read matches --provider 'aws' and --service "
-        "'bigquery'. Did you mean gcp-bigquery? gcp-bigquery belongs to gcp, which "
-        "--provider 'aws' leaves out." + Fore.RESET + "\n"
+        "\u2716 No pack this key can read matches --provider 'aws' and --service "
+        "'bigquery'.\n"
+        "    \u2192 Did you mean gcp-bigquery? gcp-bigquery belongs to gcp, which "
+        "--provider 'aws' leaves out.\n"
     )
 
     # The suggestion typed back, with --provider left as it was.
@@ -1059,9 +1069,9 @@ def test_the_service_a_refusal_suggests_beside_a_provider_names_that_provider(
     assert again == 1
     assert captured.out == ""
     assert captured.err == (
-        Fore.RED + "No pack this key can read matches --provider 'aws' and --service "
+        "\u2716 No pack this key can read matches --provider 'aws' and --service "
         "'gcp-bigquery'. gcp-bigquery belongs to gcp, which --provider 'aws' "
-        "leaves out." + Fore.RESET + "\n"
+        "leaves out.\n"
     )
 
 
@@ -1103,10 +1113,13 @@ def test_a_refused_archive_is_reported_and_the_other_packs_are_written(
     written = tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json"
     assert status == 1
     assert captured.out.split() == [str(written)]
-    [line] = captured.err.splitlines()
-    assert "aws-s3: archive failed: " in line
-    assert "unavailable" in line
-    assert "request r-1" in line
+    lines = captured.err.splitlines()
+    assert lines[:3] == [
+        "\u2716 aws-s3: archive failed: The source archive of aws-s3 does not match "
+        "its published digest.",
+        "    [unavailable, HTTP 503, request r-1, release d07d6ae]",
+        "    " + PackFailure("aws-s3", "archive", "unavailable", "").hint,
+    ]
     assert "No rule matched" not in captured.err
 
 
@@ -1241,10 +1254,11 @@ def test_a_name_the_api_does_not_know_is_followed_by_what_it_probably_meant(
         monkeypatch, [http_error(404, MISSING), _listing(listing, rows)], argv
     )
 
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
     assert status == 1
-    assert (
-        out == Fore.RED + f"Not found. {sentence} (request r-404)" + Fore.RESET + "\n"
+    assert captured.out == ""
+    assert captured.err == (
+        f"\u2716 Not found. (request r-404)\n    \u2192 {sentence}\n"
     )
     list_route = route_for(listing)
     assert list_route is not None
@@ -1304,10 +1318,10 @@ def test_a_not_found_with_nothing_to_suggest_is_reported_as_it_was(
 ) -> None:
     status, opener = _main_over(monkeypatch, answers, argv)
 
+    captured = capsys.readouterr()
     assert status == 1
-    assert capsys.readouterr().out == (
-        Fore.RED + "Not found. (request r-404)" + Fore.RESET + "\n"
-    )
+    assert captured.out == ""
+    assert captured.err == "\u2716 Not found. (request r-404)\n"
     # A command without a name reads no list, so only its own call was made.
     assert opener.answers == []
 
@@ -1326,7 +1340,12 @@ def test_the_suggestion_keeps_the_original_errors_details() -> None:
     error = caught.value
     assert type(error) is NotFound
     assert (error.code, error.status, error.request_id) == ("not_found", 404, "r-404")
-    assert Exception.__str__(error) == ("Not found. Did you mean aws-ec2 (Amazon EC2)?")
+    # The suggestion is carried as data, so the command line can set it on a
+    # line of its own, and the error still reads as one line.
+    assert error.did_you_mean == "Did you mean aws-ec2 (Amazon EC2)?"
+    assert str(error) == (
+        "Not found. Did you mean aws-ec2 (Amazon EC2)? (request r-404)"
+    )
     assert isinstance(error.__cause__, NotFound)
 
 
@@ -1366,10 +1385,10 @@ def test_fetch_of_a_renamed_pack_typed_with_spaces_still_suggests_its_key(
         ["ccr", "fetch", "Gemini Agent Platform"],
     )
 
-    [line] = capsys.readouterr().err.splitlines()
+    lines = capsys.readouterr().err.splitlines()
     assert status == 1
-    assert line.startswith(Fore.RED + "Gemini Agent Platform: manifest failed: ")
-    assert line.endswith("Did you mean gcp-vertex?" + Fore.RESET)
+    assert lines[0].startswith("\u2716 Gemini Agent Platform: manifest failed: ")
+    assert lines[-1] == "    \u2192 Did you mean gcp-vertex?"
     first = urllib.parse.urlsplit(opener.requests[0].full_url)
     assert first.path == "/v1/ccr/packs/Gemini%20Agent%20Platform"
     assert opener.answers == []
@@ -1412,8 +1431,8 @@ def test_a_pack_command_given_a_name_with_spaces_answers_not_found_with_a_sugges
     )
 
     assert status == 1
-    assert capsys.readouterr().out == (
-        Fore.RED + f"Not found. {sentence} (request r-404)" + Fore.RESET + "\n"
+    assert capsys.readouterr().err == (
+        f"\u2716 Not found. (request r-404)\n    \u2192 {sentence}\n"
     )
     assert urllib.parse.urlsplit(opener.requests[0].full_url).path == path
     assert opener.answers == []
@@ -1432,12 +1451,9 @@ def test_a_threatmodel_typed_in_a_shape_no_reference_has_is_followed_by_what_it_
     )
 
     assert status == 1
-    assert capsys.readouterr().out == (
-        Fore.RED
-        + f"{typed!r} is not a ThreatModel reference; expected provider-service, "
-        "optionally with @release. Did you mean aws-ec2 (Amazon EC2)?"
-        + Fore.RESET
-        + "\n"
+    assert capsys.readouterr().err == (
+        f"\u2716 {typed!r} is not a ThreatModel reference; expected provider-service, "
+        "optionally with @release\n    \u2192 Did you mean aws-ec2 (Amazon EC2)?\n"
     )
     # Only the list was read, because the name could not be sent.
     assert [urllib.parse.urlsplit(r.full_url).path for r in opener.requests] == [
@@ -1515,10 +1531,9 @@ def test_a_threatmodels_published_name_typed_back_leads_to_it(
     )
 
     assert status == 1
-    assert capsys.readouterr().out == (
-        Fore.RED
-        + f"{typed!r} is not a ThreatModel reference; expected provider-service, "
-        f"optionally with @release. {sentence}" + Fore.RESET + "\n"
+    assert capsys.readouterr().err == (
+        f"\u2716 {typed!r} is not a ThreatModel reference; expected provider-service, "
+        f"optionally with @release\n    \u2192 {sentence}\n"
     )
 
 
@@ -1537,10 +1552,9 @@ def test_a_threatmodels_key_spelled_like_its_title_leads_to_it_after_the_404(
     )
 
     assert status == 1
-    assert capsys.readouterr().out == (
-        Fore.RED
-        + "Not found. Did you mean aws-kms (AWS Key Management Service (AWS KMS))? "
-        "(request r-404)" + Fore.RESET + "\n"
+    assert capsys.readouterr().err == (
+        "\u2716 Not found. (request r-404)\n"
+        "    \u2192 Did you mean aws-kms (AWS Key Management Service (AWS KMS))?\n"
     )
 
 
@@ -1595,8 +1609,8 @@ def test_a_slip_of_an_id_leads_to_its_threatmodel_over_the_whole_catalogue(
     )
 
     assert status == 1
-    assert capsys.readouterr().out == (
-        Fore.RED + f"Not found. {sentence} (request r-404)" + Fore.RESET + "\n"
+    assert capsys.readouterr().err == (
+        f"\u2716 Not found. (request r-404)\n    \u2192 {sentence}\n"
     )
 
 
@@ -1630,10 +1644,9 @@ def test_a_service_typed_alone_leads_to_its_threatmodel_over_the_whole_catalogue
     )
 
     assert status == 1
-    assert capsys.readouterr().out == (
-        Fore.RED
-        + f"{typed!r} is not a ThreatModel reference; expected provider-service, "
-        f"optionally with @release. {sentence}" + Fore.RESET + "\n"
+    assert capsys.readouterr().err == (
+        f"\u2716 {typed!r} is not a ThreatModel reference; expected provider-service, "
+        f"optionally with @release\n    \u2192 {sentence}\n"
     )
 
 
