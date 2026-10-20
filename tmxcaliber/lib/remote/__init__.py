@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from .api import Client
 from .assemble import fetch_document, load_remote
-from .ccr import FetchResult, PackFailure
+from .ccr import FetchResult, PackFailure, PackOutcome
 from .client import TocClient
 from .config import Credentials, Settings, load_settings
 from .contract import ROUTES, Route, route_for
@@ -49,6 +49,7 @@ __all__ = [
     "NoPackMatched",
     "NotFound",
     "PackFailure",
+    "PackOutcome",
     "PermissionDenied",
     "RateLimited",
     "ReleaseSuperseded",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import pathlib
 import sys
@@ -1241,14 +1242,65 @@ def test_a_refused_archive_is_reported_and_the_other_packs_are_written(
     written = tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json"
     assert status == 1
     assert captured.out.split() == [str(written)]
-    lines = captured.err.splitlines()
-    assert lines[:3] == [
+    assert captured.err.splitlines() == [
         "\u2716 aws-s3: archive failed: The source archive of aws-s3 does not match "
         "its published digest.",
         "    [unavailable, HTTP 503, request r-1, release d07d6ae]",
         "    " + PackFailure("aws-s3", "archive", "unavailable", "").hint,
+        "\u2714 gcp-bigquery  1 rule, 1 file  (release d07d6ae)",
+        f"\u2714 Wrote 1 file for 1 rule from 1 pack to {tmp_path}",
     ]
-    assert "No rule matched" not in captured.err
+
+
+class Watched(PackClient):
+    """Notes what stderr held when each manifest was asked for."""
+
+    def __init__(self, packs: dict[str, Any], stream: io.StringIO) -> None:
+        super().__init__(packs)
+        self.stream = stream
+        self.said_before: dict[str, str] = {}
+
+    def get(self, path: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
+        self.said_before[path.rsplit("/", 1)[-1]] = self.stream.getvalue()
+        return super().get(path, params)
+
+
+@pytest.mark.parametrize("words", [(), ("--out", "rules")], ids=["preview", "out"])
+def test_a_pack_is_reported_as_soon_as_it_finishes(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, words: tuple[str, ...]
+) -> None:
+    # Live, so a long fetch shows how far it got and what already failed. A
+    # StringIO names no encoding, so it is given the ASCII glyphs.
+    monkeypatch.chdir(tmp_path)
+    stream = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", stream)
+    client = Watched(two_packs(), stream)
+    params = _fetch_params(monkeypatch, "aws-nothing", "aws-s3", "gcp-bigquery", *words)
+
+    run_ccr_fetch(params, client=client)  # type: ignore[arg-type]
+
+    assert client.said_before["aws-nothing"] == ""
+    failed = "[x] aws-nothing: manifest failed"
+    assert client.said_before["aws-s3"].startswith(failed)
+    # A preview reports only its failures as it goes, and --out each pack.
+    done = "[ok] aws-s3  2 rules, 3 files  (release d07d6ae)\n"
+    assert (done in client.said_before["gcp-bigquery"]) is bool(words)
+
+
+def test_out_reports_only_the_packs_that_had_something_selected(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    params = _fetch_params(monkeypatch, "--control", "S3.C20", "--out", str(tmp_path))
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    assert status == 0
+    assert capsys.readouterr().err.splitlines() == [
+        "\u2714 aws-s3  1 rule, 2 files  (release d07d6ae)",
+        f"\u2714 Wrote 2 files for 1 rule from 1 pack to {tmp_path}",
+    ]
 
 
 def test_main_runs_fetch_and_exits_with_its_status(

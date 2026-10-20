@@ -22,7 +22,9 @@ import pytest
 from tmxcaliber.lib.remote.ccr import (
     MATCHERS,
     MODES,
+    FetchResult,
     PackFailure,
+    PackOutcome,
     RuleFilter,
     _is_safe,
     extract,
@@ -1620,6 +1622,83 @@ def test_one_failed_pack_does_not_stop_the_others(tmp_path: pathlib.Path) -> Non
     assert failure.release_id == "d07d6aee"
     assert (tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json").exists()
     assert not (tmp_path / "aws-s3").exists()
+
+
+def heard(
+    client: PackClient, **arguments: Any
+) -> tuple[FetchResult, list[tuple[str, PackOutcome | PackFailure]]]:
+    """Fetch, recording each pack the progress callback is told about.
+
+    Args:
+        client: The client.
+        **arguments: The rest of the fetch's arguments.
+
+    Returns:
+        The result, and each call to the callback in the order it came.
+    """
+    calls: list[tuple[str, PackOutcome | PackFailure]] = []
+    result = fetch(  # type: ignore[arg-type]
+        client, on_pack=lambda key, outcome: calls.append((key, outcome)), **arguments
+    )
+    return result, calls
+
+
+def test_each_pack_is_reported_once_as_it_finishes_in_the_order_read(
+    tmp_path: pathlib.Path,
+) -> None:
+    client = PackClient(two_packs())
+    client.archive_errors["aws-s3"] = ServiceUnavailable(
+        "Refused.", code="unavailable", status=503
+    )
+
+    result, calls = heard(client, out=tmp_path)
+
+    assert [key for key, _ in calls] == ["aws-s3", "gcp-bigquery"]
+    assert calls[0][1] is result.failed["aws-s3"]
+    assert calls[1][1] == PackOutcome(
+        release_key="gcp-bigquery",
+        release_id="d07d6aee",
+        rows=tuple(result.rows),
+        written=(tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json",),
+    )
+
+
+def test_a_preview_reports_each_pack_with_its_rows_and_nothing_written() -> None:
+    _, calls = heard(PackClient(two_packs()), wanted=RuleFilter(controls=("S3.C20",)))
+
+    outcomes = dict(calls)
+    assert isinstance(outcomes["aws-s3"], PackOutcome)
+    assert [row["ruleId"] for row in outcomes["aws-s3"].rows] == ["S3.C20"]
+    assert outcomes["aws-s3"].written == ()
+    assert outcomes["gcp-bigquery"] == PackOutcome("gcp-bigquery", "d07d6aee", (), ())
+
+
+def test_an_unknown_named_pack_is_reported_with_its_suggestions() -> None:
+    result, calls = heard(PackClient(readable_packs("aws-ec2")), release_keys=("ec3",))
+
+    [(key, failure)] = calls
+    assert key == "ec3"
+    assert isinstance(failure, PackFailure)
+    assert failure.suggestions == ("aws-ec2",)
+    assert failure is result.failed["ec3"]
+
+
+def test_a_fetch_without_the_callback_is_unchanged(tmp_path: pathlib.Path) -> None:
+    def failing() -> PackClient:
+        client = PackClient(two_packs())
+        client.archive_errors["aws-s3"] = ServiceUnavailable(
+            "Refused.", code="unavailable", status=503
+        )
+        return client
+
+    plain = fetch(failing(), out=tmp_path / "plain")  # type: ignore[arg-type]
+    heard_result, _ = heard(failing(), out=tmp_path / "heard")
+
+    assert plain.rows == heard_result.rows
+    assert plain.failed == heard_result.failed
+    assert [p.relative_to(tmp_path / "plain") for p in plain.written] == [
+        p.relative_to(tmp_path / "heard") for p in heard_result.written
+    ]
 
 
 def test_an_unknown_named_pack_is_reported_not_raised() -> None:

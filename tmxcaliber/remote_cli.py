@@ -33,6 +33,7 @@ from .lib.remote.ccr import (
     MODES,
     FetchResult,
     PackFailure,
+    PackOutcome,
     RuleFilter,
     fetch,
 )
@@ -312,9 +313,12 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
     """Execute `ccr fetch`.
 
     The files written for the packs that completed are printed even when
-    another pack failed, and each failed pack gets a block on stderr saying
-    at which stage it failed, why and what to do, ending with the packs it
-    was probably meant to be when it was named and is unknown.
+    another pack failed. Each pack is reported on stderr as soon as it
+    finishes, in the order the packs are read, so a long fetch shows how far
+    it got: a failed pack as a block saying at which stage it failed, why and
+    what to do, ending with the packs it was probably meant to be when it was
+    named and is unknown, and with --out each pack that had rules selected as
+    one line counting what it wrote.
 
     **The last line on stderr says whether anything was written.** A preview's
     JSON reads like the files themselves, so without --out the command says it
@@ -340,6 +344,23 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
             "Name packs, or narrow by --provider and --service, not both."
         )
         return 2
+
+    def on_pack(key: str, outcome: PackOutcome | PackFailure) -> None:
+        # Looked up for each pack, so a stream replaced meanwhile is honored.
+        err = console.stderr()
+        if isinstance(outcome, PackFailure):
+            report_pack_failure(err, key, outcome)
+        elif params.out and outcome.rows:
+            release = (
+                f"  (release {outcome.release_id[:7]})" if outcome.release_id else ""
+            )
+            err.status(
+                "ok",
+                "green",
+                f"{key}  {console.plural(len(outcome.rows), 'rule')}, "
+                f"{console.plural(len(outcome.written), 'file')}{release}",
+            )
+
     try:
         result = fetch(
             client or connect(),
@@ -353,6 +374,7 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
                 files=tuple(params.file),
             ),
             out=Path(params.out) if params.out else None,
+            on_pack=on_pack,
         )
     except NoPackMatched as exc:
         # Said on stderr like a failed pack, because the narrowing is what went
@@ -365,10 +387,7 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
             print(path)
     else:
         print(json.dumps(result.rows, indent=2))
-    err = console.stderr()
-    for key, failure in result.failed.items():
-        report_pack_failure(err, key, failure)
-    _report_outcome(err, result, params.out)
+    _report_outcome(console.stderr(), result, params.out)
     return 1 if result.failed else 0
 
 

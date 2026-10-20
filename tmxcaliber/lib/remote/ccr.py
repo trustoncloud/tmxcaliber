@@ -23,7 +23,7 @@ import stat
 import tempfile
 import zipfile
 import zlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -1085,6 +1085,30 @@ class PackFailure:
         return line
 
 
+@dataclass(frozen=True)
+class PackOutcome:
+    """What one pack that completed gave.
+
+    Attributes:
+        release_key: The pack.
+        release_id: The release its manifest named, or empty when it named
+            none.
+        rows: One row per rule selected from it, in manifest order.
+        written: The files written for it, in the order they were written;
+            empty when no folder was given or nothing was selected.
+    """
+
+    release_key: str
+    release_id: str
+    rows: tuple[dict[str, Any], ...]
+    written: tuple[Path, ...]
+
+
+#: What `fetch` calls once per pack as the pack finishes: with the key as the
+#: caller named or the list gave it, and the pack's outcome or failure.
+OnPack = Callable[[str, "PackOutcome | PackFailure"], None]
+
+
 @dataclass
 class FetchResult:
     """What a fetch found and wrote.
@@ -1313,7 +1337,7 @@ def _failure(
 
 def _fetch_pack(
     client: TocClient, key: str, wanted: RuleFilter, out: Path | None
-) -> tuple[list[dict[str, Any]], list[Path]] | PackFailure:
+) -> PackOutcome | PackFailure:
     """Select from one pack, and write its files when a folder is given.
 
     **One release throughout.** The archive is asked for the release the
@@ -1332,8 +1356,8 @@ def _fetch_pack(
         out: The folder to write under, or None to write nothing.
 
     Returns:
-        The pack's rows and the files written, or what ended the pack when the
-        error belongs to it alone: an unknown or unentitled pack, a manifest
+        The pack's rows, release and the files written, or what ended the pack
+        when the error belongs to it alone: an unknown or unentitled pack, a manifest
         of the wrong shape, a release that changed twice in a row, an archive
         the API kept refusing, or one that is not what its manifest describes
         or cannot be written.
@@ -1363,7 +1387,7 @@ def _fetch_pack(
                 for selected in chosen
             ]
             if out is None or not chosen:
-                return rows, []
+                return PackOutcome(key, release_id, tuple(rows), ())
             stage = "archive"
             try:
                 data = call_route(
@@ -1379,7 +1403,8 @@ def _fetch_pack(
             stage = "verify"
             verify_archive(data, manifest, key)
             stage = "extract"
-            return rows, extract(data, manifest, key, chosen, out)
+            written = extract(data, manifest, key, chosen, out)
+            return PackOutcome(key, release_id, tuple(rows), tuple(written))
     except RemoteError as exc:
         if not isinstance(exc, _PACK_ERRORS[stage]):
             raise
@@ -1395,6 +1420,7 @@ def fetch(
     services: Sequence[str] = (),
     wanted: RuleFilter = _NO_FILTER,
     out: Path | None = None,
+    on_pack: OnPack | None = None,
 ) -> FetchResult:
     """Select CCR rules across packs, and write their files when asked.
 
@@ -1422,6 +1448,10 @@ def fetch(
             the service alone or as a whole release key such as ``gcp-vertex``.
         wanted: Which rules and files to select.
         out: The folder to write under, or None to only list.
+        on_pack: Called once per pack as soon as it finishes, in the order
+            the packs are read, with its key and its `PackOutcome`, or the
+            `PackFailure` that ended it, suggestions included. The command
+            line reports progress with it; a fetch without it is unchanged.
 
     Returns:
         The rows, the files written and the packs that failed.
@@ -1454,8 +1484,9 @@ def fetch(
                 typed = key.partition("@")[0]
                 outcome = replace(outcome, suggestions=tuple(suggest(typed, readable)))
             result.failed[key] = outcome
-            continue
-        rows, written = outcome
-        result.rows.extend(rows)
-        result.written.extend(written)
+        else:
+            result.rows.extend(outcome.rows)
+            result.written.extend(outcome.written)
+        if on_pack is not None:
+            on_pack(key, outcome)
     return result
