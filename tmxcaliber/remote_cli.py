@@ -57,7 +57,7 @@ from .lib.remote.errors import (
 from .lib.remote.operations import call_route, incompleteness_fields
 from .lib.remote.ref import is_remote_ref
 from .lib.remote.resolve import resolve_source
-from .lib.remote.suggest import did_you_mean, suggest
+from .lib.remote.suggest import alternative_names, did_you_mean, suggest
 
 #: The namespace key each nesting level of the command tree parks its word in.
 #:
@@ -469,6 +469,33 @@ NAME_LISTS: Mapping[str, tuple[tuple[str, ...], str, str | None]] = {
 }
 
 
+#: The row fields that list the other services a ThreatModel covers, spelled as
+#: the catalogue spells it and as the API's camelCase would.
+COVERED_FIELDS: tuple[str, ...] = ("other_covered_services", "otherCoveredServices")
+
+
+def _published_names(row: Mapping[str, Any], title_field: str) -> tuple[str, ...]:
+    """Collect the names a list row publishes for the thing it describes.
+
+    Args:
+        row: One row of a list.
+        title_field: The row field holding its title.
+
+    Returns:
+        The title as published and the forms of it people type, then the same
+        for each service the row says it also covers. Every name comes from the
+        row, so a suggestion made with them still names only what the list
+        showed.
+    """
+    covered = [
+        str(service)
+        for field in COVERED_FIELDS
+        if isinstance(row.get(field), list)
+        for service in row[field]
+    ]
+    return alternative_names(str(row.get(title_field) or ""), *covered)
+
+
 def _then(message: str, sentence: str) -> str:
     """Follow a message with a sentence of its own.
 
@@ -501,7 +528,10 @@ def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
 
     Returns:
         The ``Did you mean ...?`` sentence, with each ThreatModel's title
-        after its id. Empty when the route names nothing the API lists, when
+        after its id. A ThreatModel's own title, the short form in its
+        brackets, and the services it also covers all lead to it, as the list
+        publishes them, so its official name typed back is never a stranger to
+        the suggestion. Empty when the route names nothing the API lists, when
         no name was typed, when nothing listed is close, when the name is
         itself listed (as when only its release is unknown), or when the list
         cannot be read, in which case the API's own error is the one worth
@@ -530,7 +560,18 @@ def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
         if title_field
         else None
     )
-    return did_you_mean(suggest(wanted, [name for name in names if name]), labels)
+    # A ThreatModel is also known by the title it was published under, and by
+    # the services it covers, so each row's own words lead back to it.
+    published = (
+        {
+            str(row.get(name_field) or ""): _published_names(row, title_field)
+            for row in rows
+        }
+        if title_field
+        else None
+    )
+    found = suggest(wanted, [name for name in names if name], extra_aliases=published)
+    return did_you_mean(found, labels)
 
 
 def run_api_command(

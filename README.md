@@ -216,9 +216,12 @@ belongs to. A name with spaces in it, such as `ccr fetch "Gemini Agent
 Platform"`, is a name to correct like any other. When you give a provider
 first, as in `gcp-storge`, the suggestions stay with that provider whenever one
 of its services is close. `ccr packs get` and the `threatmodels` commands that
-take a ThreatModel do the same from `ccr packs list` and `threatmodels list`.
-From Python, a provider or service that matches no readable pack raises
-`NoPackMatched`, whose `suggestions` hold the same names.
+take a ThreatModel do the same from `ccr packs list` and `threatmodels list`,
+and there a ThreatModel is also found by the title it is published under, the
+short form in that title's brackets, or a service it covers, so `threatmodels
+get "Azure Kubernetes Service"` suggests `azure-aks`. From Python, a provider
+or service that matches no readable pack raises `NoPackMatched`, whose
+`suggestions` hold the same names.
 
 Collections are read in full; paging is handled for you. When the API reports
 that an answer is incomplete (for example, compliance mappings for

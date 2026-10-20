@@ -15,7 +15,7 @@ name therefore contributes nothing.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from difflib import SequenceMatcher
 from types import MappingProxyType
 from typing import Final
@@ -45,6 +45,10 @@ _VENDORS: Final[frozenset[str]] = frozenset(_PROVIDER_OF)
 #: other mark the same way lets ``Elastic Compute Cloud (EC2)`` reach an alias
 #: as well.
 _SEPARATORS: Final[re.Pattern[str]] = re.compile(r"[^a-z0-9]+")
+
+#: A bracketed part of a title, such as the ``(AWS KMS)`` of ``AWS Key
+#: Management Service (AWS KMS)``.
+_BRACKETED: Final[re.Pattern[str]] = re.compile(r"\(([^()]*)\)")
 
 #: How close an alias has to be to count as a slip of the keys. Alias names are
 #: phrases of several words, so a query that shares one long word with one
@@ -165,21 +169,34 @@ def normalize(name: str) -> str:
     return "-".join(words)
 
 
-def _by_name(names: Mapping[str, tuple[str, ...]]) -> Mapping[str, tuple[str, ...]]:
+def _by_name(names: Mapping[str, Iterable[str]]) -> Mapping[str, tuple[str, ...]]:
     """Turn a table of names by key into a table of keys by normalized name.
 
     Args:
-        names: Each release key, and the names people use for it.
+        names: Each release key, and the names people use for it, the best
+            known first.
 
     Returns:
         Each normalized name, and the keys it can mean, read-only. Two
         spellings that normalize alike, such as ``kubernetes engine`` and
-        ``google kubernetes engine``, share one entry.
+        ``google kubernetes engine``, share one entry. A name with no letter
+        or digit in it names nothing and is left out.
+
+        Names are taken by position across all the keys, so a key's first name
+        comes before any key's second. A ThreatModel's own title, which
+        `alternative_names` lists first, then outranks another's title with its
+        bracket cut off, as ``API Gateway`` outranks ``Amazon API Gateway (HTTP
+        APIs and WebSockets)``, which reads the same once cut.
     """
+    ordered = {key: tuple(alternatives) for key, alternatives in names.items()}
     table: dict[str, tuple[str, ...]] = {}
-    for key, alternatives in names.items():
-        for name in alternatives:
-            normal = normalize(name)
+    for position in range(max(map(len, ordered.values()), default=0)):
+        for key, alternatives in ordered.items():
+            if position >= len(alternatives):
+                continue
+            normal = normalize(alternatives[position])
+            if not normal:
+                continue
             keys = table.get(normal, ())
             if key not in keys:
                 table[normal] = (*keys, key)
@@ -188,6 +205,56 @@ def _by_name(names: Mapping[str, tuple[str, ...]]) -> Mapping[str, tuple[str, ..
 
 #: Each normalized alternative name, and the release keys it can mean.
 ALIASES: Final[Mapping[str, tuple[str, ...]]] = _by_name(_NAMES)
+
+
+def alternative_names(*titles: str) -> tuple[str, ...]:
+    """List the ways a service's published titles are also written.
+
+    A title carries its own short form in brackets, as in ``AWS Key Management
+    Service (AWS KMS)``, and people type the long name, the short one, or the
+    long one without the bracket. The services a ThreatModel also covers are
+    named the same way.
+
+    Args:
+        *titles: A ThreatModel's title and the titles of the other services it
+            covers, as the list publishes them.
+
+    Returns:
+        For each title, the title as given, then the title with each bracketed
+        part left out, then each bracketed part on its own. Each appears once,
+        and a blank name is left out.
+    """
+    names: list[str] = []
+    for title in titles:
+        outside = " ".join(_BRACKETED.sub(" ", title).split())
+        names += [
+            title.strip(),
+            outside,
+            *(m.strip() for m in _BRACKETED.findall(title)),
+        ]
+    return tuple(dict.fromkeys(name for name in names if name))
+
+
+def _merged(
+    first: Mapping[str, tuple[str, ...]], second: Mapping[str, tuple[str, ...]]
+) -> Mapping[str, tuple[str, ...]]:
+    """Join two tables of keys by normalized name.
+
+    Args:
+        first: One table, whose keys come first where a name is in both.
+        second: The other.
+
+    Returns:
+        A table with every name of either, naming the keys of both, once each.
+        Passed the names a list publishes as ``first``, a ThreatModel's own
+        title outranks an alias that reads the same and leads elsewhere, as
+        ``Gemini Enterprise`` leads to its ThreatModel before it leads to
+        Vertex AI.
+    """
+    table = dict(first)
+    for name, keys in second.items():
+        table[name] = tuple(dict.fromkeys((*table.get(name, ()), *keys)))
+    return MappingProxyType(table)
 
 
 def _service(key: str) -> str:
@@ -289,6 +356,7 @@ def _rank(
     aliases: Mapping[str, tuple[str, ...]],
     limit: int,
     provider: str | None = None,
+    published: Collection[str] = (),
 ) -> list[str]:
     """Choose the candidates a query most likely meant, best first.
 
@@ -301,6 +369,8 @@ def _rank(
         aliases: Each alternative name, and the keys it can mean.
         limit: How many to return at most.
         provider: The provider the query names, when it begins with one.
+        published: The keys that a name the caller itself published, such as a
+            ThreatModel's title, leads to when it is the query exactly.
 
     Returns:
         Up to ``limit`` candidates, in this order: aliases the query names
@@ -323,6 +393,10 @@ def _rank(
         ``aws-eks`` scores 0.67 against ``kms``, and counting it would drop
         Google's Cloud KMS, the one pack the alias names, and leave only wrong
         suggestions.
+
+        A query that is exactly a name the caller published is no slip of the
+        keys, so what follows the candidates that name leads to would only be
+        noise, and they alone are returned.
     """
     pool = list(dict.fromkeys(candidates))
     if limit < 1 or not bare or query in pool:
@@ -401,10 +475,17 @@ def _rank(
         close = firm if named_elsewhere else grounded
         if any(_provider(key) == provider for key in close):
             found = [key for key in found if _provider(key) == provider]
-    return found[:limit]
+    named = [key for key in found if key in published]
+    return (named or found)[:limit]
 
 
-def suggest(query: str, candidates: Iterable[str], *, limit: int = 3) -> list[str]:
+def suggest(
+    query: str,
+    candidates: Iterable[str],
+    *,
+    limit: int = 3,
+    extra_aliases: Mapping[str, Iterable[str]] | None = None,
+) -> list[str]:
     """Choose the packs or ThreatModels a mistyped or renamed name meant.
 
     Args:
@@ -413,6 +494,12 @@ def suggest(query: str, candidates: Iterable[str], *, limit: int = 3) -> list[st
         candidates: The keys the caller's key can list. Nothing else is ever
             returned.
         limit: How many to return at most.
+        extra_aliases: Other names for some candidates, by key, the best known
+            first, added to `ALIASES` for this call and ranked before it. The
+            caller reads them from the same list it took the candidates from,
+            such as each ThreatModel's title, so a ThreatModel's official name
+            leads to it. A name for a key that is not a candidate leads
+            nowhere.
 
     Returns:
         Up to ``limit`` of the candidates, best first, without repeats: those
@@ -433,14 +520,16 @@ def suggest(query: str, candidates: Iterable[str], *, limit: int = 3) -> list[st
         # just that vendor's shortest ones, which would read as a guess.
         return []
     full = _canonical(query)
+    published = _by_name(extra_aliases) if extra_aliases else {}
     return _rank(
         query,
         candidates,
         full=full,
         bare=bare,
-        aliases=ALIASES,
+        aliases=_merged(published, ALIASES) if published else ALIASES,
         limit=limit,
         provider=_PROVIDER_OF.get(full.partition("-")[0]),
+        published=published.get(bare, ()),
     )
 
 

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import pathlib
 import re
+from typing import NamedTuple
 
 import pytest
 
 from tmxcaliber.lib.remote.suggest import (
     ALIASES,
+    alternative_names,
     did_you_mean,
     normalize,
     suggest,
@@ -39,13 +41,40 @@ KEYS: tuple[str, ...] = (
     "gcp-compute",
 )
 
+
+class ThreatModelRow(NamedTuple):
+    """One row of ``threatmodels list``, as far as a suggestion reads it."""
+
+    tm_id: str
+    title: str
+    covered: tuple[str, ...]
+
+
 #: Every ThreatModel the catalogue published when this was written, which is the
 #: list the ``threatmodels`` commands suggest from. It is a far larger and more
 #: crowded set than the packs, and the same name can exist under several
-#: providers, so it shows what the short pack list cannot.
-THREATMODEL_IDS: tuple[str, ...] = tuple(
-    pathlib.Path(__file__).with_name("threatmodel_ids.txt").read_text().splitlines()
+#: providers, so it shows what the short pack list cannot. Each line holds the
+#: id, the title and the other services it covers, separated by tabs, with the
+#: covered services separated by bars.
+THREATMODELS: tuple[ThreatModelRow, ...] = tuple(
+    ThreatModelRow(tm_id, title, tuple(filter(None, covered.split("|"))))
+    for tm_id, title, covered in (
+        line.split("\t")
+        for line in pathlib.Path(__file__)
+        .with_name("threatmodels.tsv")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
 )
+
+THREATMODEL_IDS: tuple[str, ...] = tuple(row.tm_id for row in THREATMODELS)
+
+#: The names each ThreatModel is also written as, from the title it was
+#: published under and the services it covers, as the command line reads them
+#: from the same list rows.
+THREATMODEL_NAMES: dict[str, tuple[str, ...]] = {
+    row.tm_id: alternative_names(row.title, *row.covered) for row in THREATMODELS
+}
 
 
 @pytest.mark.parametrize(
@@ -368,6 +397,161 @@ def test_a_close_service_of_the_typed_provider_still_keeps_the_provider(
     found = suggest(query, THREATMODEL_IDS)
 
     assert {key.partition("-")[0] for key in found} == {expected}
+
+
+@pytest.mark.parametrize(
+    ("titles", "expected"),
+    [
+        (
+            ("AWS Key Management Service (AWS KMS)",),
+            (
+                "AWS Key Management Service (AWS KMS)",
+                "AWS Key Management Service",
+                "AWS KMS",
+            ),
+        ),
+        (("Azure Kubernetes Service",), ("Azure Kubernetes Service",)),
+        (
+            ("Amazon Keyspaces (for Apache Cassandra)",),
+            (
+                "Amazon Keyspaces (for Apache Cassandra)",
+                "Amazon Keyspaces",
+                "for Apache Cassandra",
+            ),
+        ),
+        (
+            ("Amazon EC2", "Amazon Elastic Block Store (Amazon EBS)"),
+            (
+                "Amazon EC2",
+                "Amazon Elastic Block Store (Amazon EBS)",
+                "Amazon Elastic Block Store",
+                "Amazon EBS",
+            ),
+        ),
+        (("  ", "Same", "Same"), ("Same",)),
+        ((), ()),
+    ],
+)
+def test_a_title_is_also_written_without_its_brackets_and_by_what_they_hold(
+    titles: tuple[str, ...], expected: tuple[str, ...]
+) -> None:
+    assert alternative_names(*titles) == expected
+
+
+def test_every_threatmodel_is_reached_by_the_title_it_was_published_under() -> None:
+    # The list rows say what each ThreatModel is called, so its own title typed
+    # back has to lead to it, and not to a stranger's, whatever the provider.
+    missed = {
+        row.title: suggest(row.title, THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES)[
+            :3
+        ]
+        for row in THREATMODELS
+        if suggest(row.title, THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES)[:1]
+        != [row.tm_id]
+    }
+
+    assert missed == {}
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("Azure Kubernetes Service", "azure-aks"),
+        ("AWS Key Management Service", "aws-kms"),
+        ("AWS Key Management Service (AWS KMS)", "aws-kms"),
+        ("aws-keymanagementservice", "aws-kms"),
+        ("AWS Certificate Manager (ACM)", "aws-acm"),
+        ("AWS Certificate Manager", "aws-acm"),
+        ("AWS ACM", "aws-acm"),
+        ("AWS Identity and Access Management (IAM)", "aws-iam"),
+        ("Amazon Elastic Kubernetes Service", "aws-eks"),
+        ("Google Kubernetes Engine (GKE)", "gcp-gke"),
+        # A service a ThreatModel also covers is named in its own words.
+        ("IAM Access Analyzer", "aws-iam"),
+        ("Amazon Elastic Block Store (Amazon EBS)", "aws-ec2"),
+        ("AWS PrivateLink", "aws-vpc"),
+        # The short form in brackets, which no spelling of the service reaches.
+        ("Amazon MSK", "aws-kafka"),
+        ("MSK Serverless", "aws-kafka"),
+        ("Amazon Managed Streaming for Apache Kafka", "aws-kafka"),
+        ("AWS STS", "aws-iam"),
+        ("Amazon DocumentDB", "aws-rds"),
+    ],
+)
+def test_a_name_the_list_publishes_leads_to_its_threatmodel_first(
+    query: str, expected: str
+) -> None:
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES)
+
+    assert found[0] == expected
+    # The typed AWS is a clue too, so no other provider's ThreatModel follows.
+    provider = query.split()[0].lower()
+    if provider in ("aws", "azure"):
+        assert {key.partition("-")[0] for key in found} == {provider}
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("Azure Kubernetes Service", ["azure-aks"]),
+        ("AWS Key Management Service (AWS KMS)", ["aws-kms"]),
+        ("Amazon Elastic Block Store (Amazon EBS)", ["aws-ec2"]),
+        # Typed the way the list publishes it, so there is no slip to correct
+        # and the look-alikes that would follow are left out.
+        ("Gemini Enterprise", ["gcp-discoveryengine"]),
+    ],
+)
+def test_a_name_the_list_publishes_exactly_is_not_followed_by_look_alikes(
+    query: str, expected: list[str]
+) -> None:
+    assert suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES) == expected
+
+
+def test_a_title_two_providers_share_leads_to_both() -> None:
+    # "API Gateway" is Google's own title and the title of AWS's with its
+    # bracket cut, and only the typed provider can tell them apart.
+    found = suggest("API Gateway", THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES)
+
+    assert found == ["gcp-apigateway", "aws-apigatewayv2"]
+    assert suggest(
+        "Amazon API Gateway", THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES
+    ) == ["aws-apigatewayv2"]
+
+
+def test_an_official_name_beats_an_alias_that_leads_to_another_provider() -> None:
+    # The alias "key management service" names Google's, and AWS's official name
+    # for its own service is the same words with AWS in front.
+    plain = suggest("AWS Key Management Service", THREATMODEL_IDS)
+    named = suggest(
+        "AWS Key Management Service", THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES
+    )
+
+    assert plain[0] == "gcp-cloudkms"
+    assert named == ["aws-kms"]
+
+
+def test_names_are_only_ever_taken_for_candidates() -> None:
+    # A name from a row the caller did not list leads nowhere, as an alias to
+    # a pack outside the list does not.
+    readable = [key for key in THREATMODEL_IDS if key != "aws-kms"]
+
+    found = suggest(
+        "AWS Key Management Service", readable, extra_aliases=THREATMODEL_NAMES
+    )
+
+    assert "aws-kms" not in found
+    assert set(found) <= set(readable)
+
+
+def test_names_given_for_the_call_are_added_to_the_aliases_and_replace_none() -> None:
+    # "kms" is an alias of gcp-cloudkms and a name of aws-kms, and both are
+    # right until the typed provider says which.
+    found = suggest("KMS", THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES)
+
+    assert {"gcp-cloudkms", "aws-kms"} <= set(found[:2])
+    assert suggest("Gemini Agent Platform", THREATMODEL_IDS, extra_aliases={}) == [
+        "gcp-vertex"
+    ]
 
 
 @pytest.mark.parametrize("limit", [1, 2, 3, 5])

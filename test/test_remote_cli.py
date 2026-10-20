@@ -1415,6 +1415,105 @@ def test_a_threatmodel_typed_in_a_shape_no_reference_has_is_followed_by_what_it_
     ]
 
 
+#: ``threatmodels list`` as a key that reads ThreatModels from three providers
+#: sees it: titles with their short forms in brackets, a service another one
+#: also covers, and a title that is the same words under another provider.
+OFFICIAL_THREATMODELS = [
+    {"tmId": "aws-iam", "title": "AWS Identity and Access Management (IAM)"}
+    | {"other_covered_services": ["IAM Access Analyzer"]},
+    {"tmId": "aws-kms", "title": "AWS Key Management Service (AWS KMS)"},
+    {"tmId": "azure-aks", "title": "Azure Kubernetes Service"},
+    {"tmId": "azure-botservice", "title": "Azure Bot Service"},
+    {"tmId": "azure-cognitiveservices", "title": "Azure AI services"},
+    {"tmId": "azure-recoveryservices", "title": "Azure Recovery Services"},
+    {"tmId": "gcp-cloudkms", "title": "Cloud Key Management Service (KMS)"},
+    {"tmId": "gcp-iam", "title": "Google Identity and Access Management (IAM)"}
+    | {"otherCoveredServices": ["Policy Troubleshooter"]},
+]
+
+
+@pytest.mark.parametrize(
+    ("typed", "sentence"),
+    [
+        pytest.param(
+            "Azure Kubernetes Service",
+            "Did you mean azure-aks (Azure Kubernetes Service)?",
+            id="own title of another provider's service",
+        ),
+        pytest.param(
+            "AWS Key Management Service",
+            "Did you mean aws-kms (AWS Key Management Service (AWS KMS))?",
+            id="title that an alias leads to another provider with",
+        ),
+        pytest.param(
+            "AWS Key Management Service (AWS KMS)",
+            "Did you mean aws-kms (AWS Key Management Service (AWS KMS))?",
+            id="whole title",
+        ),
+        pytest.param(
+            "AWS KMS",
+            "Did you mean aws-kms (AWS Key Management Service (AWS KMS))?",
+            id="short form in brackets",
+        ),
+        pytest.param(
+            "AWS Identity and Access Management (IAM)",
+            "Did you mean aws-iam (AWS Identity and Access Management (IAM))?",
+            id="whole title with brackets",
+        ),
+        pytest.param(
+            "IAM Access Analyzer",
+            "Did you mean aws-iam (AWS Identity and Access Management (IAM))?",
+            id="service a ThreatModel also covers",
+        ),
+        pytest.param(
+            "Policy Troubleshooter",
+            "Did you mean gcp-iam (Google Identity and Access Management (IAM))?",
+            id="service covered, as the API spells the field",
+        ),
+    ],
+)
+def test_a_threatmodels_published_name_typed_back_leads_to_it(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    typed: str,
+    sentence: str,
+) -> None:
+    status, _ = _main_over(
+        monkeypatch,
+        [_listing(("threatmodels", "list"), OFFICIAL_THREATMODELS)],
+        ["threatmodels", "get", typed],
+    )
+
+    assert status == 1
+    assert capsys.readouterr().out == (
+        Fore.RED
+        + f"{typed!r} is not a ThreatModel reference; expected provider-service, "
+        f"optionally with @release. {sentence}" + Fore.RESET + "\n"
+    )
+
+
+def test_a_threatmodels_key_spelled_like_its_title_leads_to_it_after_the_404(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Well formed, so the API answers 404, and the list is read after it. The
+    # typed provider is AWS, so Google's KMS does not come with it.
+    status, _ = _main_over(
+        monkeypatch,
+        [
+            http_error(404, MISSING),
+            _listing(("threatmodels", "list"), OFFICIAL_THREATMODELS),
+        ],
+        ["threatmodels", "get", "aws-keymanagementservice"],
+    )
+
+    assert status == 1
+    assert capsys.readouterr().out == (
+        Fore.RED
+        + "Not found. Did you mean aws-kms (AWS Key Management Service (AWS KMS))? "
+        "(request r-404)" + Fore.RESET + "\n"
+    )
+
+
 def test_a_malformed_threatmodel_with_nothing_close_is_refused_as_before() -> None:
     route = route_for(("threatmodels", "get"))
     assert route is not None
