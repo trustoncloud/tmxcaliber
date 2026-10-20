@@ -33,6 +33,7 @@ from tmxcaliber.lib.remote.ccr import (
 from tmxcaliber.lib.remote.errors import (
     AuthenticationError,
     ContractViolation,
+    NoPackMatched,
     NotFound,
     RateLimited,
     ReleaseSuperseded,
@@ -1531,6 +1532,231 @@ def test_an_unknown_named_pack_is_reported_not_raised() -> None:
     )
     # The manifest was never read, so there is no release to name.
     assert failure.release_id is None
+
+
+def readable_packs(*extra: str) -> dict[str, tuple[bytes, dict[str, Any]]]:
+    """The two packs, and more that the key can read.
+
+    Args:
+        *extra: More release keys, each a pack with one rule.
+
+    Returns:
+        Each pack's archive and manifest, by release key.
+    """
+    packs = two_packs()
+    for key in extra:
+        packs[key] = pack({f"{key.title()}.C1/metadata.json": b"{}"})
+    return packs
+
+
+def list_reads(client: PackClient) -> int:
+    """Count how often a fetch read the pack list.
+
+    Args:
+        client: The client the fetch used.
+
+    Returns:
+        The number of ``ccr packs list`` calls.
+    """
+    return [path for path, _ in client.calls].count("/v1/ccr/packs")
+
+
+def test_an_unknown_named_pack_suggests_a_pack_the_key_can_read() -> None:
+    client = PackClient(readable_packs("aws-ec2"))
+
+    result = fetch(client, release_keys=("ec3",))  # type: ignore[arg-type]
+
+    failure = result.failed["ec3"]
+    assert failure.suggestions == ("aws-ec2",)
+    assert str(failure) == (
+        "manifest failed: No such pack. [not_found, HTTP 404]. "
+        f"{UNKNOWN_HINT} Did you mean aws-ec2?"
+    )
+
+
+def test_the_pack_list_is_read_once_however_many_named_packs_are_unknown() -> None:
+    client = PackClient(readable_packs("aws-ec2"))
+
+    result = fetch(client, release_keys=("ec3", "aws-s4", "aws-s3"))  # type: ignore[arg-type]
+
+    assert list_reads(client) == 1
+    assert result.failed["ec3"].suggestions == ("aws-ec2",)
+    assert result.failed["aws-s4"].suggestions[0] == "aws-s3"
+    assert {row["releaseKey"] for row in result.rows} == {"aws-s3"}
+
+
+def test_the_pack_list_is_not_read_when_every_named_pack_is_known(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A pack can fail at a later stage, or for another reason than being
+    # unknown, and neither is a name to correct.
+    packs = readable_packs("aws-ec2")
+    data, manifest = packs["aws-s3"]
+    packs["aws-s3"] = (data, {**manifest, "rules": ["S3.C20"]})
+    client = PackClient(packs)
+    client.archive_errors["gcp-bigquery"] = NotFound(
+        "Withdrawn.", code="not_found", status=404
+    )
+
+    result = fetch(  # type: ignore[arg-type]
+        client, release_keys=("aws-s3", "gcp-bigquery", "aws-ec2"), out=tmp_path
+    )
+
+    assert list_reads(client) == 0
+    assert (result.failed["aws-s3"].stage, result.failed["aws-s3"].code) == (
+        "manifest",
+        "bad_manifest",
+    )
+    assert (
+        result.failed["gcp-bigquery"].stage,
+        result.failed["gcp-bigquery"].code,
+    ) == ("archive", "not_found")
+    assert all(failure.suggestions == () for failure in result.failed.values())
+
+
+class Unlisted(PackClient):
+    """A client whose pack list fails, while each pack still answers."""
+
+    def __init__(
+        self, packs: dict[str, tuple[bytes, dict[str, Any]]], error: RemoteError
+    ) -> None:
+        super().__init__(packs)
+        self.error = error
+
+    def paginate(
+        self, path: str, params: Mapping[str, str] | None = None, **_: Any
+    ) -> Any:
+        self.calls.append((path, dict(params or {})))
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ServiceUnavailable("Try later.", code="unavailable", status=503),
+        RateLimited("Slow down.", retry_after=3600, code="rate_limited", status=429),
+    ],
+    ids=["outage", "rate limit"],
+)
+def test_a_pack_list_that_cannot_be_read_leaves_the_fetch_as_it_was(
+    error: RemoteError,
+) -> None:
+    # The suggestion is a courtesy, so failing to read the list must not cost
+    # the caller the packs that did answer.
+    client = Unlisted(readable_packs("aws-ec2"), error)
+
+    result = fetch(client, release_keys=("aws-s4", "ec3", "aws-s3"))  # type: ignore[arg-type]
+
+    assert list_reads(client) == 1
+    assert result.failed == {
+        key: PackFailure(
+            release_key=key,
+            stage="manifest",
+            code="not_found",
+            message="No such pack.",
+            status=404,
+        )
+        for key in ("aws-s4", "ec3")
+    }
+    assert {row["releaseKey"] for row in result.rows} == {"aws-s3"}
+
+
+@pytest.mark.parametrize(
+    ("narrowing", "message", "suggestions"),
+    [
+        pytest.param(
+            {"services": ("gemini agent platform",)},
+            "No pack this key can read matches --service 'gemini agent platform'. "
+            "Did you mean gcp-vertex?",
+            ("gcp-vertex",),
+            id="renamed service",
+        ),
+        pytest.param(
+            {"services": ("bigqeury",)},
+            "No pack this key can read matches --service 'bigqeury'. "
+            "Did you mean gcp-bigquery?",
+            ("gcp-bigquery",),
+            id="misspelled service",
+        ),
+        pytest.param(
+            {"providers": ("gpc",)},
+            "No pack this key can read matches --provider 'gpc'. Did you mean gcp?",
+            ("gcp",),
+            id="misspelled provider",
+        ),
+        pytest.param(
+            {"providers": ("aws",), "services": ("bigquery",)},
+            "No pack this key can read matches --provider 'aws' and --service "
+            "'bigquery'. Did you mean gcp-bigquery?",
+            ("gcp-bigquery",),
+            id="service of another provider",
+        ),
+        pytest.param(
+            {"services": ("nothing", "lambda")},
+            "No pack this key can read matches --service 'nothing' or 'lambda'.",
+            (),
+            id="nothing close",
+        ),
+        pytest.param(
+            {"providers": ("azr",)},
+            "No pack this key can read matches --provider 'azr'.",
+            (),
+            id="provider with no readable pack",
+        ),
+    ],
+)
+def test_a_narrowing_that_leaves_no_pack_is_refused_with_suggestions(
+    narrowing: dict[str, tuple[str, ...]],
+    message: str,
+    suggestions: tuple[str, ...],
+) -> None:
+    client = PackClient(readable_packs("gcp-vertex"))
+
+    with pytest.raises(NoPackMatched) as refused:
+        fetch(client, **narrowing)  # type: ignore[arg-type]
+
+    assert str(refused.value) == message
+    assert refused.value.suggestions == suggestions
+    assert refused.value.code == "no_pack_matched"
+    # Nothing past the list was read, because no pack was left to read.
+    assert [path for path, _ in client.calls] == ["/v1/ccr/packs"]
+
+
+def test_a_narrowing_that_leaves_a_pack_is_not_refused() -> None:
+    client = PackClient(readable_packs("gcp-vertex"))
+
+    result = fetch(client, services=("nothing", "vertex"))  # type: ignore[arg-type]
+
+    assert {row["releaseKey"] for row in result.rows} == {"gcp-vertex"}
+
+
+def test_a_pack_the_key_cannot_read_is_never_suggested() -> None:
+    # gcp-vertex is the alias's pack, and this key cannot read it, so naming it
+    # would tell the caller about a pack outside their subscription.
+    client = PackClient(two_packs())
+
+    result = fetch(client, release_keys=("gemini-agent-platform",))  # type: ignore[arg-type]
+    with pytest.raises(NoPackMatched) as refused:
+        fetch(client, services=("gemini agent platform",))  # type: ignore[arg-type]
+
+    assert result.failed["gemini-agent-platform"].suggestions == ()
+    assert "Did you mean" not in str(result.failed["gemini-agent-platform"])
+    assert refused.value.suggestions == ()
+    assert "gcp-vertex" not in str(refused.value)
+
+
+def test_a_pack_failure_with_suggestions_ends_with_them() -> None:
+    failure = PackFailure(
+        release_key="aws-ec3",
+        stage="manifest",
+        code="",
+        message="Gone.",
+        suggestions=("aws-ec2", "aws-s3"),
+    )
+
+    assert str(failure) == f"manifest failed: Gone. {failure.hint} " + (
+        "Did you mean aws-ec2 or aws-s3?"
+    )
 
 
 def with_first_rule(manifest: dict[str, Any], **fields: Any) -> dict[str, Any]:

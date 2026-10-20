@@ -217,7 +217,8 @@ class CcrFetch:
         caller checks the result's ``failed``. It maps each such pack to a
         `PackFailure`, which says at which stage the pack failed, with the
         API's code and message, the HTTP status, the request id and the
-        release, and a hint on what to do.
+        release, and a hint on what to do. A named pack the API does not know
+        also carries the readable packs whose names are close to it.
 
         Args:
             *release_keys: Packs to read. Every entitled pack when none.
@@ -236,6 +237,9 @@ class CcrFetch:
             ValueError: If packs are named and also narrowed, or a mode or a
                 matcher is not one of those the command line accepts. Either
                 is refused before any request.
+            NoPackMatched: If a provider or service is given and no pack this
+                key can read has it. Its ``suggestions`` name the readable
+                packs or providers close to what was given.
             RemoteError: On a failure that is not one pack's alone, such as a
                 credential failure, a rate limit, or an outage that reaches the
                 pack list or a manifest.

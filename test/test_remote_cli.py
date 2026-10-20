@@ -10,6 +10,7 @@ from collections.abc import Iterator, Mapping
 from typing import Any, NoReturn
 
 import pytest
+from colorama import Fore
 
 from tmxcaliber import cli as cli_module
 from tmxcaliber import remote_cli
@@ -25,7 +26,7 @@ from tmxcaliber.remote_cli import (
 )
 
 from .test_remote_assemble import DETAIL, DFD, PARTS, _at_release
-from .test_remote_ccr import PackClient, two_packs
+from .test_remote_ccr import PackClient, readable_packs, two_packs
 from .test_remote_config import (
     HAZARD,
     NOTED_CASES,
@@ -924,6 +925,70 @@ def test_a_failed_pack_exits_non_zero_and_names_it(
     # Nothing matched because the pack failed, which the line above says, so
     # a note about the filters would point the reader the wrong way.
     assert "No rule matched" not in err
+
+
+def test_an_unknown_pack_ends_with_what_it_probably_meant(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "ec3")
+
+    status = run_ccr_fetch(params, client=PackClient(readable_packs("aws-ec2")))  # type: ignore[arg-type]
+
+    [line] = capsys.readouterr().err.splitlines()
+    assert status == 1
+    assert line.startswith(Fore.RED + "ec3: manifest failed: ")
+    assert line.endswith("Did you mean aws-ec2?" + Fore.RESET)
+
+
+@pytest.mark.parametrize(
+    ("words", "expected"),
+    [
+        (
+            ("--service", "gemini-agent-platform"),
+            "No pack this key can read matches --service 'gemini-agent-platform'. "
+            "Did you mean gcp-vertex?",
+        ),
+        (
+            ("--provider", "gpc"),
+            "No pack this key can read matches --provider 'gpc'. Did you mean gcp?",
+        ),
+    ],
+    ids=["service", "provider"],
+)
+def test_a_narrowing_no_pack_has_exits_one_and_says_what_was_close(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    words: tuple[str, ...],
+    expected: str,
+) -> None:
+    params = _fetch_params(monkeypatch, *words)
+
+    status = run_ccr_fetch(params, client=PackClient(readable_packs("gcp-vertex")))  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    assert status == 1
+    # Nothing was selected, so there are no rows to print, and the reason is
+    # the narrowing, not a pack without such a rule.
+    assert captured.out == ""
+    assert captured.err == Fore.RED + expected + Fore.RESET + "\n"
+
+
+def test_main_reports_a_narrowing_no_pack_has_on_stderr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        remote_cli, "connect", lambda: PackClient(readable_packs("gcp-vertex"))
+    )
+    argv = ["tmxcaliber", "ccr", "fetch", "--service", "gemini-agent-platform"]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as exited:
+        cli_module.main()
+
+    captured = capsys.readouterr()
+    assert exited.value.code == 1
+    assert captured.out == ""
+    assert "Did you mean gcp-vertex?" in captured.err
 
 
 def test_a_refused_archive_is_reported_and_the_other_packs_are_written(

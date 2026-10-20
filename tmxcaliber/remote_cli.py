@@ -47,7 +47,7 @@ from .lib.remote.contract import (
     values_field,
     values_route,
 )
-from .lib.remote.errors import ConfigurationError, RemoteError
+from .lib.remote.errors import ConfigurationError, NoPackMatched, RemoteError
 from .lib.remote.operations import call_route, incompleteness_fields
 from .lib.remote.resolve import resolve_source
 
@@ -292,14 +292,16 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
 
     The files written for the packs that completed are printed even when
     another pack failed, and each failed pack gets one line on stderr saying
-    at which stage it failed and why.
+    at which stage it failed and why, ending with the packs it was probably
+    meant to be when it was named and is unknown.
 
     Args:
         params: The parsed arguments.
         client: A client to use, built from the environment when omitted.
 
     Returns:
-        The exit status: 0, 1 when a pack failed, 2 for a usage error.
+        The exit status: 0, 1 when a pack failed or the provider or service
+        given matches no pack this key can read, 2 for a usage error.
 
     Raises:
         RemoteError: On a failure that is not one pack's alone, such as a
@@ -313,19 +315,26 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    result = fetch(
-        client or connect(),
-        release_keys=tuple(params.release_keys),
-        providers=tuple(params.provider),
-        services=tuple(params.service),
-        wanted=RuleFilter(
-            controls=tuple(params.control),
-            modes=tuple(params.mode),
-            matchers=tuple(params.matcher),
-            files=tuple(params.file),
-        ),
-        out=Path(params.out) if params.out else None,
-    )
+    try:
+        result = fetch(
+            client or connect(),
+            release_keys=tuple(params.release_keys),
+            providers=tuple(params.provider),
+            services=tuple(params.service),
+            wanted=RuleFilter(
+                controls=tuple(params.control),
+                modes=tuple(params.mode),
+                matchers=tuple(params.matcher),
+                files=tuple(params.file),
+            ),
+            out=Path(params.out) if params.out else None,
+        )
+    except NoPackMatched as exc:
+        # Said on stderr like a failed pack, because the narrowing is what went
+        # wrong. Printing "[]" and "No rule matched" instead would read as packs
+        # that lack such a rule.
+        print(Fore.RED + str(exc) + Fore.RESET, file=sys.stderr)
+        return 1
     if params.out:
         for path in result.written:
             print(path)

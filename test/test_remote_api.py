@@ -130,6 +130,33 @@ def test_a_superseded_release_is_importable_where_every_route_failure_is() -> No
     assert "ReleaseSuperseded" in remote_package.__all__
 
 
+def test_a_narrowing_no_pack_has_is_importable_where_every_failure_is() -> None:
+    # `api.ccr.fetch(service=...)` raises it, so a caller has to be able to
+    # catch it from where the README says route failures come from.
+    from tmxcaliber import NoPackMatched as from_top
+    from tmxcaliber.lib.remote import NoPackMatched as from_remote
+
+    assert from_top is from_remote is errors_module.NoPackMatched
+    assert issubclass(from_top, errors_module.NotFound)
+    assert "NoPackMatched" in tmxcaliber.__all__
+    assert "NoPackMatched" in remote_package.__all__
+
+
+def test_fetch_raises_for_a_service_no_readable_pack_has(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = pack_backed_client(monkeypatch)
+
+    with pytest.raises(errors_module.NoPackMatched) as refused:
+        client.ccr.fetch(service="big qeury")
+
+    assert str(refused.value) == (
+        "No pack this key can read matches --service 'big qeury'. "
+        "Did you mean gcp-bigquery?"
+    )
+    assert refused.value.suggestions == ("gcp-bigquery",)
+
+
 def test_what_fetch_returns_is_importable_from_the_remote_package() -> None:
     from tmxcaliber.lib.remote import FetchResult as Result
     from tmxcaliber.lib.remote import PackFailure as Failure

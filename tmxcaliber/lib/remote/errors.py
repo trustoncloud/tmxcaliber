@@ -3,7 +3,7 @@
 One class per error code the API publishes, so a caller can branch on the
 failure rather than on a string. The codes themselves are owned by the API
 (`app/containers/public-api/src/errors.ts`); this module maps them and adds
-three local failures the server never sends.
+four local failures the server never sends.
 
 Every message carries the server's `requestId` when there is one, because the
 API's own contract is that a caller quotes it to support.
@@ -73,6 +73,26 @@ class NotFound(RemoteError):
     has no access to the API at all. They are deliberately indistinguishable,
     so a message that guessed between them would mislead.
     """
+
+
+class NoPackMatched(NotFound):
+    """No pack this key can read matches the provider or service asked for.
+
+    Local rather than served: the pack list answered, and none of its packs
+    is of that provider or service. It is a `NotFound`, because the API cannot
+    say either whether the pack exists or whether the key may read it. The
+    message names the filter and its value, and ends with a suggestion when a
+    listed pack or provider is close to what was typed.
+
+    Args:
+        message: Which filters matched nothing, and what was close.
+        suggestions: The listed packs or providers that were close, best
+            first; empty when none was.
+    """
+
+    def __init__(self, message: str, *, suggestions: tuple[str, ...] = ()) -> None:
+        super().__init__(message, code="no_pack_matched")
+        self.suggestions = suggestions
 
 
 class ReleaseSuperseded(RemoteError):

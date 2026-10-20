@@ -24,7 +24,7 @@ import tempfile
 import zipfile
 import zlib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Final
@@ -33,12 +33,14 @@ from .client import TocClient
 from .contract import Route, route_for
 from .errors import (
     ContractViolation,
+    NoPackMatched,
     NotFound,
     ReleaseSuperseded,
     RemoteError,
     ServiceUnavailable,
 )
 from .operations import call_route
+from .suggest import did_you_mean, suggest, suggest_provider
 
 #: The modes a rule can ship, as ccr_factory names them.
 MODES: Final[tuple[str, ...]] = ("universal", "allowlist", "denylist")
@@ -957,6 +959,9 @@ class PackFailure:
         status: The HTTP status, when the failure reached one.
         request_id: The server's identifier for the request, when it sent one.
         release_id: The release the manifest named, when the manifest was read.
+        suggestions: For a pack named by the caller that the API does not
+            know, the packs this key can read whose names are close to it,
+            best first. Empty otherwise, and when none is close.
     """
 
     release_key: str
@@ -966,6 +971,7 @@ class PackFailure:
     status: int | None = None
     request_id: str | None = None
     release_id: str | None = None
+    suggestions: tuple[str, ...] = ()
 
     @property
     def hint(self) -> str:
@@ -987,8 +993,9 @@ class PackFailure:
         Returns:
             ``<stage> failed: <message> [<code>, HTTP <status>, request <id>,
             release <id>]. <hint>``, leaving out each detail that is not known,
-            and the brackets when none is. The release id is cut to seven
-            characters, which tell releases apart as a short commit hash does.
+            and the brackets when none is, then ``Did you mean ...?`` when
+            there are suggestions. The release id is cut to seven characters,
+            which tell releases apart as a short commit hash does.
         """
         details = [
             detail
@@ -1001,14 +1008,18 @@ class PackFailure:
             if detail
         ]
         if details:
-            return (
+            line = (
                 f"{self.stage} failed: {self.message} [{', '.join(details)}]. "
                 f"{self.hint}"
             )
-        # The message is a sentence of its own, so a second full stop after it
-        # would read as a typing slip.
-        stop = "" if self.message.endswith((".", "!", "?")) else "."
-        return f"{self.stage} failed: {self.message}{stop} {self.hint}"
+        else:
+            # The message is a sentence of its own, so a second full stop after
+            # it would read as a typing slip.
+            stop = "" if self.message.endswith((".", "!", "?")) else "."
+            line = f"{self.stage} failed: {self.message}{stop} {self.hint}"
+        if self.suggestions:
+            line += f" {did_you_mean(self.suggestions)}"
+        return line
 
 
 @dataclass
@@ -1027,6 +1038,66 @@ class FetchResult:
     failed: dict[str, PackFailure] = field(default_factory=dict)
 
 
+def _listed_keys(client: TocClient) -> list[str]:
+    """Read the release key of every pack this key can read.
+
+    Args:
+        client: The client.
+
+    Returns:
+        Each listed pack's release key, in the API's order. A row without one
+        reads as the empty string.
+
+    Raises:
+        RemoteError: If the list cannot be read.
+    """
+    return [
+        str(row.get("releaseKey") or "")
+        for row in call_route(client, _route(("ccr", "packs", "list")), "", {}).result
+    ]
+
+
+def _no_pack_matched(
+    listed: Sequence[str], providers: Sequence[str], services: Sequence[str]
+) -> NoPackMatched:
+    """Describe a narrowing that left no pack, with what was close to it.
+
+    Suggestions come from the listed packs alone, so a pack or provider this
+    key cannot read is never named, whatever an alias says.
+
+    Args:
+        listed: The release keys of every pack this key can read.
+        providers: The providers asked for.
+        services: The services asked for.
+
+    Returns:
+        The error. Its message names each filter with its values, repeats of
+        one filter joined by "or" and different filters by "and", as the
+        filters combine. Its suggestions are, for each provider, the listed
+        providers close to it, then, for each service, the listed packs whose
+        key or service is close to it, without repeats.
+    """
+    keys = [key for key in listed if key]
+    present = {key.partition("-")[0] for key in keys}
+    named = [
+        f"--{flag} " + " or ".join(repr(value) for value in values)
+        for flag, values in (("provider", providers), ("service", services))
+        if values
+    ]
+    found: list[str] = []
+    for value in providers:
+        found += [
+            provider for provider in suggest_provider(value) if provider in present
+        ]
+    for value in services:
+        found += suggest(value, keys)
+    suggestions = tuple(dict.fromkeys(found))
+    message = f"No pack this key can read matches {' and '.join(named)}."
+    if suggestions:
+        message += f" {did_you_mean(suggestions)}"
+    return NoPackMatched(message, suggestions=suggestions)
+
+
 def _pack_keys(
     client: TocClient,
     release_keys: Sequence[str],
@@ -1043,12 +1114,17 @@ def _pack_keys(
 
     Returns:
         The release keys, in the order they will be read.
+
+    Raises:
+        NoPackMatched: If a provider or service was given and no listed pack
+            has it. Read as "no rule matched", a misspelled or renamed
+            service would look like a pack with no such rule.
     """
     if release_keys:
         return list(dict.fromkeys(release_keys))
+    listed = _listed_keys(client)
     keys: list[str] = []
-    for row in call_route(client, _route(("ccr", "packs", "list")), "", {}).result:
-        key = str(row.get("releaseKey") or "")
+    for key in listed:
         # A release key is `<provider>-<service>`, split on its first hyphen,
         # as the API splits it to check entitlement.
         provider, _, service = key.partition("-")
@@ -1057,7 +1133,27 @@ def _pack_keys(
         if services and service not in services:
             continue
         keys.append(key)
+    if (providers or services) and not keys:
+        raise _no_pack_matched(listed, providers, services)
     return keys
+
+
+def _readable_keys(client: TocClient) -> list[str]:
+    """Read the packs this key can read, for suggestions, never failing.
+
+    A suggestion is a courtesy on a pack that has already failed, so a list
+    that cannot be read costs the caller the suggestion and nothing else.
+
+    Args:
+        client: The client.
+
+    Returns:
+        The listed release keys, or none when the list cannot be read.
+    """
+    try:
+        return [key for key in _listed_keys(client) if key]
+    except RemoteError:
+        return []
 
 
 #: The errors that end only the pack they arise in, by the stage they arise at.
@@ -1198,6 +1294,13 @@ def fetch(
     propagates instead: a credential, permission or rate limit failure, and an
     outage that reaches the pack list or a manifest.
 
+    **A mistyped name gets a suggestion.** A named pack the API does not know
+    carries the packs this key can read whose names are close to it, and a
+    provider or service that leaves no pack raises with the same kind of
+    suggestion. Either is drawn only from ``ccr packs list``, so a pack outside
+    the key's subscription is never named. For named packs the list is read
+    at most once, and only after the first unknown one.
+
     Args:
         client: The client.
         release_keys: Packs to read. Every entitled pack when empty.
@@ -1211,14 +1314,26 @@ def fetch(
 
     Raises:
         ValueError: If packs are named and also narrowed by provider or service.
+        NoPackMatched: If a provider or service was given and no pack this key
+            can read has it. Nothing past the list is read then.
         RemoteError: On a failure that is not one pack's alone.
     """
     if release_keys and (providers or services):
         raise ValueError("Name packs, or narrow by provider and service, not both.")
     result = FetchResult()
+    readable: list[str] | None = None
     for key in _pack_keys(client, release_keys, providers, services):
         outcome = _fetch_pack(client, key, wanted, out)
         if isinstance(outcome, PackFailure):
+            # Only a name the caller typed can be mistyped. A listed pack that
+            # is not found was withdrawn between the two reads.
+            if release_keys and (outcome.stage, outcome.code) == (
+                "manifest",
+                "not_found",
+            ):
+                if readable is None:
+                    readable = _readable_keys(client)
+                outcome = replace(outcome, suggestions=tuple(suggest(key, readable)))
             result.failed[key] = outcome
             continue
         rows, written = outcome
