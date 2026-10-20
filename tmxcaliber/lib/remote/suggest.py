@@ -79,11 +79,14 @@ PROVIDERS: Final[tuple[str, ...]] = ("aws", "azure", "gcp")
 #:
 #: Collected from three places: the display names in ccr_factory's
 #: ``services.json``, the ``service_name`` and ``other_covered_services`` of
-#: each ThreatModel, and the user's note that Google renamed Vertex AI to
-#: Gemini Agent Platform while the ThreatModel and the pack keep the key
-#: ``gcp-vertex``. It is a starting set. The names belong to the ThreatModel
-#: team, which should eventually publish them as metadata, so that this table
-#: no longer has to be kept by hand.
+#: each ThreatModel, and Google's "Gemini Enterprise Agent Platform name
+#: changes" page
+#: (https://docs.cloud.google.com/gemini-enterprise-agent-platform/vertex-ai-name-changes),
+#: which renames Vertex AI and its Workbench while the ThreatModels and the
+#: packs keep the keys ``gcp-vertex`` and ``gcp-notebooks``. It is a starting
+#: set. The names belong to the ThreatModel team, which should eventually
+#: publish them as metadata, so that this table no longer has to be kept by
+#: hand.
 #:
 #: The gcp-vertex ThreatModel spells one of its products "Collab Enterprise",
 #: and Google spells it "Colab Enterprise". Both are listed, so each is an exact
@@ -94,18 +97,43 @@ PROVIDERS: Final[tuple[str, ...]] = ("aws", "azure", "gcp")
 #: listed. A short form that begins no listed name, such as ``kms`` for Cloud
 #: KMS, is listed as it is, since no rule reaches it from the full name.
 _NAMES: Final[Mapping[str, tuple[str, ...]]] = {
-    "aws-s3": ("s3", "simple storage service"),
-    "aws-ec2": ("ec2", "elastic compute cloud", "elastic block store", "ebs"),
+    "aws-s3": ("s3", "simple storage service", "s3 glacier", "glacier"),
+    "aws-ec2": (
+        "ec2",
+        "elastic compute cloud",
+        "elastic block store",
+        "ebs",
+        "ec2 spot instances",
+        "spot instances",
+        "deep learning amis",
+        "deep learning ami",
+    ),
     "aws-autoscaling": ("auto scaling", "ec2 auto scaling", "autoscaling"),
     "aws-transfer": ("transfer family", "transfer"),
     "aws-eks": ("eks", "elastic kubernetes service"),
     "aws-bedrock": ("bedrock",),
     "aws-bedrockagentcore": ("agentcore", "agent core", "bedrock agentcore"),
     "aws-secretsmanager": ("secrets manager",),
-    "azure-storage": ("storage", "storage account", "blob storage"),
+    "azure-storage": (
+        "storage",
+        "storage account",
+        "blob storage",
+        "blobs",
+        "files",
+        "queues",
+        "tables",
+        "data lake storage",
+        "adls",
+    ),
     "azure-keyvault": ("key vault",),
     "azure-sql": ("sql database",),
-    "gcp-bigquery": ("bigquery", "big query"),
+    "gcp-bigquery": (
+        "bigquery",
+        "big query",
+        "bigquery data transfer service",
+        "data transfer service",
+        "analytics hub",
+    ),
     "gcp-pubsub": ("pub sub", "pubsub"),
     "gcp-vertex": (
         "vertex",
@@ -114,13 +142,40 @@ _NAMES: Final[Mapping[str, tuple[str, ...]]] = {
         "gemini enterprise agent platform",
         "collab enterprise",
         "colab enterprise",
+        "agent platform",
+        "vertex ai platform",
+        "agent platform colab enterprise",
+        "gemini enterprise agent platform colab enterprise",
     ),
-    "gcp-notebooks": ("vertex ai workbench", "workbench", "notebooks"),
+    "gcp-notebooks": (
+        "vertex ai workbench",
+        "workbench",
+        "notebooks",
+        "agent platform workbench",
+        "workbench instances",
+        "vertex ai workbench instances",
+        "agent platform notebooks",
+        "vertex ai notebooks",
+    ),
     "gcp-gke": ("gke", "kubernetes engine", "google kubernetes engine"),
     "gcp-cloudsql": ("cloud sql",),
-    "gcp-cloudkms": ("cloud kms", "kms", "key management service"),
-    "gcp-iam": ("iam",),
-    "gcp-compute": ("compute engine", "gce"),
+    "gcp-cloudkms": (
+        "cloud kms",
+        "kms",
+        "key management service",
+        "cloud key management service",
+    ),
+    "gcp-iam": ("iam", "identity and access management", "policy troubleshooter"),
+    "gcp-compute": (
+        "compute engine",
+        "gce",
+        "confidential vms",
+        "confidential vm",
+        "cloud armor",
+        "cloud load balancing",
+        "load balancing",
+        "private service connect",
+    ),
 }
 
 #: Other names for each provider, written as `_canonical` leaves them. The

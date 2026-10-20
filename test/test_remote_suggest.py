@@ -399,6 +399,27 @@ def test_either_spelling_of_colab_enterprise_reaches_vertex(query: str) -> None:
     assert suggest(query, KEYS) == ["gcp-vertex"]
 
 
+@pytest.mark.parametrize(
+    ("query", "first"),
+    [
+        # Google's Vertex AI name changes: Workbench went with the rename, and
+        # without its own names it would be read as a near miss of gcp-vertex.
+        ("Agent Platform Workbench", "gcp-notebooks"),
+        ("Gemini Enterprise Agent Platform", "gcp-vertex"),
+        ("Agent Platform", "gcp-vertex"),
+        ("Colab Enterprise", "gcp-vertex"),
+        # Services a ThreatModel says it also covers.
+        ("Azure Blobs", "azure-storage"),
+        ("Cloud Armor", "gcp-compute"),
+        ("Amazon S3 Glacier", "aws-s3"),
+    ],
+)
+def test_an_official_or_covered_name_leads_to_its_pack_first(
+    query: str, first: str
+) -> None:
+    assert suggest(query, KEYS)[0] == first
+
+
 def test_a_slip_in_colab_enterprise_still_reaches_vertex() -> None:
     # A near miss of the alias, which no longer carries either spelling alone.
     assert suggest("Colaab Enterprise", KEYS) == ["gcp-vertex"]
