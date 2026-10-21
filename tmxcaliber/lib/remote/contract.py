@@ -20,6 +20,7 @@ than a 404 for whoever runs it.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
@@ -101,7 +102,7 @@ ROUTES: Final[tuple[Route, ...]] = (
         path="/v1/threatmodels/{provider}/{service}/threats",
         command=("threatmodels", "threats"),
         paged=True,
-        filters=("feature_class", "release"),
+        filters=("featureClass", "release"),
         positional="tm_id",
         summary="A ThreatModel's threats.",
     ),
@@ -109,7 +110,7 @@ ROUTES: Final[tuple[Route, ...]] = (
         path="/v1/threatmodels/{provider}/{service}/controls",
         command=("threatmodels", "controls"),
         paged=True,
-        filters=("feature_class", "release"),
+        filters=("featureClass", "release"),
         positional="tm_id",
         summary="A ThreatModel's controls.",
     ),
@@ -117,7 +118,7 @@ ROUTES: Final[tuple[Route, ...]] = (
         path="/v1/threatmodels/{provider}/{service}/actions",
         command=("threatmodels", "actions"),
         paged=True,
-        filters=("feature_class", "release"),
+        filters=("featureClass", "release"),
         positional="tm_id",
         summary="A ThreatModel's actions.",
     ),
@@ -174,10 +175,9 @@ ROUTES: Final[tuple[Route, ...]] = (
 
 #: Routes the client deliberately does not bind.
 #:
-#: Empty, and it should stay that way. An entry here is a published route a
-#: caller cannot reach through this tool, so each one needs a reason and the
-#: list may only ever shrink.
-UNBOUND: Final[frozenset[str]] = frozenset()
+#: The archive is binary; this client only handles JSON responses. Keeping the
+#: omission explicit holds the route table against the complete API contract.
+UNBOUND: Final[frozenset[str]] = frozenset({"/v1/ccr/packs/{releaseKey}/archive"})
 
 
 @lru_cache(maxsize=1)
@@ -199,6 +199,25 @@ def documented_paths() -> frozenset[str]:
         The path templates.
     """
     return frozenset(contract()["paths"])
+
+
+def row_properties(path: str) -> dict[str, Any]:
+    """Read a collection's row properties from the vendored contract.
+
+    Args:
+        path: The route's OpenAPI path template.
+
+    Returns:
+        The live row's property schemas, including canonical key metadata.
+    """
+    response = contract()["paths"][path]["get"]["responses"]["200"]
+    schema = response["content"]["application/json"]["schema"]
+    member = next(part for part in schema["allOf"] if "properties" in part)
+    reference = member["properties"]["items"]["items"]["$ref"]
+    row = contract()["components"]["schemas"][reference.rsplit("/", 1)[-1]]
+    live = row["oneOf"][0] if "oneOf" in row else row
+    properties: dict[str, Any] = live["properties"]
+    return properties
 
 
 def route_for(command: tuple[str, ...]) -> Route | None:
@@ -292,8 +311,19 @@ def values_field(filter_name: str) -> str:
     Returns:
         The field, in the API's camelCase (``framework`` -> ``frameworkId``).
     """
-    head, *rest = filter_name.split("_")
-    return head + "".join(word.title() for word in rest) + "Id"
+    return f"{filter_name}Id"
+
+
+def python_name(api_name: str) -> str:
+    """Spell an API parameter as a Python keyword or argparse destination.
+
+    Args:
+        api_name: The camelCase query parameter from OpenAPI.
+
+    Returns:
+        Its snake_case spelling.
+    """
+    return re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\1", api_name).lower()
 
 
 def route_for_path(path: str) -> Route | None:

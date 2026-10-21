@@ -350,6 +350,32 @@ def test_the_api_commands_are_reachable_from_the_parser(
     assert params.tm_id == "aws-s3"
 
 
+def test_feature_class_option_sends_the_camelcase_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI keeps its kebab-case option while the wire uses camelCase."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tmxcaliber",
+            "threatmodels",
+            "threats",
+            "aws-s3",
+            "--feature-class",
+            "S3.FC1",
+        ],
+    )
+    params = cli_module.get_params()
+    client = StubClient()
+
+    run_api_command(params, client=client)  # type: ignore[arg-type]
+
+    assert client.calls == [
+        ("/v1/threatmodels/aws/s3/threats", {"featureClass": "S3.FC1", "release": ""})
+    ]
+
+
 def _help_of(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

@@ -17,6 +17,7 @@ from tmxcaliber.lib.remote.config import DEFAULT_BASE_URL
 from tmxcaliber.lib.remote.contract import (
     ROUTES,
     Route,
+    python_name,
     required_page_fields,
     required_parameters,
 )
@@ -91,7 +92,7 @@ def call_arguments(route: Route) -> tuple[tuple[str, ...], dict[str, str]]:
         The positional arguments and the keyword arguments.
     """
     args = (POSITIONAL_VALUES[route.positional],) if route.positional else ()
-    return args, {name: f"{name}-value" for name in route.filters}
+    return args, {python_name(name): f"{name}-value" for name in route.filters}
 
 
 def test_the_client_is_importable_from_the_package() -> None:
@@ -116,7 +117,8 @@ def test_every_route_calls_its_own_path_with_its_filters(route: Route) -> None:
     opener = FakeOpener([FakeResponse(answer)])
     client = Client(opener=opener)
     args, kwargs = call_arguments(route)
-    expected_path, expected_query = request_for(route, args[0] if args else "", kwargs)
+    wire = {name: kwargs[python_name(name)] for name in route.filters}
+    expected_path, expected_query = request_for(route, args[0] if args else "", wire)
 
     # Act
     operation_for(client, route)(*args, **kwargs)
@@ -132,12 +134,14 @@ def test_the_signature_reads_like_the_cli_command(route: Route) -> None:
     parameters = inspect.signature(operation_for(Client(), route)).parameters
 
     names = [name for name in parameters if name not in ("limit", "allow_incomplete")]
-    expected = ([route.positional] if route.positional else []) + list(route.filters)
+    expected = ([route.positional] if route.positional else []) + [
+        python_name(name) for name in route.filters
+    ]
     assert names == expected
     assert ("limit" in parameters) is route.paged
     assert ("allow_incomplete" in parameters) is bool(incompleteness_fields(route))
     for name in required_parameters(route.path) & set(route.filters):
-        assert parameters[name].default is inspect.Parameter.empty
+        assert parameters[python_name(name)].default is inspect.Parameter.empty
 
 
 def test_a_paged_route_returns_every_row_across_pages() -> None:
@@ -158,6 +162,21 @@ def test_a_paged_route_returns_every_row_across_pages() -> None:
         "limit": "1",
         "cursor": "next",
     }
+
+
+def test_python_feature_class_keyword_uses_snake_case() -> None:
+    route = next(
+        route for route in ROUTES if route.command == ("threatmodels", "threats")
+    )
+    opener = FakeOpener([FakeResponse(page(route, []))])
+    client = Client(opener=opener)
+
+    client.threatmodels.threats("aws-s3", feature_class="S3.FC1")
+
+    sent = urllib.parse.urlsplit(opener.requests[0].full_url)
+    assert dict(urllib.parse.parse_qsl(sent.query))["featureClass"] == "S3.FC1"
+    with pytest.raises(TypeError):
+        client.threatmodels.threats("aws-s3", featureClass="S3.FC1")
 
 
 def test_a_pinned_reference_sends_its_release() -> None:
