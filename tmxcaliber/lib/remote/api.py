@@ -10,7 +10,7 @@ is a method here and a command there, with no naming decision in between:
     api = Client()                         # tmxcaliber me
     api.me()
     api.threatmodels.list(provider="aws")  # tmxcaliber threatmodels list --provider aws
-    api.threatmodels.threats("aws-s3", feature_class="S3.FC1")
+    api.threatmodels.threats("aws-s3", feature_class_id="S3.FC1")
 
 A route's positional is the method's one positional argument, its filters are
 keyword arguments, and a paged route returns every row, as the CLI does.

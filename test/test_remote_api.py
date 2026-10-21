@@ -171,12 +171,12 @@ def test_python_feature_class_keyword_uses_snake_case() -> None:
     opener = FakeOpener([FakeResponse(page(route, []))])
     client = Client(opener=opener)
 
-    client.threatmodels.threats("aws-s3", feature_class="S3.FC1")
+    client.threatmodels.threats("aws-s3", feature_class_id="S3.FC1")
 
     sent = urllib.parse.urlsplit(opener.requests[0].full_url)
-    assert dict(urllib.parse.parse_qsl(sent.query))["featureClass"] == "S3.FC1"
+    assert dict(urllib.parse.parse_qsl(sent.query))["featureClassId"] == "S3.FC1"
     with pytest.raises(TypeError):
-        client.threatmodels.threats("aws-s3", featureClass="S3.FC1")
+        client.threatmodels.threats("aws-s3", featureClassId="S3.FC1")
 
 
 def test_a_pinned_reference_sends_its_release() -> None:
