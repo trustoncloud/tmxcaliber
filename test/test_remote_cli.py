@@ -18,6 +18,7 @@ from tmxcaliber.lib.remote.client import TocClient
 from tmxcaliber.lib.remote.config import Settings
 from tmxcaliber.lib.remote.contract import (
     ROUTES,
+    page_maximum,
     response_media_type,
     route_for,
     route_for_path,
@@ -973,6 +974,47 @@ def test_a_name_the_api_does_not_know_is_followed_by_what_it_probably_meant(
     assert list_route is not None
     assert urllib.parse.urlsplit(opener.requests[1].full_url).path == list_route.path
     assert opener.answers == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "listing", "rows", "before"),
+    [
+        pytest.param(
+            ["ccr", "packs", "get", "aws-ec3"],
+            ("ccr", "packs", "list"),
+            PACKS,
+            [http_error(404, MISSING)],
+            id="after a 404",
+        ),
+        pytest.param(
+            ["threatmodels", "get", "Amazon EC2"],
+            ("threatmodels", "list"),
+            THREATMODELS,
+            [],
+            id="after a name no reference has",
+        ),
+    ],
+)
+def test_the_list_a_suggestion_reads_is_walked_at_its_largest_page(
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    listing: tuple[str, ...],
+    rows: list[dict[str, Any]],
+    before: list[Any],
+) -> None:
+    # Every call of the walk counts against the same hourly budget as the
+    # command, and the contract states how many rows a page may hold.
+    list_route = route_for(listing)
+    assert list_route is not None
+    largest = page_maximum(list_route.path)
+    assert largest
+
+    status, opener = _main_over(monkeypatch, [*before, _listing(listing, rows)], argv)
+
+    sent = urllib.parse.urlsplit(opener.requests[-1].full_url)
+    assert status == 1
+    assert sent.path == list_route.path
+    assert urllib.parse.parse_qs(sent.query) == {"limit": [str(largest)]}
 
 
 @pytest.mark.parametrize(

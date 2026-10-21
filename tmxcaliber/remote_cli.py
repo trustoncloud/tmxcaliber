@@ -40,6 +40,7 @@ from .lib.remote.config import (
 from .lib.remote.contract import (
     ROUTES,
     Route,
+    page_maximum,
     python_name,
     required_parameters,
     route_for_path,
@@ -410,7 +411,12 @@ def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
     listing = route_for_path(collection)
     assert listing is not None, f"{collection} is not bound"
     try:
-        rows = call_route(client, listing, "", {}).result
+        # Walked at the largest page the contract allows, as every collection
+        # is, because each call of the walk spends the same hourly budget as
+        # the command that failed.
+        rows = call_route(
+            client, listing, "", {}, limit=page_maximum(listing.path) or 0
+        ).result
     except RemoteError:
         return ""
     names = [str(row.get(name_field) or "") for row in rows]
