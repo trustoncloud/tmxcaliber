@@ -62,7 +62,7 @@ PARTS: dict[str, list[dict[str, Any]]] = {
     "threats": [
         {
             "threatId": "S3.T1",
-            "featureClass": "S3.FC1",
+            "featureClassId": "S3.FC1",
             "name": "Bucket takeover",
             "description": "An attacker recreates a deleted bucket name.",
             "access": {"OPTIONAL": "s3:DeleteBucket"},
@@ -79,7 +79,7 @@ PARTS: dict[str, list[dict[str, Any]]] = {
             "controlId": "S3.C1",
             "coso": "Preventative",
             "nistCsf": "Protect",
-            "objective": "S3.CO1",
+            "objectiveId": "S3.CO1",
             "retired": False,
             "description": "Block all unencrypted requests.",
             "testing": "Make an unencrypted call; it should fail.",
@@ -97,7 +97,7 @@ PARTS: dict[str, list[dict[str, Any]]] = {
                     "cvss": "Medium",
                 }
             ],
-            "featureClass": ["S3.FC1"],
+            "featureClassIds": ["S3.FC1"],
             "weightedPriority": "High",
             "weightedPriorityScore": 3,
         }
@@ -108,7 +108,7 @@ PARTS: dict[str, list[dict[str, Any]]] = {
             "actionDescription": "Aborts a multipart upload.",
             "api": "AbortMultipartUpload",
             "endpoint": "s3",
-            "featureClass": "S3.FC1",
+            "featureClassId": "S3.FC1",
             "featureClassActionType": "other",
             "iamPermission": "s3:AbortMultipartUpload",
             "eventName": "Data-AWS::S3::Object-AbortMultipartUpload",
@@ -231,7 +231,10 @@ def test_the_assembled_document_satisfies_the_canonical_schema() -> None:
 
     assert document["threats"]["S3.T1"]["feature_class"] == "S3.FC1"
     assert document["threats"]["S3.T1"]["access"] == {"OPTIONAL": "s3:DeleteBucket"}
+    assert document["controls"]["S3.C1"]["objective"] == "S3.CO1"
+    assert document["controls"]["S3.C1"]["feature_class"] == ["S3.FC1"]
     assert document["controls"]["S3.C1"]["mitigate"][0]["max_dependency"] == 4.0
+    assert document["actions"]["S3.A1"]["feature_class"] == "S3.FC1"
 
 
 def test_the_sections_are_keyed_by_entity_id() -> None:
