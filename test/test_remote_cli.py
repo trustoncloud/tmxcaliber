@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import json
 import pathlib
 import sys
+import urllib.parse
 from argparse import Namespace
 from collections.abc import Iterator, Mapping
 from typing import Any, NoReturn
@@ -12,14 +14,35 @@ from typing import Any, NoReturn
 import pytest
 
 from tmxcaliber import cli as cli_module
-from tmxcaliber import remote_cli
+from tmxcaliber import console, remote_cli
+from tmxcaliber.lib.remote.ccr import PackFailure
+from tmxcaliber.lib.remote.client import TocClient
 from tmxcaliber.lib.remote.config import Settings
-from tmxcaliber.lib.remote.contract import route_for
-from tmxcaliber.lib.remote.errors import AuthenticationError
+from tmxcaliber.lib.remote.contract import (
+    ROUTES,
+    route_for,
+    route_for_path,
+    row_properties,
+)
+from tmxcaliber.lib.remote.errors import (
+    AuthenticationError,
+    NotFound,
+    ServiceUnavailable,
+)
 from tmxcaliber.lib.remote.resolve import resolve_source
-from tmxcaliber.remote_cli import connect, resolve_command_source, run_api_command
+from tmxcaliber.remote_cli import (
+    connect,
+    resolve_command_source,
+    run_api_command,
+    run_ccr_fetch,
+)
 
+from .test_console import Stream
+from .test_remote_api import page
 from .test_remote_assemble import DETAIL, DFD, PARTS, _at_release
+from .test_remote_ccr import UNKNOWN_HINT, PackClient, readable_packs, two_packs
+from .test_remote_client import FakeOpener, FakeResponse, StrictOpener, http_error
+from .test_remote_client import settings as client_settings
 from .test_remote_config import (
     HAZARD,
     NOTED_CASES,
@@ -27,6 +50,7 @@ from .test_remote_config import (
     STORED_URL,
     EndpointCase,
 )
+from .test_remote_suggest import THREATMODELS as CATALOGUE
 
 
 class StubClient:
@@ -348,8 +372,11 @@ def test_no_credential_exits_one_and_opens_no_socket(
     with pytest.raises(SystemExit) as caught:
         cli_module.main()
 
+    captured = capsys.readouterr()
     assert caught.value.code == 1
-    assert "TOC_API_KEY" in capsys.readouterr().out
+    # On stderr, so a redirected command keeps only results in the redirect.
+    assert captured.out == ""
+    assert "TOC_API_KEY" in captured.err
 
 
 def test_the_api_commands_are_reachable_from_the_parser(
@@ -439,6 +466,36 @@ def test_ccr_pack_get_names_the_id_list_reports(
     assert "ccr packs list" in text
 
 
+def test_every_written_option_help_names_a_bound_route_and_its_option() -> None:
+    """A route the contract renames cannot leave its written help behind.
+
+    `OPTION_HELP` is looked up by path, so a stale key would only drop the
+    written text back to the generated "filter by" wording, with no failure.
+    """
+    for path, options in remote_cli.OPTION_HELP.items():
+        route = route_for_path(path)
+        assert route is not None, path
+        assert set(options) <= set(route.filters), path
+
+
+def test_every_positional_route_suggests_from_a_list_that_carries_its_name() -> None:
+    """A field the contract renames cannot leave a suggestion reading nothing.
+
+    A row without the name field reads as an empty name, so a stale field
+    would end every suggestion quietly.
+    """
+    for route in ROUTES:
+        if route.positional:
+            collection = route.path.partition("{")[0].rstrip("/")
+            assert collection in remote_cli.NAME_LISTS, route.path
+    for collection, (name, title) in remote_cli.NAME_LISTS.items():
+        listing = route_for_path(collection)
+        assert listing is not None and listing.paged, collection
+        fields = row_properties(collection)
+        assert name in fields, collection
+        assert title is None or title in fields, collection
+
+
 def test_an_optional_filter_keeps_its_wording(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -446,6 +503,33 @@ def test_an_optional_filter_keeps_its_wording(
 
     assert "filter by provider." in text
     assert "required arguments:" not in text
+
+
+def test_the_archive_options_say_what_they_choose(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Neither option narrows a collection, so "filter by kind." and "filter by
+    # release." told the reader nothing about what to pass.
+    text = " ".join(_help_of(monkeypatch, capsys, ["ccr", "packs", "archive"]).split())
+
+    assert (
+        "which archive to download: source (the default, the rule tree) or deploy "
+        "(the Terraform package)." in text
+    )
+    assert (
+        "the release to pin the download to, as `tmxcaliber ccr packs get` reports "
+        "it; the API refuses a release it no longer publishes." in text
+    )
+    assert "filter by kind" not in text
+    assert "filter by release" not in text
+
+
+def test_a_release_filter_elsewhere_keeps_its_wording(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = _help_of(monkeypatch, capsys, ["threatmodels", "get"])
+
+    assert "filter by release." in text
 
 
 def test_a_second_credential_does_not_read_the_first_one_s_cache(
@@ -697,3 +781,1311 @@ def _never_called() -> NoReturn:
         AssertionError: Always.
     """
     raise AssertionError("a local source reached for a credential")
+
+
+class BytesStubClient(StubClient):
+    """Answers a binary route with a fixed archive."""
+
+    archive = b"PK\x03\x04\xff"
+
+    def get_bytes(self, path: str, params: Mapping[str, str] | None = None) -> bytes:
+        """Answer a binary call.
+
+        Args:
+            path: The path.
+            params: The query.
+
+        Returns:
+            The archive.
+        """
+        self.calls.append((path, dict(params or {})))
+        return self.archive
+
+
+def test_the_archive_command_needs_a_file_to_write_to(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        sys, "argv", ["tmxcaliber", "ccr", "packs", "archive", "aws-s3"]
+    )
+
+    with pytest.raises(SystemExit):
+        cli_module.get_params()
+
+    assert "--output" in capsys.readouterr().err
+
+
+def test_the_archive_command_writes_the_bytes(tmp_path: pathlib.Path) -> None:
+    route = route_for(("ccr", "packs", "archive"))
+    assert route is not None
+    params = Namespace(api_route=route, tm_id="aws-s3", kind="deploy", release="")
+    client = BytesStubClient()
+
+    result, kind = run_api_command(params, client=client)  # type: ignore[arg-type]
+    cli_module.output_result(str(tmp_path / "pack.zip"), result, kind)
+
+    assert kind == "bytes"
+    assert (tmp_path / "pack.zip").read_bytes() == BytesStubClient.archive
+    assert client.calls == [
+        ("/v1/ccr/packs/aws-s3/archive", {"kind": "deploy", "release": ""})
+    ]
+
+
+def test_the_archive_command_says_how_much_it_wrote_and_where(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A relative --output still names the file wherever the command was run.
+    monkeypatch.chdir(tmp_path)
+    archive = bytes(range(256)) * 360 + b"PK"
+
+    cli_module.output_result("pack.zip", archive, "bytes")
+
+    captured = capsys.readouterr()
+    assert (tmp_path / "pack.zip").read_bytes() == archive
+    assert captured.out == ""
+    assert captured.err == f"✔ Wrote 92,162 bytes to {tmp_path / 'pack.zip'}\n"
+
+
+def _fetch_params(monkeypatch: pytest.MonkeyPatch, *words: str) -> Namespace:
+    """Parse a `ccr fetch` command through the real parser.
+
+    Args:
+        monkeypatch: Sets argv.
+        *words: The words after `ccr fetch`.
+
+    Returns:
+        The parsed arguments.
+    """
+    monkeypatch.setattr(sys, "argv", ["tmxcaliber", "ccr", "fetch", *words])
+    return cli_module.get_params()
+
+
+def test_fetch_parses_every_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    params = _fetch_params(
+        monkeypatch,
+        "aws-s3",
+        "--control",
+        "S3.C20",
+        "--mode",
+        "allowlist",
+        "--matcher",
+        "terraform",
+        "--file",
+        "*.rego",
+        "--out",
+        "rules",
+    )
+
+    assert params.ccr_fetch is True
+    assert params.tm_ids == ["aws-s3"]
+    assert (params.control, params.mode, params.matcher, params.file) == (
+        ["S3.C20"],
+        ["allowlist"],
+        ["terraform"],
+        ["*.rego"],
+    )
+    assert params.out == "rules"
+
+
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [("--mode", "sometimes"), ("--mode", "Universal"), ("--matcher", "clouds")],
+)
+def test_fetch_refuses_an_unknown_mode_or_matcher_as_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    option: str,
+    value: str,
+) -> None:
+    # argparse refuses it before `RuleFilter` can, so the command line keeps
+    # its usage line and exit status 2 instead of a ValueError traceback.
+    with pytest.raises(SystemExit) as exited:
+        _fetch_params(monkeypatch, option, value)
+
+    assert exited.value.code == 2
+    assert f"invalid choice: '{value}'" in capsys.readouterr().err
+
+
+def test_fetch_prints_rows_as_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "--control", "S3.C20")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    assert status == 0
+    assert [row["ruleId"] for row in json.loads(capsys.readouterr().out)] == ["S3.C20"]
+
+
+def test_fetch_with_no_match_prints_an_empty_list_and_a_note(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "--control", "Nothing.C1")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert json.loads(captured.out) == []
+    assert captured.err == "ⓘ No rule matched the filters given.\n"
+
+
+def test_fetch_with_no_match_and_out_says_nothing_was_written(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    params = _fetch_params(
+        monkeypatch, "--control", "Nothing.C1", "--out", str(tmp_path)
+    )
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert captured.out == ""
+    assert captured.err == (
+        "ⓘ No rule matched the filters given. Nothing was written.\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("words", "counts"),
+    [
+        (("aws-s3", "--control", "S3.C21"), "1 rule and 1 file selected from 1 pack"),
+        (("aws-s3", "--control", "S3.C20"), "1 rule and 2 files selected from 1 pack"),
+        ((), "3 rules and 4 files selected from 2 packs"),
+    ],
+    ids=["one of each", "two files", "many of each"],
+)
+def test_a_preview_says_nothing_was_written_and_how_to_write(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    words: tuple[str, ...],
+    counts: str,
+) -> None:
+    # A preview's JSON reads like the files themselves, so stderr says plainly
+    # that nothing was downloaded, while stdout stays pure JSON.
+    params = _fetch_params(monkeypatch, *words)
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert isinstance(json.loads(captured.out), list)
+    assert captured.err == (
+        f"ⓘ Preview only, nothing was written: {counts}.\n"
+        "  Add --out DIR to download and write them.\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("words", "counts"),
+    [
+        (("aws-s3", "--file", "*.rego"), "1 file for 1 rule from 1 pack"),
+        ((), "4 files for 3 rules from 2 packs"),
+    ],
+    ids=["one of each", "many of each"],
+)
+def test_out_says_what_it_wrote_and_names_the_folder_in_full(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    words: tuple[str, ...],
+    counts: str,
+) -> None:
+    # Given as a relative folder, so the line has to resolve it for the reader
+    # to find the files, while stdout keeps the paths as they were given.
+    monkeypatch.chdir(tmp_path)
+    params = _fetch_params(monkeypatch, *words, "--out", "rules")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert all(line.startswith("rules") for line in captured.out.splitlines())
+    assert captured.err.splitlines()[-1] == (
+        f"✔ Wrote {counts} to {tmp_path / 'rules'}"
+    )
+
+
+def test_out_with_every_selected_pack_failed_says_nothing_was_written(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = PackClient(two_packs())
+    client.archive_errors["aws-s3"] = ServiceUnavailable(
+        "Refused.", code="unavailable", status=503
+    )
+    params = _fetch_params(monkeypatch, "--control", "S3.C20", "--out", str(tmp_path))
+
+    status = run_ccr_fetch(params, client=client)  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    assert status == 1
+    assert captured.out == ""
+    assert captured.err.splitlines()[0].startswith("✖ aws-s3: archive failed: ")
+    assert captured.err.splitlines()[-1] == f"✖ Nothing was written to {tmp_path}"
+
+
+def test_the_fetch_help_says_it_only_previews_without_out(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = " ".join(_help_of(monkeypatch, capsys, ["ccr", "fetch"]).split())
+
+    assert "Without --out it only previews" in text
+    assert "prints the selection as JSON and writes nothing" in text
+    assert "downloads each pack's archive and writes the selected files under " in text
+    assert "DIR/<ThreatModel id>/<rule id>/" in text
+
+
+def test_fetch_names_its_packs_as_ccr_packs_get_does(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Both commands take a pack by the ThreatModel id the pack list reports."""
+    fetch_help = " ".join(_help_of(monkeypatch, capsys, ["ccr", "fetch"]).split())
+    get_help = _help_of(monkeypatch, capsys, ["ccr", "packs", "get"])
+
+    assert "[TMID ...]" in fetch_help
+    assert "by ThreatModel id, as `tmxcaliber ccr packs list` reports" in fetch_help
+    assert "TMID" in get_help
+    assert "RELEASEKEY" not in fetch_help + get_help
+
+
+# The tests above that parse a command only read the namespace, so each filter
+# below is run through `fetch` and judged by what comes out. A flag wired to the
+# wrong argument, or dropped, then changes the rows instead of passing unseen.
+
+
+@pytest.mark.parametrize(
+    ("words", "tm_ids"),
+    [
+        (("--provider", "gcp"), {"gcp-bigquery"}),
+        (("--service", "s3"), {"aws-s3"}),
+    ],
+    ids=["provider", "service"],
+)
+def test_fetch_narrows_the_packs_by_provider_or_service(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    words: tuple[str, ...],
+    tm_ids: set[str],
+) -> None:
+    params = _fetch_params(monkeypatch, *words)
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    rows = json.loads(capsys.readouterr().out)
+    assert status == 0
+    assert {row["tmId"] for row in rows} == tm_ids
+
+
+def test_fetch_selects_only_rules_that_ship_the_mode(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "--mode", "denylist")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert json.loads(captured.out) == []
+    assert "No rule matched" in captured.err
+
+
+def test_fetch_selects_by_mode_and_matcher_together(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "--mode", "allowlist", "--matcher", "cloud")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    rows = json.loads(capsys.readouterr().out)
+    assert status == 0
+    assert [row["ruleId"] for row in rows] == ["S3.C20", "S3.C21", "Bigquery.C102"]
+
+
+def test_fetch_matcher_leaves_out_the_files_of_the_other_matcher(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(
+        monkeypatch, "aws-s3", "--matcher", "terraform", "--control", "S3.C20"
+    )
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    rows = json.loads(capsys.readouterr().out)
+    assert status == 0
+    assert [row["files"] for row in rows] == [["metadata.json"]]
+
+
+def test_fetch_rows_list_only_the_modes_and_matchers_the_filters_kept(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A row that still listed every mode and matcher read as the manifest
+    # printed back, and hid that the filters had been applied.
+    params = _fetch_params(
+        monkeypatch, "aws-s3", "--control", "S3.C20", "--matcher", "terraform"
+    )
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    [row] = json.loads(capsys.readouterr().out)
+    assert status == 0
+    assert (row["modes"], list(row["matchers"])) == (["allowlist"], ["terraform"])
+
+
+def test_fetch_writes_files_and_prints_their_paths(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    params = _fetch_params(
+        monkeypatch, "aws-s3", "--file", "*.rego", "--out", str(tmp_path)
+    )
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    written = tmp_path / "aws-s3" / "S3.C20" / "allowlist" / "cloud" / "check.rego"
+    assert status == 0
+    assert capsys.readouterr().out.split() == [str(written)]
+    assert written.exists()
+
+
+def test_fetch_refuses_packs_and_a_provider_together(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "aws-s3", "--provider", "aws")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    assert status == 2
+    assert "not both" in capsys.readouterr().err
+
+
+def test_a_failed_pack_exits_non_zero_and_names_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "aws-nothing")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    err = capsys.readouterr().err
+    assert status == 1
+    assert "aws-nothing: manifest failed: " in err
+    assert "not_found" in err
+    # Nothing matched because the pack failed, which the line above says, so
+    # a note about the filters would point the reader the wrong way.
+    assert "No rule matched" not in err
+
+
+def test_an_unknown_pack_ends_with_what_it_probably_meant(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "ec3")
+
+    status = run_ccr_fetch(params, client=PackClient(readable_packs("aws-ec2")))  # type: ignore[arg-type]
+
+    lines = capsys.readouterr().err.splitlines()
+    assert status == 1
+    assert lines == [
+        "\u2716 ec3: manifest failed: No such pack.",
+        "    [not_found, HTTP 404]",
+        f"    {UNKNOWN_HINT}",
+        "    \u2192 Did you mean aws-ec2?",
+    ]
+
+
+def test_an_unknown_pack_typed_with_a_release_ends_with_what_it_meant(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "ec3@1611187200")
+
+    status = run_ccr_fetch(params, client=PackClient(readable_packs("aws-ec2")))  # type: ignore[arg-type]
+
+    lines = capsys.readouterr().err.splitlines()
+    assert status == 1
+    assert lines[0] == "\u2716 ec3@1611187200: manifest failed: No such pack."
+    assert lines[-1] == "    \u2192 Did you mean aws-ec2?"
+
+
+@pytest.mark.parametrize(
+    ("words", "expected"),
+    [
+        (
+            ("--service", "gemini-agent-platform"),
+            "No pack this key can read matches --service 'gemini-agent-platform'.\n"
+            "    \u2192 Did you mean gcp-vertex?",
+        ),
+        (
+            ("--provider", "gpc"),
+            "No pack this key can read matches --provider 'gpc'.\n"
+            "    \u2192 Did you mean gcp?",
+        ),
+    ],
+    ids=["service", "provider"],
+)
+def test_a_narrowing_no_pack_has_exits_one_and_says_what_was_close(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    words: tuple[str, ...],
+    expected: str,
+) -> None:
+    params = _fetch_params(monkeypatch, *words)
+
+    status = run_ccr_fetch(params, client=PackClient(readable_packs("gcp-vertex")))  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    assert status == 1
+    # Nothing was selected, so there are no rows to print, and the one line
+    # on stderr puts the blame on the narrowing.
+    assert captured.out == ""
+    assert captured.err == "\u2716 " + expected + "\n"
+
+
+def test_the_service_a_refusal_suggests_is_accepted_when_typed_back(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client = PackClient(readable_packs("gcp-vertex"))
+    refused = run_ccr_fetch(
+        _fetch_params(monkeypatch, "--service", "Gemini Agent Platform"),
+        client=client,  # type: ignore[arg-type]
+    )
+    assert refused == 1
+    assert "Did you mean gcp-vertex?" in capsys.readouterr().err
+
+    status = run_ccr_fetch(
+        _fetch_params(monkeypatch, "--service", "gcp-vertex"),
+        client=client,  # type: ignore[arg-type]
+    )
+
+    captured = capsys.readouterr()
+    assert status == 0
+    # Only the note that this was a preview, and no refusal.
+    assert captured.err.startswith("ⓘ Preview only, nothing was written: ")
+    assert {row["tmId"] for row in json.loads(captured.out)} == {"gcp-vertex"}
+
+
+def test_the_service_a_refusal_suggests_beside_a_provider_names_that_provider(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client = PackClient(two_packs())
+    first = run_ccr_fetch(
+        _fetch_params(monkeypatch, "--provider", "aws", "--service", "bigquery"),
+        client=client,  # type: ignore[arg-type]
+    )
+    assert first == 1
+    # What is said about the suggested pack's provider follows the suggestion.
+    assert capsys.readouterr().err == (
+        "\u2716 No pack this key can read matches --provider 'aws' and --service "
+        "'bigquery'.\n"
+        "    \u2192 Did you mean gcp-bigquery? gcp-bigquery belongs to gcp, which "
+        "--provider 'aws' leaves out.\n"
+    )
+
+    # The suggestion typed back, with --provider left as it was.
+    again = run_ccr_fetch(
+        _fetch_params(monkeypatch, "--provider", "aws", "--service", "gcp-bigquery"),
+        client=client,  # type: ignore[arg-type]
+    )
+
+    captured = capsys.readouterr()
+    assert again == 1
+    assert captured.out == ""
+    assert captured.err == (
+        "\u2716 No pack this key can read matches --provider 'aws' and --service "
+        "'gcp-bigquery'. gcp-bigquery belongs to gcp, which --provider 'aws' "
+        "leaves out.\n"
+    )
+
+
+def test_main_reports_a_narrowing_no_pack_has_on_stderr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        remote_cli, "connect", lambda: PackClient(readable_packs("gcp-vertex"))
+    )
+    argv = ["tmxcaliber", "ccr", "fetch", "--service", "gemini-agent-platform"]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as exited:
+        cli_module.main()
+
+    captured = capsys.readouterr()
+    assert exited.value.code == 1
+    assert captured.out == ""
+    assert "Did you mean gcp-vertex?" in captured.err
+
+
+def test_a_refused_archive_is_reported_and_the_other_packs_are_written(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = PackClient(two_packs())
+    client.archive_errors["aws-s3"] = ServiceUnavailable(
+        "The source archive of aws-s3 does not match its published digest.",
+        code="unavailable",
+        status=503,
+        request_id="r-1",
+    )
+    params = _fetch_params(monkeypatch, "--out", str(tmp_path))
+
+    status = run_ccr_fetch(params, client=client)  # type: ignore[arg-type]
+
+    captured = capsys.readouterr()
+    written = tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json"
+    assert status == 1
+    assert captured.out.split() == [str(written)]
+    assert captured.err.splitlines() == [
+        "\u2716 aws-s3: archive failed: The source archive of aws-s3 does not match "
+        "its published digest.",
+        "    [unavailable, HTTP 503, request r-1, release d07d6ae]",
+        "    " + PackFailure("aws-s3", "archive", "unavailable", "").hint,
+        "\u2714 gcp-bigquery  1 rule, 1 file  (release d07d6ae)",
+        f"\u2714 Wrote 1 file for 1 rule from 1 pack to {tmp_path}",
+    ]
+
+
+class Watched(PackClient):
+    """Notes what stderr held when each manifest was asked for."""
+
+    def __init__(self, packs: dict[str, Any], stream: io.StringIO) -> None:
+        super().__init__(packs)
+        self.stream = stream
+        self.said_before: dict[str, str] = {}
+
+    def get(self, path: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
+        self.said_before[path.rsplit("/", 1)[-1]] = self.stream.getvalue()
+        return super().get(path, params)
+
+
+@pytest.mark.parametrize("words", [(), ("--out", "rules")], ids=["preview", "out"])
+def test_a_pack_is_reported_as_soon_as_it_finishes(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, words: tuple[str, ...]
+) -> None:
+    # Live, so a long fetch shows how far it got and what already failed. A
+    # StringIO names no encoding, so it is given the ASCII glyphs.
+    monkeypatch.chdir(tmp_path)
+    stream = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", stream)
+    client = Watched(two_packs(), stream)
+    params = _fetch_params(monkeypatch, "aws-nothing", "aws-s3", "gcp-bigquery", *words)
+
+    run_ccr_fetch(params, client=client)  # type: ignore[arg-type]
+
+    assert client.said_before["aws-nothing"] == ""
+    failed = "[x] aws-nothing: manifest failed"
+    assert client.said_before["aws-s3"].startswith(failed)
+    # A preview reports only its failures as it goes, and --out each pack.
+    done = "[ok] aws-s3  2 rules, 3 files  (release d07d6ae)\n"
+    assert (done in client.said_before["gcp-bigquery"]) is bool(words)
+
+
+def test_out_reports_only_the_packs_that_had_something_selected(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    params = _fetch_params(monkeypatch, "--control", "S3.C20", "--out", str(tmp_path))
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    assert status == 0
+    assert capsys.readouterr().err.splitlines() == [
+        "\u2714 aws-s3  1 rule, 2 files  (release d07d6ae)",
+        f"\u2714 Wrote 2 files for 1 rule from 1 pack to {tmp_path}",
+    ]
+
+
+def terminal_stdout(monkeypatch: pytest.MonkeyPatch) -> Stream:
+    """Put a UTF-8 terminal in place of stdout.
+
+    Args:
+        monkeypatch: Replaces stdout, and the Windows console fix, which could
+            replace stdout again on an older console.
+
+    Returns:
+        The terminal, which keeps what was written to it.
+    """
+    stream = Stream(tty=True)
+    monkeypatch.setattr(sys, "stdout", stream)
+    monkeypatch.setattr(console, "_windows_fixed", True)
+    return stream
+
+
+def test_out_on_a_terminal_shows_the_files_written_as_a_tree(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    stdout = terminal_stdout(monkeypatch)
+    params = _fetch_params(monkeypatch, "--out", "rules")
+
+    status = run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    assert status == 0
+    # The root is the folder in full, packs come in the order read, rules in
+    # manifest order and files as each rule's folder holds them.
+    assert stdout.getvalue() == (
+        f"{tmp_path / 'rules'}\n"
+        "\u251c\u2500 aws-s3  (release d07d6ae)\n"
+        "\u2502  \u251c\u2500 S3.C20\n"
+        "\u2502  \u2502  \u251c\u2500 metadata.json\n"
+        "\u2502  \u2502  \u2514\u2500 allowlist/cloud/check.rego\n"
+        "\u2502  \u2514\u2500 S3.C21\n"
+        "\u2502     \u2514\u2500 metadata.json\n"
+        "\u2514\u2500 gcp-bigquery  (release d07d6ae)\n"
+        "   \u2514\u2500 Bigquery.C102\n"
+        "      \u2514\u2500 metadata.json\n"
+    )
+    assert capsys.readouterr().err.splitlines()[-1].startswith("\u2714 Wrote 4 files")
+
+
+def test_out_on_a_terminal_that_wrote_nothing_draws_no_tree(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stdout = terminal_stdout(monkeypatch)
+    params = _fetch_params(
+        monkeypatch, "--control", "Nothing.C1", "--out", str(tmp_path)
+    )
+
+    run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    assert stdout.getvalue() == ""
+
+
+def test_out_into_a_pipe_prints_one_path_per_line_as_before(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A script reads these, so they are the paths as given, one per line,
+    # with nothing else on stdout.
+    monkeypatch.chdir(tmp_path)
+    params = _fetch_params(monkeypatch, "--out", "rules")
+
+    run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    rules = pathlib.Path("rules")
+    assert capsys.readouterr().out == "".join(
+        f"{path}\n"
+        for path in (
+            rules / "aws-s3" / "S3.C20" / "metadata.json",
+            rules / "aws-s3" / "S3.C20" / "allowlist" / "cloud" / "check.rego",
+            rules / "aws-s3" / "S3.C21" / "metadata.json",
+            rules / "gcp-bigquery" / "Bigquery.C102" / "metadata.json",
+        )
+    )
+
+
+def test_a_preview_on_a_terminal_prints_the_same_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    params = _fetch_params(monkeypatch, "--control", "S3.C20")
+    run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+    piped = capsys.readouterr().out
+    stdout = terminal_stdout(monkeypatch)
+
+    run_ccr_fetch(params, client=PackClient(two_packs()))  # type: ignore[arg-type]
+
+    assert stdout.getvalue() == piped
+
+
+def test_main_runs_fetch_and_exits_with_its_status(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(remote_cli, "connect", lambda: PackClient(two_packs()))
+    monkeypatch.setattr(sys, "argv", ["tmxcaliber", "ccr", "fetch", "aws-nothing"])
+
+    with pytest.raises(SystemExit) as exited:
+        cli_module.main()
+
+    assert exited.value.code == 1
+    assert "aws-nothing" in capsys.readouterr().err
+
+
+#: How the API answers for a ThreatModel or a pack this key cannot read.
+MISSING = {
+    "error": {"code": "not_found", "message": "Not found.", "requestId": "r-404"}
+}
+
+#: ``threatmodels list`` as a key that reads two ThreatModels sees it.
+THREATMODELS = [
+    {
+        "tmId": "aws-ec2",
+        "title": "Amazon EC2",
+        "provider": "aws",
+        "service": "ec2",
+        "version": "1",
+    },
+    {
+        "tmId": "gcp-bigquery",
+        "title": "Google BigQuery",
+        "provider": "gcp",
+        "service": "bigquery",
+        "version": "1",
+    },
+]
+
+#: ``ccr packs list`` as a key that reads two packs sees it.
+PACKS = [
+    {"tmId": "aws-ec2", "ruleCount": 3, "releaseId": None},
+    {"tmId": "gcp-bigquery", "ruleCount": 1, "releaseId": None},
+]
+
+
+def _listing(command: tuple[str, ...], rows: list[dict[str, Any]]) -> FakeResponse:
+    """Answer a list command with one page.
+
+    Args:
+        command: The list command.
+        rows: Its rows.
+
+    Returns:
+        The page, holding every field the contract requires of it.
+    """
+    route = route_for(command)
+    assert route is not None
+    return FakeResponse(page(route, rows))
+
+
+def _main_over(
+    monkeypatch: pytest.MonkeyPatch, answers: list[Any], argv: list[str]
+) -> tuple[int, StrictOpener]:
+    """Run the real CLI over a real client whose transport replays answers.
+
+    Args:
+        monkeypatch: Replaces argv and the client the CLI connects.
+        answers: What the API answers, in order.
+        argv: The words after the program name.
+
+    Returns:
+        The exit status, and the opener, which recorded each request.
+    """
+    # Strict, so a name the transport would refuse to send fails here too.
+    opener = StrictOpener(answers)
+    client = TocClient(client_settings(), opener=opener)
+    monkeypatch.setattr(remote_cli, "connect", lambda: client)
+    monkeypatch.setattr(sys, "argv", ["tmxcaliber", *argv])
+    with pytest.raises(SystemExit) as exited:
+        cli_module.main()
+    return int(exited.value.code or 0), opener
+
+
+@pytest.mark.parametrize(
+    ("argv", "listing", "rows", "sentence"),
+    [
+        pytest.param(
+            ["ccr", "packs", "get", "aws-ec3"],
+            ("ccr", "packs", "list"),
+            PACKS,
+            "Did you mean aws-ec2?",
+            id="ccr packs get",
+        ),
+        pytest.param(
+            ["ccr", "packs", "archive", "aws-ec3", "--output", "unwritten.zip"],
+            ("ccr", "packs", "list"),
+            PACKS,
+            "Did you mean aws-ec2?",
+            id="ccr packs archive",
+        ),
+        pytest.param(
+            ["threatmodels", "get", "aws-ec3"],
+            ("threatmodels", "list"),
+            THREATMODELS,
+            "Did you mean aws-ec2 (Amazon EC2)?",
+            id="threatmodels get",
+        ),
+        pytest.param(
+            ["threatmodels", "threats", "aws-ec3@1611187200"],
+            ("threatmodels", "list"),
+            THREATMODELS,
+            "Did you mean aws-ec2 (Amazon EC2)?",
+            id="pinned threatmodels threats",
+        ),
+    ],
+)
+def test_a_name_the_api_does_not_know_is_followed_by_what_it_probably_meant(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    listing: tuple[str, ...],
+    rows: list[dict[str, Any]],
+    sentence: str,
+) -> None:
+    status, opener = _main_over(
+        monkeypatch, [http_error(404, MISSING), _listing(listing, rows)], argv
+    )
+
+    captured = capsys.readouterr()
+    assert status == 1
+    assert captured.out == ""
+    assert captured.err == (
+        f"\u2716 Not found. (request r-404)\n    \u2192 {sentence}\n"
+    )
+    list_route = route_for(listing)
+    assert list_route is not None
+    assert urllib.parse.urlsplit(opener.requests[1].full_url).path == list_route.path
+    assert opener.answers == []
+
+
+def test_fetch_finds_a_service_in_a_pack_row_that_carries_only_its_tm_id(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--service s3`` still reaches aws-s3 once the rows stopped naming it.
+
+    A pack list row carries ``tmId``, ``ruleCount`` and ``releaseId`` and no
+    ``service``, so the provider and service are read from the id. Run over
+    the real client, so the row is held to the contract as the API sends it.
+    """
+    rows = [
+        {"tmId": "aws-s3", "ruleCount": 3, "releaseId": None},
+        {"tmId": "gcp-bigquery", "ruleCount": 1, "releaseId": None},
+    ]
+    _, manifest = two_packs()["aws-s3"]
+
+    status, opener = _main_over(
+        monkeypatch,
+        [_listing(("ccr", "packs", "list"), rows), FakeResponse(manifest)],
+        ["ccr", "fetch", "--service", "s3"],
+    )
+
+    printed = json.loads(capsys.readouterr().out)
+    assert status == 0
+    assert printed
+    assert {row["tmId"] for row in printed} == {"aws-s3"}
+    assert [urllib.parse.urlsplit(r.full_url).path for r in opener.requests] == [
+        "/v1/ccr/packs",
+        "/v1/ccr/packs/aws-s3",
+    ]
+    assert opener.answers == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "answers"),
+    [
+        pytest.param(
+            ["threatmodels", "get", "aws-ec3"],
+            [
+                http_error(404, MISSING),
+                http_error(
+                    403,
+                    {
+                        "error": {
+                            "code": "forbidden",
+                            "message": "No.",
+                            "requestId": "r-403",
+                        }
+                    },
+                ),
+            ],
+            id="the list cannot be read",
+        ),
+        pytest.param(
+            ["threatmodels", "get", "azure-cosmosdb"],
+            [
+                http_error(404, MISSING),
+                _listing(("threatmodels", "list"), THREATMODELS),
+            ],
+            id="nothing is close",
+        ),
+        pytest.param(
+            ["threatmodels", "get", "aws-ec2@1"],
+            [
+                http_error(404, MISSING),
+                _listing(("threatmodels", "list"), THREATMODELS),
+            ],
+            id="a listed name with an unknown release",
+        ),
+        pytest.param(
+            ["ccr", "packs", "get", "aws-ec3"],
+            [http_error(404, MISSING), _listing(("ccr", "packs", "list"), [])],
+            id="no pack is readable",
+        ),
+        pytest.param(["me"], [http_error(404, MISSING)], id="no name was typed"),
+    ],
+)
+def test_a_not_found_with_nothing_to_suggest_is_reported_as_it_was(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    answers: list[Any],
+) -> None:
+    status, opener = _main_over(monkeypatch, answers, argv)
+
+    captured = capsys.readouterr()
+    assert status == 1
+    assert captured.out == ""
+    assert captured.err == "\u2716 Not found. (request r-404)\n"
+    # A command without a name reads no list, so only its own call was made.
+    assert opener.answers == []
+
+
+def test_the_suggestion_keeps_the_original_errors_details() -> None:
+    route = route_for(("threatmodels", "get"))
+    assert route is not None
+    opener = FakeOpener(
+        [http_error(404, MISSING), _listing(("threatmodels", "list"), THREATMODELS)]
+    )
+    params = Namespace(api_route=route, tm_id="aws-ec3", release="")
+
+    with pytest.raises(NotFound) as caught:
+        run_api_command(params, client=TocClient(client_settings(), opener=opener))
+
+    error = caught.value
+    assert type(error) is NotFound
+    assert (error.code, error.status, error.request_id) == ("not_found", 404, "r-404")
+    # The suggestion is carried as data, so the command line can set it on a
+    # line of its own, and the error still reads as one line.
+    assert error.did_you_mean == "Did you mean aws-ec2 (Amazon EC2)?"
+    assert str(error) == (
+        "Not found. Did you mean aws-ec2 (Amazon EC2)? (request r-404)"
+    )
+    assert isinstance(error.__cause__, NotFound)
+
+
+def test_the_suggestion_starts_a_sentence_of_its_own() -> None:
+    route = route_for(("threatmodels", "get"))
+    assert route is not None
+    unstopped = {"error": {"code": "not_found", "message": "aws-ec3 is unknown"}}
+    opener = FakeOpener(
+        [http_error(404, unstopped), _listing(("threatmodels", "list"), THREATMODELS)]
+    )
+    params = Namespace(api_route=route, tm_id="aws-ec3", release="")
+
+    with pytest.raises(NotFound) as caught:
+        run_api_command(params, client=TocClient(client_settings(), opener=opener))
+
+    assert str(caught.value) == (
+        "aws-ec3 is unknown. Did you mean aws-ec2 (Amazon EC2)?"
+    )
+
+
+#: ``ccr packs list`` as a key that reads the packs of two renamed services sees it.
+VERTEX_PACKS = [
+    *PACKS,
+    {"tmId": "gcp-vertex", "ruleCount": 2, "releaseId": None},
+    {"tmId": "gcp-pubsub", "ruleCount": 1, "releaseId": None},
+]
+
+
+def test_fetch_of_a_renamed_pack_typed_with_spaces_still_suggests_its_key(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The name has spaces in it, which the transport refuses to send, so the
+    # pack the user typed never reached the API and no suggestion was made.
+    status, opener = _main_over(
+        monkeypatch,
+        [http_error(404, MISSING), _listing(("ccr", "packs", "list"), VERTEX_PACKS)],
+        ["ccr", "fetch", "Gemini Agent Platform"],
+    )
+
+    lines = capsys.readouterr().err.splitlines()
+    assert status == 1
+    assert lines[0].startswith("\u2716 Gemini Agent Platform: manifest failed: ")
+    assert lines[-1] == "    \u2192 Did you mean gcp-vertex?"
+    first = urllib.parse.urlsplit(opener.requests[0].full_url)
+    assert first.path == "/v1/ccr/packs/Gemini%20Agent%20Platform"
+    assert opener.answers == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "path", "sentence"),
+    [
+        pytest.param(
+            ["ccr", "packs", "get", "vertex ai"],
+            "/v1/ccr/packs/vertex%20ai",
+            "Did you mean gcp-vertex?",
+            id="a renamed pack",
+        ),
+        pytest.param(
+            ["ccr", "packs", "get", "Amazon EC2"],
+            "/v1/ccr/packs/Amazon%20EC2",
+            "Did you mean aws-ec2?",
+            id="a vendor's name",
+        ),
+        pytest.param(
+            ["ccr", "packs", "archive", "pub/sub", "--output", "unwritten.zip"],
+            "/v1/ccr/packs/pub%2Fsub/archive",
+            "Did you mean gcp-pubsub?",
+            id="a slash",
+        ),
+    ],
+)
+def test_a_pack_command_given_a_name_with_spaces_answers_not_found_with_a_suggestion(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    path: str,
+    sentence: str,
+) -> None:
+    status, opener = _main_over(
+        monkeypatch,
+        [http_error(404, MISSING), _listing(("ccr", "packs", "list"), VERTEX_PACKS)],
+        argv,
+    )
+
+    assert status == 1
+    assert capsys.readouterr().err == (
+        f"\u2716 Not found. (request r-404)\n    \u2192 {sentence}\n"
+    )
+    assert urllib.parse.urlsplit(opener.requests[0].full_url).path == path
+    assert opener.answers == []
+
+
+@pytest.mark.parametrize("typed", ["Amazon EC2", "AWS-EC2", "ec 2"])
+def test_a_threatmodel_typed_in_a_shape_no_reference_has_is_followed_by_what_it_meant(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], typed: str
+) -> None:
+    # The reference grammar refuses a name with a space or a capital before any
+    # request is made, so there is no 404 to follow and the name was lost.
+    status, opener = _main_over(
+        monkeypatch,
+        [_listing(("threatmodels", "list"), THREATMODELS)],
+        ["threatmodels", "get", typed],
+    )
+
+    assert status == 1
+    assert capsys.readouterr().err == (
+        f"\u2716 {typed!r} is not a ThreatModel reference; expected provider-service, "
+        "optionally with @release\n    \u2192 Did you mean aws-ec2 (Amazon EC2)?\n"
+    )
+    # Only the list was read, because the name could not be sent.
+    assert [urllib.parse.urlsplit(r.full_url).path for r in opener.requests] == [
+        "/v1/threatmodels"
+    ]
+
+
+#: ``threatmodels list`` as a key that reads ThreatModels from three providers
+#: sees it: titles with their short forms in brackets, a service another one
+#: also covers, and a title that is the same words under another provider.
+OFFICIAL_THREATMODELS = [
+    {"tmId": "aws-iam", "title": "AWS Identity and Access Management (IAM)"}
+    | {"other_covered_services": ["IAM Access Analyzer"]},
+    {"tmId": "aws-kms", "title": "AWS Key Management Service (AWS KMS)"},
+    {"tmId": "azure-aks", "title": "Azure Kubernetes Service"},
+    {"tmId": "azure-botservice", "title": "Azure Bot Service"},
+    {"tmId": "azure-cognitiveservices", "title": "Azure AI services"},
+    {"tmId": "azure-recoveryservices", "title": "Azure Recovery Services"},
+    {"tmId": "gcp-cloudkms", "title": "Cloud Key Management Service (KMS)"},
+    {"tmId": "gcp-iam", "title": "Google Identity and Access Management (IAM)"}
+    | {"otherCoveredServices": ["Policy Troubleshooter"]},
+]
+
+
+@pytest.mark.parametrize(
+    ("typed", "sentence"),
+    [
+        pytest.param(
+            "Azure Kubernetes Service",
+            "Did you mean azure-aks (Azure Kubernetes Service)?",
+            id="own title of another provider's service",
+        ),
+        pytest.param(
+            "AWS Key Management Service",
+            "Did you mean aws-kms (AWS Key Management Service (AWS KMS))?",
+            id="title that an alias leads to another provider with",
+        ),
+        pytest.param(
+            "AWS Key Management Service (AWS KMS)",
+            "Did you mean aws-kms (AWS Key Management Service (AWS KMS))?",
+            id="whole title",
+        ),
+        pytest.param(
+            "AWS KMS",
+            "Did you mean aws-kms (AWS Key Management Service (AWS KMS))?",
+            id="short form in brackets",
+        ),
+        pytest.param(
+            "AWS Identity and Access Management (IAM)",
+            "Did you mean aws-iam (AWS Identity and Access Management (IAM))?",
+            id="whole title with brackets",
+        ),
+        pytest.param(
+            "IAM Access Analyzer",
+            "Did you mean aws-iam (AWS Identity and Access Management (IAM))?",
+            id="service a ThreatModel also covers",
+        ),
+        pytest.param(
+            "Policy Troubleshooter",
+            "Did you mean gcp-iam (Google Identity and Access Management (IAM))?",
+            id="service covered, as the API spells the field",
+        ),
+    ],
+)
+def test_a_threatmodels_published_name_typed_back_leads_to_it(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    typed: str,
+    sentence: str,
+) -> None:
+    status, _ = _main_over(
+        monkeypatch,
+        [_listing(("threatmodels", "list"), OFFICIAL_THREATMODELS)],
+        ["threatmodels", "get", typed],
+    )
+
+    assert status == 1
+    assert capsys.readouterr().err == (
+        f"\u2716 {typed!r} is not a ThreatModel reference; expected provider-service, "
+        f"optionally with @release\n    \u2192 {sentence}\n"
+    )
+
+
+def test_a_threatmodels_key_spelled_like_its_title_leads_to_it_after_the_404(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Well formed, so the API answers 404, and the list is read after it. The
+    # typed provider is AWS, so Google's KMS does not come with it.
+    status, _ = _main_over(
+        monkeypatch,
+        [
+            http_error(404, MISSING),
+            _listing(("threatmodels", "list"), OFFICIAL_THREATMODELS),
+        ],
+        ["threatmodels", "get", "aws-keymanagementservice"],
+    )
+
+    assert status == 1
+    assert capsys.readouterr().err == (
+        "\u2716 Not found. (request r-404)\n"
+        "    \u2192 Did you mean aws-kms (AWS Key Management Service (AWS KMS))?\n"
+    )
+
+
+#: ``threatmodels list`` as a key that reads the whole catalogue sees it. A row
+#: holds the five fields the contract gives it, and no covered services, so the
+#: names a suggestion can use are each title and its short form.
+CATALOGUE_ROWS = [
+    {
+        "tmId": row.tm_id,
+        "title": row.title,
+        "provider": row.tm_id.partition("-")[0],
+        "service": row.tm_id.partition("-")[2],
+        "version": "1",
+    }
+    for row in CATALOGUE
+]
+
+
+@pytest.mark.parametrize(
+    ("typed", "sentence"),
+    [
+        pytest.param(
+            "gcp-firestor",
+            "Did you mean gcp-firestore (Cloud Firestore), "
+            "gcp-filestore (Filestore) or gcp-firebase (Firebase)?",
+            id="slip of an id that another title nearly spells",
+        ),
+        pytest.param(
+            "aws-qconnet",
+            "Did you mean aws-qconnect (Amazon Q in Connect), "
+            "aws-connect (Amazon Connect) or aws-directconnect (AWS Direct Connect)?",
+            id="slip of an id that another id nearly spells",
+        ),
+    ],
+)
+def test_a_slip_of_an_id_leads_to_its_threatmodel_over_the_whole_catalogue(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    typed: str,
+    sentence: str,
+) -> None:
+    # The API answers 404 for a well formed id it does not know, and the list is
+    # read after it. Another ThreatModel's title is a near miss of each slip, and
+    # the ThreatModel typed has to lead all the same.
+    status, _ = _main_over(
+        monkeypatch,
+        [
+            http_error(404, MISSING),
+            _listing(("threatmodels", "list"), CATALOGUE_ROWS),
+        ],
+        ["threatmodels", "get", typed],
+    )
+
+    assert status == 1
+    assert capsys.readouterr().err == (
+        f"\u2716 Not found. (request r-404)\n    \u2192 {sentence}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("typed", "sentence"),
+    [
+        pytest.param(
+            "Dataproc",
+            "Did you mean gcp-dataproc (Managed Service for Apache Spark), "
+            "gcp-metastore (Dataproc Metastore) or aws-databrew (AWS Glue DataBrew)?",
+            id="service with another title near it",
+        ),
+        pytest.param(
+            "Compute",
+            "Did you mean azure-compute (Azure Compute) "
+            "or gcp-compute (Compute Engine)?",
+            id="service two providers share",
+        ),
+    ],
+)
+def test_a_service_typed_alone_leads_to_its_threatmodel_over_the_whole_catalogue(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    typed: str,
+    sentence: str,
+) -> None:
+    status, _ = _main_over(
+        monkeypatch,
+        [_listing(("threatmodels", "list"), CATALOGUE_ROWS)],
+        ["threatmodels", "get", typed],
+    )
+
+    assert status == 1
+    assert capsys.readouterr().err == (
+        f"\u2716 {typed!r} is not a ThreatModel reference; expected provider-service, "
+        f"optionally with @release\n    \u2192 {sentence}\n"
+    )
+
+
+def test_a_malformed_threatmodel_with_nothing_close_is_refused_as_before() -> None:
+    route = route_for(("threatmodels", "get"))
+    assert route is not None
+    opener = FakeOpener([_listing(("threatmodels", "list"), THREATMODELS)])
+    params = Namespace(api_route=route, tm_id="Nothing Like It", release="")
+
+    with pytest.raises(ValueError, match="is not a ThreatModel reference"):
+        run_api_command(params, client=TocClient(client_settings(), opener=opener))
+
+
+def test_a_pinned_threatmodel_with_a_bad_release_is_not_read_as_a_misspelled_name() -> (
+    None
+):
+    route = route_for(("threatmodels", "get"))
+    assert route is not None
+    opener = FakeOpener([])
+    params = Namespace(api_route=route, tm_id="aws-ec2@..", release="")
+
+    with pytest.raises(ValueError, match="not a usable release key"):
+        run_api_command(params, client=TocClient(client_settings(), opener=opener))
+
+    # The name is listed and right, so the list was never read.
+    assert opener.requests == []
+
+
+@pytest.mark.parametrize("typed", ["", "@1611187200"])
+def test_a_threatmodel_with_no_name_in_it_reads_no_list_to_suggest_from(
+    typed: str,
+) -> None:
+    # Nothing was typed that a listed name could be close to.
+    route = route_for(("threatmodels", "get"))
+    assert route is not None
+    opener = FakeOpener([])
+    params = Namespace(api_route=route, tm_id=typed, release="")
+
+    with pytest.raises(ValueError, match="is not a ThreatModel reference"):
+        run_api_command(params, client=TocClient(client_settings(), opener=opener))
+
+    assert opener.requests == []

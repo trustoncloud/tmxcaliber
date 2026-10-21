@@ -1,0 +1,1486 @@
+"""Select CCR rules from pack manifests, and write their files from a pack archive.
+
+`ccr fetch`, for the CLI and for `Client` alike. The API serves a pack as two
+things: its manifest, which names every rule and every file, and its source
+archive, which holds those files. Selection runs on the manifest, so a pack
+with nothing selected is never downloaded. Extraction runs on the archive, and
+only after the archive has proved to be the one the manifest describes.
+
+A rule's files are laid out ``<mode>/<matcher>/...`` under its control id, so
+the mode and matcher filters narrow the files written as well as the rules
+chosen.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import io
+import lzma
+import os
+import re
+import stat
+import tempfile
+import zipfile
+import zlib
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from fnmatch import fnmatchcase
+from pathlib import Path
+from typing import Any, Final
+
+from .client import TocClient
+from .contract import Route, route_for
+from .errors import (
+    ContractViolation,
+    NoPackMatched,
+    NotFound,
+    ReleaseSuperseded,
+    RemoteError,
+    ServiceUnavailable,
+)
+from .operations import call_route
+from .suggest import did_you_mean, suggest, suggest_provider
+
+#: The modes a rule can ship, as ccr_factory names them.
+MODES: Final[tuple[str, ...]] = ("universal", "allowlist", "denylist")
+
+#: The matchers a rule can implement: live Wiz resources, and Terraform.
+MATCHERS: Final[tuple[str, ...]] = ("cloud", "terraform")
+
+#: The steps of fetching one pack, in the order they run, as `PackFailure`
+#: names them: reading the manifest and selecting from it, downloading the
+#: archive, checking the archive against the manifest, and writing its files.
+STAGES: Final[tuple[str, ...]] = ("manifest", "archive", "verify", "extract")
+
+
+@dataclass(frozen=True)
+class RuleFilter:
+    """What a caller asked for.
+
+    Repeats of one field are alternatives and different fields must all hold,
+    so ``modes=("allowlist",), matchers=("cloud",)`` is allowlist rules with a
+    cloud matcher. An empty field does not narrow anything.
+
+    Attributes:
+        controls: Control ids, matched case-insensitively.
+        modes: Modes a rule must ship one of.
+        matchers: Matchers a rule must implement one of.
+        files: Globs over ``<rule id>/<file>``; ``*`` also matches ``/``.
+    """
+
+    controls: tuple[str, ...] = ()
+    modes: tuple[str, ...] = ()
+    matchers: tuple[str, ...] = ()
+    files: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Refuse a mode or matcher that no rule can have.
+
+        A misspelled or capitalised value, such as ``Universal``, matches no
+        rule, so the fetch would come back empty and read as packs without
+        such a rule. The command line's ``choices`` refuse it before this runs;
+        here every other caller is held to the same values.
+
+        Raises:
+            ValueError: If a mode is not one of `MODES`, or a matcher is not
+                one of `MATCHERS`.
+        """
+        for kind, given, valid in (
+            ("mode", self.modes, MODES),
+            ("matcher", self.matchers, MATCHERS),
+        ):
+            unknown = [value for value in given if value not in valid]
+            if unknown:
+                raise ValueError(
+                    f"Unknown {kind} {unknown[0]!r}; expected one of "
+                    f"{', '.join(valid)}."
+                )
+
+
+#: The filter that selects everything, which is `fetch`'s default. It is a
+#: module-level value because a call in a default argument is refused by the
+#: linter (B008). Callers share this one instance, which is safe because
+#: `RuleFilter` is frozen.
+_NO_FILTER: Final[RuleFilter] = RuleFilter()
+
+
+@dataclass(frozen=True)
+class Selected:
+    """One chosen rule, and which of its files to write.
+
+    Attributes:
+        rule: The manifest's entry for the rule.
+        files: The rule's selected files, relative to its folder.
+    """
+
+    rule: Mapping[str, Any]
+    files: tuple[str, ...]
+
+
+def _file_kept(rule_id: str, file: str, wanted: RuleFilter) -> bool:
+    """Decide whether one of a rule's files is written.
+
+    Args:
+        rule_id: The rule's control id.
+        file: The file, relative to the rule's folder.
+        wanted: The filter.
+
+    Returns:
+        True when every filter that applies to the file lets it through.
+    """
+    parts = file.split("/")
+    # A file at the rule's root, such as metadata.json, describes the rule as
+    # a whole, so neither the mode nor the matcher filter removes it.
+    if len(parts) > 1 and wanted.modes and parts[0] not in wanted.modes:
+        return False
+    # Only a file inside a matcher folder belongs to one matcher. A mode-level
+    # file, such as allowlist/remediation.md, applies to both.
+    if len(parts) > 2 and wanted.matchers and parts[1] not in wanted.matchers:
+        return False
+    return not wanted.files or any(
+        fnmatchcase(f"{rule_id}/{file}", pattern) for pattern in wanted.files
+    )
+
+
+def select_rules(manifest: Mapping[str, Any], wanted: RuleFilter) -> list[Selected]:
+    """Choose a pack's rules, and each rule's files, by the filter.
+
+    Args:
+        manifest: The pack's manifest, as ``ccr packs get`` returns it.
+        wanted: The filter.
+
+    Returns:
+        The chosen rules, in manifest order.
+
+    Raises:
+        ContractViolation: If a rule entry is not an object.
+    """
+    controls = {control.lower() for control in wanted.controls}
+    chosen: list[Selected] = []
+    for rule in manifest.get("rules") or []:
+        if not isinstance(rule, Mapping):
+            raise ContractViolation(
+                "A pack manifest lists a rule that is not an object.",
+                code="bad_manifest",
+            )
+        rule_id = str(rule.get("id", ""))
+        if controls and rule_id.lower() not in controls:
+            continue
+        if wanted.modes and not set(wanted.modes) & set(rule.get("modes") or []):
+            continue
+        matchers = rule.get("matchers") or {}
+        if wanted.matchers and not any(
+            (matchers.get(name) or {}).get("implemented") is True
+            for name in wanted.matchers
+        ):
+            continue
+        files = tuple(
+            str(file)
+            for file in rule.get("files") or []
+            if _file_kept(rule_id, str(file), wanted)
+        )
+        if wanted.files and not files:
+            continue
+        chosen.append(Selected(rule=rule, files=files))
+    return chosen
+
+
+def rule_row(
+    tm_id: str,
+    release_id: str,
+    chosen: Selected,
+    *,
+    wanted: RuleFilter = _NO_FILTER,
+) -> dict[str, Any]:
+    """Render one chosen rule as the row ``ccr fetch`` prints.
+
+    The row describes what the filters kept. A rule that ships allowlist and
+    universal, fetched with ``--mode universal``, comes with universal files
+    only, so a row that still listed allowlist would read as the manifest
+    printed back and hide that anything was narrowed. The filter is passed
+    here, and not carried on `Selected`, because trimming is how a row
+    presents a rule and needs nothing but the filter; a caller that passes no
+    filter gets the whole rule, as before. ``--control`` and ``--file`` leave
+    these two fields alone: the row's ``files`` already shows what a glob kept.
+
+    Args:
+        tm_id: The pack.
+        release_id: The release the manifest came from.
+        chosen: The rule.
+        wanted: The filter the rule was chosen by.
+
+    Returns:
+        The row, in the API's camelCase. ``modes`` holds the rule's modes that
+        the filter asked for, in the rule's own order, and ``matchers`` the
+        entries it asked for, each when the filter names any. Both are new
+        values, so changing the row never changes the manifest.
+    """
+    rule = chosen.rule
+    modes = [
+        mode
+        for mode in rule.get("modes") or []
+        if not wanted.modes or mode in wanted.modes
+    ]
+    matchers = {
+        name: dict(entry)
+        for name, entry in (rule.get("matchers") or {}).items()
+        if not wanted.matchers or name in wanted.matchers
+    }
+    return {
+        "tmId": tm_id,
+        "releaseId": release_id,
+        "ruleId": str(rule.get("id", "")),
+        "name": rule.get("name", ""),
+        "modes": modes,
+        "matchers": matchers,
+        "weightedPriority": rule.get("weighted_priority", ""),
+        "files": list(chosen.files),
+    }
+
+
+def verify_archive(data: bytes, manifest: Mapping[str, Any], tm_id: str) -> None:
+    """Refuse an archive that is not the one its manifest describes.
+
+    The API checks the same digest before serving, so a mismatch here means
+    the bytes changed in transit or the manifest came from another release.
+    Either way nothing from the archive is written.
+
+    Args:
+        data: The archive.
+        manifest: The manifest the rules were selected from.
+        tm_id: The pack, for the message.
+
+    Raises:
+        ContractViolation: If the manifest describes no source archive, or the
+            archive's size or digest differs from it.
+    """
+    block = manifest.get("bundle")
+    if not isinstance(block, Mapping) or not block.get("sha256"):
+        raise ContractViolation(
+            f"{tm_id}'s manifest describes no source archive.",
+            code="bad_manifest",
+        )
+    size = block.get("bytes")
+    if isinstance(size, int) and size != len(data):
+        raise ContractViolation(
+            f"{tm_id}'s archive is {len(data)} bytes; its manifest says {size}.",
+            code="archive_mismatch",
+        )
+    if hashlib.sha256(data).hexdigest() != block["sha256"]:
+        raise ContractViolation(
+            f"{tm_id}'s archive does not match its manifest's digest.",
+            code="archive_mismatch",
+        )
+
+
+#: What reading a damaged or unsupported archive from memory can raise. Each one
+#: is a verdict on the bytes, because nothing here touches the disk:
+#: ``RuntimeError`` covers an encrypted entry and, through its subclass
+#: ``NotImplementedError``, a compression method zipfile cannot decode,
+#: ``OSError`` is how the bzip2 decoder reports a corrupt stream, and
+#: ``ValueError`` covers a header that points before the start of the archive
+#: (``negative seek value``) and, through its subclass ``UnicodeDecodeError``, an
+#: entry name flagged as UTF-8 that is not valid UTF-8.
+_UNREADABLE: Final[tuple[type[Exception], ...]] = (
+    zipfile.BadZipFile,
+    EOFError,
+    RuntimeError,
+    OSError,
+    ValueError,
+    zlib.error,
+    lzma.LZMAError,
+)
+
+#: Characters Windows refuses in a file name. The colon is left out because
+#: `_is_safe` already refuses it.
+_WINDOWS_INVALID: Final[frozenset[str]] = frozenset('<>"|?*')
+
+#: Names Windows reserves for devices, whatever extension follows them.
+_WINDOWS_DEVICES: Final[frozenset[str]] = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{n}" for n in range(1, 10)}
+    | {f"lpt{n}" for n in range(1, 10)}
+)
+
+#: The form of a pack's ThreatModel id, which is the API's own rule
+#: (``isSafeReleaseKey``, from when the API called the id a release key):
+#: lowercase letters and digits in two or more groups joined by single hyphens,
+#: as in ``aws-s3``. The id becomes a folder name under the output folder and
+#: the API never sends one that does not fit, so
+#: this client accepts exactly that form instead of listing what could go wrong
+#: in a folder name. It is matched with ``fullmatch`` because ``$`` also accepts
+#: a trailing newline.
+_TM_ID: Final[re.Pattern[str]] = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)+")
+
+
+def _is_safe(name: str) -> bool:
+    """Decide whether an archive entry name stays inside its pack folder.
+
+    Args:
+        name: The entry name as the archive stores it. A name as zipfile reports
+            it is no use here on Windows, where it has already lost its
+            backslashes.
+
+    Returns:
+        False for an absolute name, a backslash, a drive or other colon, or an
+        empty, ``.`` or ``..`` segment.
+    """
+    if not name or name.startswith("/") or "\\" in name or ":" in name:
+        return False
+    return all(part not in ("", ".", "..") for part in name.split("/"))
+
+
+def _is_portable(name: str) -> bool:
+    """Decide whether a file can be written on Windows as well as elsewhere.
+
+    A pack is built on Linux, where ``what?.md`` and ``x.rego.`` are ordinary
+    names. The same selection has to lay out the same way on every machine that
+    fetches it, and Windows either refuses such a name or quietly writes a
+    different one, so the check holds on every platform.
+
+    Args:
+        name: A path relative to the pack folder, with ``/`` separators.
+
+    Returns:
+        False when a segment holds a character Windows forbids or a control
+        character, ends in a dot or a space, or is a reserved device name such
+        as ``nul`` or ``con.txt``. The ``.`` and ``..`` segments are left to
+        `_is_safe`.
+    """
+    for part in name.split("/"):
+        if part in (".", ".."):
+            continue
+        if any(char in _WINDOWS_INVALID or ord(char) < 32 for char in part):
+            return False
+        if part.endswith((".", " ")):
+            return False
+        if part.split(".", 1)[0].rstrip(" ").casefold() in _WINDOWS_DEVICES:
+            return False
+    return True
+
+
+def _refuse_unsafe_id(tm_id: str) -> None:
+    """Refuse a pack's ThreatModel id that is not the form the API issues.
+
+    The id is joined onto ``out`` as a folder name, and it reaches this client
+    from an API response, so an id such as ``..`` or ``a/b`` would send every
+    file of the pack outside ``out``. The checks on the manifest's paths and on
+    the archive's names cannot see it, because the id is not part of either.
+    A null byte in an id would also end a fetch with a raw ``ValueError`` from
+    the disk calls.
+
+    Args:
+        tm_id: The pack.
+
+    Raises:
+        ContractViolation: If the id does not match the API's own form (code
+            ``archive_unsafe``).
+    """
+    if not _TM_ID.fullmatch(tm_id):
+        raise ContractViolation(
+            f"The pack id {tm_id!r} is not in the form the API issues, so "
+            "nothing is written under it.",
+            code="archive_unsafe",
+        )
+
+
+def _refuse_unwritable(wanted: Sequence[str], tm_id: str) -> None:
+    """Refuse a selection that cannot be laid out as separate files.
+
+    Run before anything is written, so a refused pack leaves ``out`` as it was.
+    Without it a repeated path would be staged once per mention and then moved
+    only once, and two names that land on one path would overwrite each other
+    or fail part way through the moves.
+
+    The selected paths are the strings that are joined onto ``out``, so they are
+    judged here for leaving their folder, whatever the archive's names say. An
+    archive can report an entry under another name than the one it stores, and
+    a check on the stored names cannot vouch for what reaches the disk then.
+
+    Args:
+        wanted: The selected paths, each ``<rule id>/<file>``.
+        tm_id: The pack, for the message.
+
+    Raises:
+        ContractViolation: If the manifest lists a path twice (code
+            ``bad_manifest``), or a path could leave its folder, is one Windows
+            cannot write, equals another once case is ignored, or is both a
+            file and a folder of another (code ``archive_unsafe``).
+    """
+    seen: set[str] = set()
+    for name in wanted:
+        if name in seen:
+            raise ContractViolation(
+                f"{tm_id}'s manifest lists {name} more than once.",
+                code="bad_manifest",
+            )
+        seen.add(name)
+    by_folded: dict[str, str] = {}
+    for name in wanted:
+        if not _is_safe(name):
+            raise ContractViolation(
+                f"{tm_id}'s manifest declares {name!r}, which could leave its folder.",
+                code="archive_unsafe",
+            )
+        if not _is_portable(name):
+            raise ContractViolation(
+                f"{tm_id}'s manifest declares {name!r}, which cannot be "
+                "written as a file on Windows.",
+                code="archive_unsafe",
+            )
+        other = by_folded.setdefault(name.casefold(), name)
+        if other != name:
+            raise ContractViolation(
+                f"{tm_id}'s manifest declares {other} and {name}, which are "
+                "one file wherever case does not matter.",
+                code="archive_unsafe",
+            )
+    for folded, name in by_folded.items():
+        parts = folded.split("/")
+        for depth in range(1, len(parts)):
+            parent = by_folded.get("/".join(parts[:depth]))
+            if parent is not None:
+                raise ContractViolation(
+                    f"{tm_id}'s manifest declares {parent} as a file and "
+                    f"{name} inside it as a folder.",
+                    code="archive_unsafe",
+                )
+
+
+def _refuse_folders_in_the_way(wanted: Sequence[str], tm_id: str, out: Path) -> None:
+    """Refuse a selection when a folder sits where one of its files belongs.
+
+    A file already at its final path is set aside and put back if the pack
+    fails, and is dropped once the pack succeeds. That is right for the file an
+    earlier fetch wrote, and wrong for a folder, which holds whatever else
+    someone keeps there and would go with it. Nothing this client writes is a
+    folder at a file's path, so the folder is not ours to replace.
+
+    Args:
+        wanted: The paths to write, each ``<rule id>/<file>``.
+        tm_id: The pack.
+        out: The folder to write under.
+
+    Raises:
+        ContractViolation: If a folder, or a link to one, is at a final path, or
+            a final path cannot be examined, such as one inside a folder this
+            user cannot search (code ``archive_unwritable``). The disk's error
+            is the cause in the second case. Python 3.10 to 3.12 raise it from
+            ``Path.is_dir``, and without this it would end a whole fetch.
+    """
+    for name in wanted:
+        final = out.joinpath(tm_id, *name.split("/"))
+        try:
+            in_the_way = final.is_dir()
+        except OSError as exc:
+            raise ContractViolation(
+                f"{tm_id}'s file {name} cannot be written, because {final} "
+                f"cannot be examined: {exc} Nothing was changed.",
+                code="archive_unwritable",
+            ) from exc
+        if in_the_way:
+            raise ContractViolation(
+                f"{tm_id}'s file {name} cannot be written, because {final} "
+                "is a folder.",
+                code="archive_unwritable",
+            )
+
+
+def _read_member(archive: zipfile.ZipFile, name: str, tm_id: str) -> bytes:
+    """Read one entry, naming the pack when the archive cannot give it up.
+
+    Args:
+        archive: The open archive.
+        name: The entry.
+        tm_id: The pack, for the message.
+
+    Returns:
+        The entry's content.
+
+    Raises:
+        ContractViolation: If the entry is damaged, encrypted, or compressed
+            with a method this client cannot decode.
+    """
+    try:
+        return archive.read(name)
+    except _UNREADABLE as exc:
+        raise ContractViolation(
+            f"{tm_id}'s archive cannot give up {name}: {exc}",
+            code="archive_unreadable",
+        ) from exc
+
+
+def _make_folder(folder: Path, created: list[Path]) -> None:
+    """Create a folder, and record each level this call had to create.
+
+    Args:
+        folder: The folder to create, with any parents it needs.
+        created: Receives each level that did not exist, outermost first, so a
+            failure can remove exactly what this call added.
+    """
+    missing = [level for level in (folder, *folder.parents) if not level.exists()]
+    for level in reversed(missing):
+        try:
+            level.mkdir()
+        except FileExistsError:
+            # Another process made it first, so this call must leave it alone.
+            continue
+        created.append(level)
+
+
+def _put_back(placed: Sequence[tuple[Path, Path | None]]) -> bool:
+    """Undo moves into place, newest first.
+
+    Args:
+        placed: Each final path that was moved to, and where the file that was
+            already there went, or None when the path was free.
+
+    Returns:
+        True when every file that had been replaced is back where it was. This
+        is best effort, because it runs while another failure is propagating.
+    """
+    restored = True
+    for final, displaced in reversed(placed):
+        with contextlib.suppress(OSError):
+            final.unlink(missing_ok=True)
+        if displaced is not None:
+            try:
+                os.replace(displaced, final)
+            except OSError:
+                restored = False
+    return restored
+
+
+def _remove_tree(folder: Path) -> None:
+    """Delete a folder and everything in it, read-only files included.
+
+    ``shutil.rmtree`` cannot delete a read-only file on Windows. The staging
+    folder holds the old copy of every file a pack replaced, and an earlier
+    fetch may have left that copy read-only, so with ``rmtree`` a hidden folder
+    of stale files would stay in the output folder after a pack that succeeded.
+    The attribute is cleared only when a delete is refused. This is best effort,
+    because it also runs while another failure is propagating, and an error from
+    it would take the place of that failure. Whatever cannot be deleted stays
+    behind, hidden, and the pack's own outcome is reported as it was.
+
+    Args:
+        folder: The folder to delete.
+    """
+    for parent, _, files in os.walk(folder, topdown=False):
+        for name in files:
+            path = os.path.join(parent, name)
+            try:
+                os.unlink(path)
+            except OSError:
+                with contextlib.suppress(OSError):
+                    os.chmod(path, stat.S_IWRITE)
+                    os.unlink(path)
+        with contextlib.suppress(OSError):
+            os.rmdir(parent)
+
+
+def _install(
+    archive: zipfile.ZipFile,
+    wanted: Sequence[str],
+    tm_id: str,
+    out: Path,
+    created: list[Path],
+) -> list[Path]:
+    """Stage the selected files, then move them into ``out/<tm_id>``.
+
+    A file already at its final path is set aside inside the staging folder
+    first. If any step then fails, the files already moved are taken out again
+    and the ones they replaced are put back, so a failed pack never leaves a mix
+    of old and new files. When even that cannot be done, the staging folder is
+    kept, because it holds the only copy of what could not be put back.
+
+    Args:
+        archive: The open archive.
+        wanted: The paths to write, each ``<rule id>/<file>``.
+        tm_id: The pack.
+        out: The folder to write under.
+        created: Receives each folder this call makes, outermost first.
+
+    Returns:
+        Every file written, in the order of ``wanted``.
+
+    Raises:
+        ContractViolation: If an entry cannot be read, or the disk refuses to
+            make ``out`` or the staging folder, or refuses a write or a move
+            (code ``archive_unwritable``). The disk's error is the cause. It is
+            reported as a failed pack, as an unreadable entry is, because
+            ``fetch`` has to be able to go on to the next pack when one file is
+            held open by another program, and has to report a folder the user
+            cannot write as a failed pack instead of a traceback.
+    """
+    placed: list[tuple[Path, Path | None]] = []
+    keep_staging = False
+    staging: Path | None = None
+    try:
+        _make_folder(out, created)
+        staging = Path(tempfile.mkdtemp(prefix=f".{tm_id}-", dir=out))
+        for name in wanted:
+            staged = staging.joinpath("new", *name.split("/"))
+            staged.parent.mkdir(parents=True, exist_ok=True)
+            staged.write_bytes(_read_member(archive, name, tm_id))
+        written: list[Path] = []
+        for index, name in enumerate(wanted):
+            final = out.joinpath(tm_id, *name.split("/"))
+            _make_folder(final.parent, created)
+            displaced: Path | None = None
+            if os.path.lexists(final):
+                displaced = staging / "old" / str(index)
+                displaced.parent.mkdir(exist_ok=True)
+                os.replace(final, displaced)
+            placed.append((final, displaced))
+            os.replace(staging.joinpath("new", *name.split("/")), final)
+            written.append(final)
+        return written
+    except OSError as exc:
+        # When the failure came before the staging folder existed, nothing has
+        # been placed, so there is nothing to put back and nothing to keep.
+        restored = _put_back(placed)
+        keep_staging = not restored
+        outcome = (
+            "Nothing was changed."
+            if restored
+            else f"Files it replaced could not be put back, and are kept in {staging}."
+        )
+        raise ContractViolation(
+            f"{tm_id}'s files could not be written under {out}: {exc} {outcome}",
+            code="archive_unwritable",
+        ) from exc
+    except BaseException:
+        keep_staging = not _put_back(placed)
+        raise
+    finally:
+        if staging is not None and not keep_staging:
+            _remove_tree(staging)
+
+
+def extract(
+    data: bytes,
+    manifest: Mapping[str, Any],
+    tm_id: str,
+    chosen: Sequence[Selected],
+    out: Path,
+) -> list[Path]:
+    """Write the selected files of a verified archive under ``out/<tm_id>``.
+
+    **All or nothing per pack.** Every check runs, and every selected file is
+    read and written to a staging folder inside ``out``, before anything
+    reaches its final place, so a refused pack leaves ``out`` as it was. If a
+    move into place then fails, the files already moved are taken back out, any
+    file they replaced is restored, and the folders this call made are removed,
+    so that failure leaves ``out`` as it was too.
+
+    Args:
+        data: The archive, already verified with `verify_archive`.
+        manifest: The manifest the rules were selected from.
+        tm_id: The pack.
+        chosen: The rules and files to write.
+        out: The folder to write under.
+
+    Returns:
+        Every file written, in selection order.
+
+    Raises:
+        ContractViolation: If the archive cannot be read (code
+            ``archive_unreadable``), any entry is unsafe or undeclared, an entry
+            reads under another name than the one it stores, a selected file is
+            missing from the archive, or the selection lists a path twice,
+            holds one that could leave its folder, or names files that cannot
+            sit side by side on every platform. Also, with code
+            ``archive_unsafe``, if the pack's ThreatModel id is not in the
+            form the API issues, because an id such as ``..`` would name a
+            folder outside ``out``. Also, with code ``archive_unwritable``, if
+            a folder is where a file belongs, a path under ``out`` cannot be
+            examined, or the disk refuses to make ``out`` or to write or move
+            a file, in which case ``out`` has been put back as it was.
+    """
+    declared = {
+        f"{rule.get('id')}/{file}"
+        for rule in manifest.get("rules") or []
+        if isinstance(rule, Mapping)
+        for file in rule.get("files") or []
+    }
+    wanted = [f"{s.rule.get('id')}/{file}" for s in chosen for file in s.files]
+    # The id and these paths are what gets joined onto ``out``, so they are
+    # judged before the archive is looked at. Nothing the archive's names say
+    # can vouch for them.
+    _refuse_unsafe_id(tm_id)
+    _refuse_unwritable(wanted, tm_id)
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except _UNREADABLE as exc:
+        raise ContractViolation(
+            f"{tm_id}'s archive is not a readable zip: {exc}",
+            code="archive_unreadable",
+        ) from exc
+    with archive:
+        # The name is judged as stored, because on Windows zipfile has already
+        # turned every backslash in the name it reports into a slash, which
+        # would let an entry through there that Linux refuses. The name zipfile
+        # reports is still the one to compare with the manifest and to read by.
+        stored = [
+            info for info in archive.infolist() if not info.orig_filename.endswith("/")
+        ]
+        entries = {info.filename for info in stored}
+        unsafe = sorted(
+            info.orig_filename for info in stored if not _is_safe(info.orig_filename)
+        )
+        if unsafe:
+            raise ContractViolation(
+                f"{tm_id}'s archive holds an unsafe entry: {unsafe[0]!r}.",
+                code="archive_unsafe",
+            )
+        # zipfile reports a name that an extra field gives an entry, and a name
+        # cut at its first null byte, in place of the stored one. Only the
+        # reported name is read and compared, so the check on the stored name
+        # above would say nothing about it. Backslashes are set aside here
+        # because zipfile folds them on Windows only, and the check above has
+        # already refused them in every entry that is written.
+        renamed = sorted(
+            info.orig_filename
+            for info in archive.infolist()
+            if info.filename.replace("\\", "/") != info.orig_filename.replace("\\", "/")
+        )
+        if renamed:
+            raise ContractViolation(
+                f"{tm_id}'s archive holds an entry stored as {renamed[0]!r} "
+                "that reads as another name.",
+                code="archive_unsafe",
+            )
+        undeclared = sorted(entries - declared)
+        if undeclared:
+            raise ContractViolation(
+                f"{tm_id}'s archive holds {undeclared[0]}, which its manifest "
+                "does not declare.",
+                code="archive_mismatch",
+            )
+        missing = [name for name in wanted if name not in entries]
+        if missing:
+            raise ContractViolation(
+                f"{tm_id}'s archive lacks {missing[0]}, which its manifest declares.",
+                code="archive_mismatch",
+            )
+        _refuse_folders_in_the_way(wanted, tm_id, out)
+        created: list[Path] = []
+        try:
+            return _install(archive, wanted, tm_id, out, created)
+        except BaseException:
+            # Whatever the install put in these folders is gone by now, so the
+            # ones left are empty and removing them restores ``out``.
+            for folder in reversed(created):
+                with contextlib.suppress(OSError):
+                    folder.rmdir()
+            raise
+
+
+#: The form of a release id, which is the API's own rule: 7 to 64 lowercase hex
+#: characters, as a commit hash is written. The archive request is pinned to
+#: the id, and the API answers any other form with a 400 that would end every
+#: later pack too. It is matched with ``fullmatch`` because ``$`` also accepts a
+#: trailing newline.
+_RELEASE_ID: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{7,64}")
+
+
+def _malformed(tm_id: str, field: str, expected: str) -> ContractViolation:
+    """Describe one manifest field that is not the shape this module reads.
+
+    Args:
+        tm_id: The pack.
+        field: Where the field sits, such as ``rules[0].modes``.
+        expected: What the field should have been.
+
+    Returns:
+        The error, with code ``bad_manifest``.
+    """
+    return ContractViolation(
+        f"{tm_id}'s manifest field {field} is not {expected}.",
+        code="bad_manifest",
+    )
+
+
+def _is_strings(value: Any) -> bool:
+    """Decide whether a value is a list of strings.
+
+    Args:
+        value: The value.
+
+    Returns:
+        True for a list whose every item is a string, the empty list included.
+    """
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _manifest_release_id(manifest: Any, tm_id: str) -> str:
+    """Take the release id from a manifest, refusing one the API would refuse.
+
+    This is the first check on a manifest, and it hands the id back so the
+    caller can hold it before any later check can raise. A failure that follows
+    it then names the release that is broken, which is what support asks for,
+    and only a manifest that is no object, or whose id is itself refused, has
+    none to name. A release id outside the API's form would also be sent as the
+    archive's pin and draw a 400 that ends every later pack as well.
+
+    Args:
+        manifest: The manifest, as the API answered it.
+        tm_id: The pack, for the message.
+
+    Returns:
+        The release id, or the empty string when the manifest names none, as
+        when the field is absent, null or empty. The archive is then asked for
+        unpinned.
+
+    Raises:
+        ContractViolation: If the manifest is not an object, or its
+            ``release_id`` is neither empty nor in the API's form (code
+            ``bad_manifest``).
+    """
+    if not isinstance(manifest, Mapping):
+        raise ContractViolation(
+            f"{tm_id}'s manifest is not an object.", code="bad_manifest"
+        )
+    release_id = manifest.get("release_id")
+    if release_id in (None, ""):
+        return ""
+    if not (isinstance(release_id, str) and _RELEASE_ID.fullmatch(release_id)):
+        raise _malformed(tm_id, "release_id", "7 to 64 lowercase hex digits")
+    return release_id
+
+
+def _refuse_malformed_rules(manifest: Mapping[str, Any], tm_id: str) -> None:
+    """Refuse a manifest whose rules are not the shapes this module reads.
+
+    Selection and extraction trust the types of the rules' fields. Unchecked, a
+    field of another type ends the whole fetch with a raw ``TypeError`` or
+    ``AttributeError``, or is read character by character as a string is.
+    Checked once, before selection reads them, each of these fails this pack
+    alone. A field given as null reads as absent, as the rest of this module
+    reads it. The manifest is checked as a whole by `_manifest_release_id`
+    first, so this takes an object whose release id is already sound.
+
+    Args:
+        manifest: The manifest, once `_manifest_release_id` has accepted it.
+        tm_id: The pack, for the message.
+
+    Raises:
+        ContractViolation: If ``rules`` is not a list of objects, a rule's
+            ``id`` is not a non-empty string, a rule's ``modes`` or ``files`` is
+            not a list of strings, or a rule's ``matchers`` is not an object of
+            objects (code ``bad_manifest``).
+    """
+    rules = manifest.get("rules")
+    if rules is None:
+        return
+    if not isinstance(rules, list):
+        raise _malformed(tm_id, "rules", "a list")
+    for index, rule in enumerate(rules):
+        where = f"rules[{index}]"
+        if not isinstance(rule, Mapping):
+            raise _malformed(tm_id, where, "an object")
+        rule_id = rule.get("id")
+        if not isinstance(rule_id, str) or not rule_id:
+            raise _malformed(tm_id, f"{where}.id", "a non-empty string")
+        for name in ("modes", "files"):
+            value = rule.get(name)
+            if value is not None and not _is_strings(value):
+                raise _malformed(tm_id, f"{where}.{name}", "a list of strings")
+        matchers = rule.get("matchers")
+        if matchers is not None and not (
+            isinstance(matchers, Mapping)
+            and all(isinstance(matcher, Mapping) for matcher in matchers.values())
+        ):
+            raise _malformed(tm_id, f"{where}.matchers", "an object of objects")
+
+
+def _route(command: tuple[str, ...]) -> Route:
+    """Find a CCR route by its command.
+
+    Args:
+        command: The command words.
+
+    Returns:
+        The route.
+    """
+    found = route_for(command)
+    assert found is not None, f"{' '.join(command)} is not bound"
+    return found
+
+
+#: Archive-stage codes for a download the transport gave up on, as `TocClient`
+#: names them. There is no server message or request id to go on then.
+_LOST: Final[tuple[str, ...]] = ("unreachable", "timeout", "connection_lost")
+
+#: What to do about a failed pack, by its stage and code. A code of None stands
+#: for every code of that stage without a line of its own.
+_HINTS: Final[Mapping[tuple[str, str | None], str]] = {
+    ("manifest", "not_found"): (
+        "The pack is unknown or not in this tenant's subscription; "
+        "`tmxcaliber ccr packs list` shows the packs this key can read."
+    ),
+    ("archive", "not_found"): (
+        "The pack was withdrawn, or left this tenant's subscription, after its "
+        "manifest was read; `tmxcaliber ccr packs list` shows the packs this key "
+        "can read."
+    ),
+    ("archive", "unavailable"): (
+        # The server's message already says whether retrying can help, so the
+        # hint defers to it rather than promising that a later run will work.
+        "The API refused the archive after this client retried, and its message "
+        "says why. A damaged archive stays refused until the pack is republished; "
+        "for anything else, run the command again later. If it keeps failing, "
+        "report the request id."
+    ),
+    **{
+        ("archive", code): (
+            "The archive could not be downloaded after this client retried; check "
+            "the connection and run the command again."
+        )
+        for code in _LOST
+    },
+    ("archive", "release_superseded"): (
+        "The pack was republished while it was being read; run the command again."
+    ),
+    ("verify", None): (
+        "The downloaded archive does not match its manifest, so nothing from this "
+        "pack was written; run the command again, and if it persists, report the "
+        "request id or the release."
+    ),
+    ("extract", "archive_unwritable"): (
+        "A file could not be written under the output folder; check its "
+        "permissions and free space."
+    ),
+    ("extract", None): (
+        "The archive holds entries this client refuses to write, so nothing from "
+        "this pack was written; report the release id."
+    ),
+}
+
+#: What to do about a failure no line of `_HINTS` covers.
+_GENERAL_HINT: Final[str] = (
+    "The message says what went wrong; if it persists, report the request id."
+)
+
+
+@dataclass(frozen=True)
+class FailureParts:
+    """The pieces a failed pack is told in, as `PackFailure.parts` splits them.
+
+    Attributes:
+        headline: ``<stage> failed: <message>``.
+        details: The code, the HTTP status, the request id and the release,
+            each when known, joined by commas; empty when none is.
+        hint: What to do about it, in one sentence.
+        did_you_mean: ``Did you mean ...?`` when there are suggestions, else
+            empty.
+    """
+
+    headline: str
+    details: str
+    hint: str
+    did_you_mean: str
+
+
+@dataclass(frozen=True)
+class PackFailure:
+    """One pack that could not be fetched, and why.
+
+    A damaged archive and an outage both reach this client as a 503, so the
+    stage, the code and the server's own message are what tell them apart,
+    and the request id is what support will ask for. Each is a field of its
+    own, so a script can branch on it without parsing the line people read.
+
+    Attributes:
+        tm_id: The pack.
+        stage: The step that failed, one of `STAGES`.
+        code: The API's error code, such as ``unavailable``, or this client's
+            own, such as ``archive_mismatch``. Never empty: an error that
+            carries no code is named by its class instead.
+        message: The server's words for an API error, or this client's for a
+            local one, without the request id that the error's text appends.
+        status: The HTTP status, when the failure reached one.
+        request_id: The server's identifier for the request, when it sent one.
+        release_id: The release the manifest named, when the manifest was read.
+        suggestions: For a pack named by the caller that the API does not
+            know, the packs this key can read whose names are close to it,
+            best first. Empty otherwise, and when none is close.
+    """
+
+    tm_id: str
+    stage: str
+    code: str
+    message: str
+    status: int | None = None
+    request_id: str | None = None
+    release_id: str | None = None
+    suggestions: tuple[str, ...] = ()
+
+    @property
+    def hint(self) -> str:
+        """Say, in one sentence, what to do about the failure.
+
+        Returns:
+            The sentence for this stage and code, else the one for this stage
+            whatever the code, else a general one.
+        """
+        return (
+            _HINTS.get((self.stage, self.code))
+            or _HINTS.get((self.stage, None))
+            or _GENERAL_HINT
+        )
+
+    def parts(self) -> FailureParts:
+        """Split the failure into the pieces it is told in.
+
+        ``str()`` joins them into one line, and the command line sets each on
+        a line of its own, so both are built from this one place and cannot
+        drift apart.
+
+        Returns:
+            The pieces. The release id is cut to seven characters, which tell
+            releases apart as a short commit hash does.
+        """
+        details = [
+            detail
+            for detail in (
+                self.code,
+                f"HTTP {self.status}" if self.status is not None else "",
+                f"request {self.request_id}" if self.request_id else "",
+                f"release {self.release_id[:7]}" if self.release_id else "",
+            )
+            if detail
+        ]
+        return FailureParts(
+            headline=f"{self.stage} failed: {self.message}",
+            details=", ".join(details),
+            hint=self.hint,
+            did_you_mean=did_you_mean(self.suggestions) if self.suggestions else "",
+        )
+
+    def __str__(self) -> str:
+        """Render the failure as one line.
+
+        Returns:
+            ``<stage> failed: <message> [<code>, HTTP <status>, request <id>,
+            release <id>]. <hint>``, leaving out each detail that is not known,
+            and the brackets when none is, then ``Did you mean ...?`` when
+            there are suggestions.
+        """
+        parts = self.parts()
+        if parts.details:
+            line = f"{parts.headline} [{parts.details}]. {parts.hint}"
+        else:
+            # The message is a sentence of its own, so a second full stop after
+            # it would read as a typing slip.
+            stop = "" if self.message.endswith((".", "!", "?")) else "."
+            line = f"{parts.headline}{stop} {parts.hint}"
+        if parts.did_you_mean:
+            line += f" {parts.did_you_mean}"
+        return line
+
+
+@dataclass(frozen=True)
+class PackOutcome:
+    """What one pack that completed gave.
+
+    Attributes:
+        tm_id: The pack.
+        release_id: The release its manifest named, or empty when it named
+            none.
+        rows: One row per rule selected from it, in manifest order.
+        written: The files written for it, in the order they were written;
+            empty when no folder was given or nothing was selected.
+    """
+
+    tm_id: str
+    release_id: str
+    rows: tuple[dict[str, Any], ...]
+    written: tuple[Path, ...]
+
+
+#: What `fetch` calls once per pack as the pack finishes: with the ThreatModel
+#: id as the caller named or the list gave it, and the pack's outcome or failure.
+OnPack = Callable[[str, "PackOutcome | PackFailure"], None]
+
+
+@dataclass
+class FetchResult:
+    """What a fetch found and wrote.
+
+    Attributes:
+        rows: One row per selected rule, across every pack that completed.
+        written: Every file written, when a folder was given.
+        failed: Each pack that could not be fetched, by ThreatModel id, with the
+            stage it reached and why.
+    """
+
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    written: list[Path] = field(default_factory=list)
+    failed: dict[str, PackFailure] = field(default_factory=dict)
+
+
+def _listed_ids(client: TocClient) -> list[str]:
+    """Read the ThreatModel id of every pack this key can read.
+
+    Args:
+        client: The client.
+
+    Returns:
+        Each listed pack's ThreatModel id, in the API's order. A row without one
+        reads as the empty string.
+
+    Raises:
+        RemoteError: If the list cannot be read.
+    """
+    return [
+        str(row.get("tmId") or "")
+        for row in call_route(client, _route(("ccr", "packs", "list")), "", {}).result
+    ]
+
+
+def _no_pack_matched(
+    listed: Sequence[str], providers: Sequence[str], services: Sequence[str]
+) -> NoPackMatched:
+    """Describe a narrowing that left no pack, with what was close to it.
+
+    Suggestions come from the listed packs alone, so a pack or provider this
+    key cannot read is never named, whatever an alias says.
+
+    Args:
+        listed: The ThreatModel ids of every pack this key can read.
+        providers: The providers asked for.
+        services: The services asked for.
+
+    Returns:
+        The error. Its message names each filter with its values, repeats of
+        one filter joined by "or" and different filters by "and", as the
+        filters combine. Its suggestions are, for each provider, the listed
+        providers close to it, then, for each service, the listed packs whose
+        ThreatModel id or service is close to it, without repeats, and its
+        ``did_you_mean`` is the sentence that names them, which ``str()``
+        puts after the message.
+
+        A pack named by a service, or suggested for one, that the providers
+        asked for leave out is also said to belong to a provider they exclude.
+        A person answers "Did you mean gcp-bigquery?" by typing it as the
+        service and leaving ``--provider aws`` as it was, which would match
+        nothing again with no word about why. The exception is a pack whose
+        provider is itself among the suggestions, because a provider that was
+        mistyped is the one thing to change.
+    """
+    keys = [key for key in listed if key]
+    present = {key.partition("-")[0] for key in keys}
+    named = [
+        f"--{flag} " + " or ".join(repr(value) for value in values)
+        for flag, values in (("provider", providers), ("service", services))
+        if values
+    ]
+    near_providers: list[str] = []
+    for value in providers:
+        near_providers += [
+            provider for provider in suggest_provider(value) if provider in present
+        ]
+    near_packs: list[str] = []
+    for value in services:
+        near_packs += suggest(value, keys)
+    suggestions = tuple(dict.fromkeys([*near_providers, *near_packs]))
+    message = f"No pack this key can read matches {' and '.join(named)}."
+    # The packs the services name, either as typed (a whole ThreatModel id is
+    # accepted as a service) or by suggestion, grouped by the provider they
+    # belong to.
+    given = [value for value in services if value in keys]
+    left_out: dict[str, list[str]] = {}
+    for key in dict.fromkeys([*given, *near_packs]):
+        provider = key.partition("-")[0]
+        if providers and provider not in providers and provider not in near_providers:
+            left_out.setdefault(provider, []).append(key)
+    excluded = " or ".join(repr(value) for value in providers)
+    notes: list[str] = []
+    for provider, group in left_out.items():
+        subject = (
+            group[0] if len(group) == 1 else f"{', '.join(group[:-1])} and {group[-1]}"
+        )
+        verb = "belongs" if len(group) == 1 else "belong"
+        notes.append(
+            f"{subject} {verb} to {provider}, which --provider {excluded} leaves out."
+        )
+    if suggestions:
+        # What is said about a suggested pack's provider belongs with the
+        # suggestion, so it follows it on the line the command line gives it.
+        return NoPackMatched(
+            message,
+            suggestions=suggestions,
+            did_you_mean=" ".join([did_you_mean(suggestions), *notes]),
+        )
+    return NoPackMatched(" ".join([message, *notes]), suggestions=suggestions)
+
+
+def _pack_ids(
+    client: TocClient,
+    tm_ids: Sequence[str],
+    providers: Sequence[str],
+    services: Sequence[str],
+) -> list[str]:
+    """Decide which packs to read.
+
+    Args:
+        client: The client.
+        tm_ids: Packs named by the caller.
+        providers: Providers to narrow the listed packs to.
+        services: Services to narrow the listed packs to, each given as the
+            service alone, such as ``vertex``, or as the whole ThreatModel id,
+            such as ``gcp-vertex``.
+
+    Returns:
+        The ThreatModel ids, in the order they will be read.
+
+    Raises:
+        NoPackMatched: If a provider or service was given and no listed pack
+            has it. Read as "no rule matched", a misspelled or renamed
+            service would look like a pack with no such rule.
+    """
+    if tm_ids:
+        return list(dict.fromkeys(tm_ids))
+    listed = _listed_ids(client)
+    keys: list[str] = []
+    for key in listed:
+        # A pack's ThreatModel id is `<provider>-<service>`, split on its first
+        # hyphen, as the API splits it to check entitlement. The list rows carry
+        # the id alone, so the provider and service are read from it.
+        provider, _, service = key.partition("-")
+        if providers and provider not in providers:
+            continue
+        # A whole ThreatModel id also names its service. The refusal below
+        # suggests ids, so a person answers it by typing one here.
+        if services and service not in services and key not in services:
+            continue
+        keys.append(key)
+    if (providers or services) and not keys:
+        raise _no_pack_matched(listed, providers, services)
+    return keys
+
+
+def _readable_ids(client: TocClient) -> list[str]:
+    """Read the packs this key can read, for suggestions, surviving any failure.
+
+    A suggestion is a courtesy on a pack that has already failed, so a list
+    that cannot be read costs the caller the suggestion and nothing else.
+
+    Args:
+        client: The client.
+
+    Returns:
+        The listed ThreatModel ids, or none when the list cannot be read.
+    """
+    try:
+        return [key for key in _listed_ids(client) if key]
+    except RemoteError:
+        return []
+
+
+#: The errors that end only the pack they arise in, by the stage they arise at.
+#: Anything else stops the whole fetch, because it would fail every later pack
+#: the same way: a credential or permission failure, a rate limit, or an outage
+#: that reaches the pack list or a manifest. An outage on the archive alone
+#: belongs to its pack, because the API also answers 503 for an archive it will
+#: not serve, such as one that no longer matches its published digest, while it
+#: still serves every other pack. `TocClient` has retried it by then.
+_PACK_ERRORS: Final[Mapping[str, tuple[type[RemoteError], ...]]] = {
+    "manifest": (NotFound, ContractViolation),
+    "archive": (NotFound, ReleaseSuperseded, ServiceUnavailable, ContractViolation),
+    "verify": (ContractViolation,),
+    "extract": (ContractViolation,),
+}
+
+
+#: The codes a manifest that names an unknown pack fails with: the API's own,
+#: and the class name `_failure` gives a bare 404 that arrived without the
+#: API's envelope, from whatever sits in front of it. Either way the name
+#: typed was not found, so either gets a suggestion.
+_UNKNOWN_PACK: Final[frozenset[str]] = frozenset({"not_found", NotFound.__name__})
+
+
+def _failure(tm_id: str, stage: str, exc: RemoteError, release_id: str) -> PackFailure:
+    """Describe the error that ended one pack.
+
+    Args:
+        tm_id: The pack.
+        stage: The step that failed, one of `STAGES`.
+        exc: The error.
+        release_id: The release the manifest named, or empty when no manifest
+            was read.
+
+    Returns:
+        The failure.
+    """
+    return PackFailure(
+        tm_id=tm_id,
+        stage=stage,
+        # A bare status from whatever sits in front of the API arrives without
+        # a code, and an empty code would tell a script nothing.
+        code=exc.code or type(exc).__name__,
+        # `RemoteError.__str__` appends the request id, which has a field of
+        # its own here, so the message is taken without it.
+        message=Exception.__str__(exc),
+        status=exc.status,
+        request_id=exc.request_id,
+        release_id=release_id or None,
+    )
+
+
+def _fetch_pack(
+    client: TocClient, key: str, wanted: RuleFilter, out: Path | None
+) -> PackOutcome | PackFailure:
+    """Select from one pack, and write its files when a folder is given.
+
+    **One release throughout.** The archive is asked for the release the
+    manifest names, so the files written are the ones the rules were chosen
+    from. A pack republished between the two reads answers 410, and its
+    manifest is read once more.
+
+    **Each failure names its stage.** The stage decides whether an error ends
+    this pack or the whole fetch (`_PACK_ERRORS`), and it tells the reader of a
+    failed pack where to look.
+
+    Args:
+        client: The client.
+        key: The pack.
+        wanted: The filter.
+        out: The folder to write under, or None to write nothing.
+
+    Returns:
+        The pack's rows, release and the files written, or what ended the pack
+        when the error belongs to it alone: an unknown or unentitled pack, a manifest
+        of the wrong shape, a release that changed twice in a row, an archive
+        the API kept refusing, or one that is not what its manifest describes
+        or cannot be written.
+
+    Raises:
+        RemoteError: On any other failure, which would end every later pack too.
+    """
+    stage = "manifest"
+    release_id = ""
+    try:
+        for attempt in (1, 2):
+            # A second manifest names a release of its own, so the first one's
+            # id no longer describes the pack until it has been read.
+            stage, release_id = "manifest", ""
+            manifest = call_route(
+                client, _route(("ccr", "packs", "get")), key, {}
+            ).result
+            # Before anything reads a field, so a wrong type fails this pack
+            # alone, and a release id the API would refuse is never sent as a
+            # pin. The id comes first and is held before the rules are checked,
+            # so a refusal of the rules still says which release it came from.
+            release_id = _manifest_release_id(manifest, key)
+            _refuse_malformed_rules(manifest, key)
+            chosen = select_rules(manifest, wanted)
+            rows = [
+                rule_row(key, release_id, selected, wanted=wanted)
+                for selected in chosen
+            ]
+            if out is None or not chosen:
+                return PackOutcome(key, release_id, tuple(rows), ())
+            stage = "archive"
+            try:
+                data = call_route(
+                    client,
+                    _route(("ccr", "packs", "archive")),
+                    key,
+                    {"kind": "source", "release": release_id},
+                ).result
+            except ReleaseSuperseded:
+                if attempt == 2:
+                    raise
+                continue
+            stage = "verify"
+            verify_archive(data, manifest, key)
+            stage = "extract"
+            written = extract(data, manifest, key, chosen, out)
+            return PackOutcome(key, release_id, tuple(rows), tuple(written))
+    except RemoteError as exc:
+        if not isinstance(exc, _PACK_ERRORS[stage]):
+            raise
+        return _failure(key, stage, exc, release_id)
+    raise AssertionError("unreachable: the loop returns or raises")
+
+
+def fetch(
+    client: TocClient,
+    *,
+    tm_ids: Sequence[str] = (),
+    providers: Sequence[str] = (),
+    services: Sequence[str] = (),
+    wanted: RuleFilter = _NO_FILTER,
+    out: Path | None = None,
+    on_pack: OnPack | None = None,
+) -> FetchResult:
+    """Select CCR rules across packs, and write their files when asked.
+
+    A pack that cannot be fetched is recorded in ``failed``, with the stage it
+    reached, and the others still complete. That covers a pack that is unknown
+    or not entitled, a manifest of the wrong shape, a release that changes
+    twice during the read, an archive the API still refuses once the client
+    has retried, and an archive that is not what its manifest describes or
+    cannot be written. A failure that would end every pack the same way
+    propagates instead: a credential, permission or rate limit failure, and an
+    outage that reaches the pack list or a manifest.
+
+    **A mistyped name gets a suggestion.** A named pack the API does not know
+    carries the packs this key can read whose names are close to it, and a
+    provider or service that leaves no pack raises with the same kind of
+    suggestion. Either is drawn only from ``ccr packs list``, so a pack outside
+    the key's subscription is never named. For named packs the list is read
+    at most once, and only after the first unknown one.
+
+    Args:
+        client: The client.
+        tm_ids: Packs to read. Every entitled pack when empty.
+        providers: Narrow the listed packs to these providers.
+        services: Narrow the listed packs to these services, each given as
+            the service alone or as a whole ThreatModel id such as
+            ``gcp-vertex``.
+        wanted: Which rules and files to select.
+        out: The folder to write under, or None to only list.
+        on_pack: Called once per pack as soon as it finishes, in the order
+            the packs are read, with its ThreatModel id and its `PackOutcome`,
+            or the `PackFailure` that ended it, suggestions included. The
+            command line reports progress with it; a fetch without it is
+            unchanged.
+
+    Returns:
+        The rows, the files written and the packs that failed.
+
+    Raises:
+        ValueError: If packs are named and also narrowed by provider or service.
+        NoPackMatched: If a provider or service was given and no pack this key
+            can read has it. Nothing past the list is read then.
+        RemoteError: On a failure that is not one pack's alone.
+    """
+    if tm_ids and (providers or services):
+        raise ValueError("Name packs, or narrow by provider and service, not both.")
+    result = FetchResult()
+    readable: list[str] | None = None
+    for key in _pack_ids(client, tm_ids, providers, services):
+        outcome = _fetch_pack(client, key, wanted, out)
+        if isinstance(outcome, PackFailure):
+            # Only a name the caller typed can be mistyped. A listed pack that
+            # is not found was withdrawn between the two reads.
+            if tm_ids and outcome.stage == "manifest" and outcome.code in _UNKNOWN_PACK:
+                if readable is None:
+                    readable = _readable_ids(client)
+                # A release pins a version of the name and is no part of it,
+                # as the derived commands read it. A listed name is then left
+                # with nothing to correct, because only its release is wrong.
+                typed = key.partition("@")[0]
+                outcome = replace(outcome, suggestions=tuple(suggest(typed, readable)))
+            result.failed[key] = outcome
+        else:
+            result.rows.extend(outcome.rows)
+            result.written.extend(outcome.written)
+        if on_pack is not None:
+            on_pack(key, outcome)
+    return result

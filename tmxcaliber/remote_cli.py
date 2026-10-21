@@ -24,10 +24,19 @@ import os
 import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
-from colorama import Fore
-
+from . import console
+from .lib.remote.ccr import (
+    MATCHERS,
+    MODES,
+    FetchResult,
+    PackFailure,
+    PackOutcome,
+    RuleFilter,
+    fetch,
+)
 from .lib.remote.client import TocClient
 from .lib.remote.config import (
     SECTION,
@@ -43,12 +52,20 @@ from .lib.remote.contract import (
     Route,
     python_name,
     required_parameters,
+    route_for_path,
     values_field,
     values_route,
 )
-from .lib.remote.errors import ConfigurationError, RemoteError
+from .lib.remote.errors import (
+    ConfigurationError,
+    NoPackMatched,
+    NotFound,
+    RemoteError,
+)
 from .lib.remote.operations import call_route, incompleteness_fields
+from .lib.remote.ref import is_remote_ref
 from .lib.remote.resolve import resolve_source
+from .lib.remote.suggest import alternative_names, did_you_mean, suggest
 
 #: The namespace key each nesting level of the command tree parks its word in.
 #:
@@ -65,6 +82,23 @@ POSITIONALS = {
         "the ThreatModel, as `threatmodels list` reports it, "
         "optionally pinned with @release (for example aws-s3@1611187200).",
     ),
+}
+
+#: Help for an option that "filter by ..." would misdescribe, by route path and
+#: then option. The archive route's options choose which file comes back, and
+#: narrow no collection, so the generated text would tell the reader nothing
+#: about what to pass. Every option not listed here keeps the generated text.
+OPTION_HELP: Mapping[str, Mapping[str, str]] = {
+    "/v1/ccr/packs/{tmId}/archive": {
+        "kind": (
+            "which archive to download: source (the default, the rule tree) or "
+            "deploy (the Terraform package)."
+        ),
+        "release": (
+            "the release to pin the download to, as `tmxcaliber ccr packs get` "
+            "reports it; the API refuses a release it no longer publishes."
+        ),
+    },
 }
 
 
@@ -89,9 +123,13 @@ def _filter_help(route: Route, name: str, *, required: bool) -> str:
         required: Whether the route refuses to answer without it.
 
     Returns:
-        The help text, naming the command that lists the accepted values when
-        the API publishes one.
+        The route's own text for the option in `OPTION_HELP` when it has one.
+        Otherwise the generated text, naming the command that lists the
+        accepted values when the API publishes one.
     """
+    written = OPTION_HELP.get(route.path, {}).get(name)
+    if written is not None:
+        return written
     words = _option(name)[2:].replace("-", " ")
     text = f"the {words} to read." if required else f"filter by {words}."
     lookup = values_route(route, name)
@@ -170,7 +208,14 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
     parser.add_argument(
         "--output",
         default="",
-        help="file to write the result to. Prints to stdout when omitted.",
+        # A zip printed to a terminal is noise at best, so a binary route
+        # refuses to run without a file.
+        required=route.binary,
+        help=(
+            "file to write the archive to."
+            if route.binary
+            else "file to write the result to. Prints to stdout when omitted."
+        ),
     )
     parser.set_defaults(api_route=route)
 
@@ -202,6 +247,256 @@ def add_api_parsers(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         )
         _leaf(leaf, route)
 
+    # The one hand-written command under an API group. It composes routes the
+    # loop above bound, and names no route of its own.
+    _add_ccr_fetch(groups[("ccr",)])
+
+
+def _add_ccr_fetch(ccr: _SubParsersAction[ArgumentParser]) -> None:
+    """Add `ccr fetch` under the `ccr` group.
+
+    Args:
+        ccr: The `ccr` group's subparser action.
+    """
+    summary = "Select CCR rules by pack, control, mode, matcher or file."
+    description = (
+        f"{summary} Without --out it only previews: it prints the selection as "
+        "JSON and writes nothing. With --out it downloads each pack's archive "
+        "and writes the selected files under DIR/<ThreatModel id>/<rule id>/."
+    )
+    parser = ccr.add_parser("fetch", help=summary, description=description)
+    # The metavar and wording follow `ccr packs get`, whose positional the
+    # route table derives, so the two commands name a pack the same way.
+    metavar, _ = POSITIONALS["tm_id"]
+    parser.add_argument(
+        "tm_ids",
+        nargs="*",
+        metavar=metavar,
+        help="packs to read, by ThreatModel id, as `tmxcaliber ccr packs list` "
+        "reports them. Every entitled pack when omitted.",
+    )
+    for name, help_text in (
+        ("provider", "read only this provider's packs, for example aws."),
+        (
+            "service",
+            "read only this service's packs, for example s3. A whole "
+            "ThreatModel id, such as aws-s3, names its pack too.",
+        ),
+        ("control", "select this control, for example S3.C20."),
+        ("file", "select files whose <rule id>/<file> matches this glob."),
+    ):
+        parser.add_argument(
+            f"--{name}", action="append", default=[], help=help_text + " Repeatable."
+        )
+    parser.add_argument(
+        "--mode",
+        action="append",
+        default=[],
+        choices=MODES,
+        help="select rules that ship this mode, and only its files. Repeatable.",
+    )
+    parser.add_argument(
+        "--matcher",
+        action="append",
+        default=[],
+        choices=MATCHERS,
+        help="select rules that implement this matcher, and only its files. "
+        "Repeatable.",
+    )
+    parser.add_argument(
+        "--out",
+        default="",
+        metavar="DIR",
+        help="download each pack's archive and write the selected files under "
+        "DIR/<ThreatModel id>/<rule id>/. Without it the command only previews: "
+        "it prints the selection as JSON and writes nothing.",
+    )
+    parser.set_defaults(ccr_fetch=True)
+
+
+def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
+    """Execute `ccr fetch`.
+
+    The files written for the packs that completed are printed even when
+    another pack failed. Each pack is reported on stderr as soon as it
+    finishes, in the order the packs are read, so a long fetch shows how far
+    it got: a failed pack as a block saying at which stage it failed, why and
+    what to do, ending with the packs it was probably meant to be when it was
+    named and is unknown, and with --out each pack that had rules selected as
+    one line counting what it wrote.
+
+    **The last line on stderr says whether anything was written.** A preview's
+    JSON reads like the files themselves, so without --out the command says it
+    was only a preview and how to write the selection, and with --out it says
+    how many files it wrote and the folder they are in, in full, or that it
+    wrote nothing. Stdout stays the results alone: the JSON, or the files
+    written. Those are one path per line, as a script reads them, unless
+    stdout is a terminal, where a person reads them as a tree under the
+    folder, by pack and rule.
+
+    Args:
+        params: The parsed arguments.
+        client: A client to use, built from the environment when omitted.
+
+    Returns:
+        The exit status: 0, 1 when a pack failed or the provider or service
+        given matches no pack this key can read, 2 for a usage error.
+
+    Raises:
+        RemoteError: On a failure that is not one pack's alone, such as a
+            credential failure.
+    """
+    if params.tm_ids and (params.provider or params.service):
+        console.stderr().failure(
+            "Name packs, or narrow by --provider and --service, not both."
+        )
+        return 2
+    finished: list[PackOutcome] = []
+
+    def on_pack(key: str, outcome: PackOutcome | PackFailure) -> None:
+        # Looked up for each pack, so a stream replaced meanwhile is honored.
+        err = console.stderr()
+        if isinstance(outcome, PackFailure):
+            report_pack_failure(err, key, outcome)
+            return
+        finished.append(outcome)
+        if params.out and outcome.rows:
+            release = (
+                f"  (release {outcome.release_id[:7]})" if outcome.release_id else ""
+            )
+            err.status(
+                "ok",
+                "green",
+                f"{key}  {console.plural(len(outcome.rows), 'rule')}, "
+                f"{console.plural(len(outcome.written), 'file')}{release}",
+            )
+
+    try:
+        result = fetch(
+            client or connect(),
+            tm_ids=tuple(params.tm_ids),
+            providers=tuple(params.provider),
+            services=tuple(params.service),
+            wanted=RuleFilter(
+                controls=tuple(params.control),
+                modes=tuple(params.mode),
+                matchers=tuple(params.matcher),
+                files=tuple(params.file),
+            ),
+            out=Path(params.out) if params.out else None,
+            on_pack=on_pack,
+        )
+    except NoPackMatched as exc:
+        # Said on stderr like a failed pack, because the narrowing is what went
+        # wrong. Printing "[]" and "No rule matched" would read as packs that
+        # lack such a rule.
+        console.stderr().error(exc)
+        return 1
+    if params.out:
+        stdout = console.stdout()
+        if not stdout.terminal:
+            for path in result.written:
+                print(path)
+        elif result.written:
+            stdout.tree(os.path.abspath(params.out), _written_tree(finished))
+    else:
+        print(json.dumps(result.rows, indent=2))
+    _report_outcome(console.stderr(), result, params.out)
+    return 1 if result.failed else 0
+
+
+def _written_tree(finished: list[PackOutcome]) -> list[console.Branch]:
+    """Arrange what a fetch wrote as a tree under the output folder.
+
+    Args:
+        finished: The packs that completed, in the order they were read.
+
+    Returns:
+        A branch per pack that wrote anything, labeled with its release, then
+        a branch per rule that had files, in manifest order, then one per file,
+        relative to the rule's folder, in the order written.
+    """
+    return [
+        console.Branch(
+            outcome.tm_id
+            + (f"  (release {outcome.release_id[:7]})" if outcome.release_id else ""),
+            tuple(
+                console.Branch(
+                    str(row["ruleId"]),
+                    tuple(console.Branch(str(file)) for file in row["files"]),
+                )
+                for row in outcome.rows
+                if row["files"]
+            ),
+        )
+        for outcome in finished
+        if outcome.written
+    ]
+
+
+def _report_outcome(err: console.Console, result: FetchResult, out: str) -> None:
+    """Say, last, whether the fetch wrote anything and where.
+
+    No line ends with a full stop right after a path, so the path is never
+    read as ending in one.
+
+    Args:
+        err: Where to say it.
+        result: What the fetch found and wrote.
+        out: The folder given with --out, or empty for a preview.
+    """
+    if not result.rows and not result.failed:
+        nothing = " Nothing was written." if out else ""
+        err.status("info", "yellow", f"No rule matched the filters given.{nothing}")
+        return
+    if not out:
+        if result.rows:
+            files = sum(len(row["files"]) for row in result.rows)
+            packs = {row["tmId"] for row in result.rows}
+            err.status(
+                "info",
+                "yellow",
+                "Preview only, nothing was written: "
+                f"{console.plural(len(result.rows), 'rule')} and "
+                f"{console.plural(files, 'file')} selected from "
+                f"{console.plural(len(packs), 'pack')}.",
+                "Add --out DIR to download and write them.",
+            )
+        return
+    # Wherever the command was run, the reader can find the files from here.
+    where = os.path.abspath(out)
+    if not result.written:
+        err.status("fail", "red", f"Nothing was written to {where}")
+        return
+    # A failed pack has no rows, so these are the rules whose files were
+    # written, counted from what reached the disk.
+    rules = [row for row in result.rows if row["files"]]
+    packs = {row["tmId"] for row in rules}
+    err.status(
+        "ok",
+        "green",
+        f"Wrote {console.plural(len(result.written), 'file')} for "
+        f"{console.plural(len(rules), 'rule')} from "
+        f"{console.plural(len(packs), 'pack')} to {where}",
+    )
+
+
+def report_pack_failure(err: console.Console, key: str, failure: PackFailure) -> None:
+    """Write a failed pack as a block, from the parts its one line is made of.
+
+    Args:
+        err: Where to write it.
+        key: The pack, as it was asked for.
+        failure: Why it failed.
+    """
+    parts = failure.parts()
+    details = [f"[{parts.details}]"] if parts.details else []
+    err.failure(
+        f"{key}: {parts.headline}",
+        [*details, parts.hint],
+        parts.did_you_mean,
+    )
+
 
 def selected_route(params: Namespace) -> Route | None:
     """Report which API route a parsed command reaches.
@@ -230,10 +525,7 @@ def _report_envelope(envelope: Mapping[str, Any]) -> None:
     for name, value in envelope.items():
         if value in (None, "", [], {}):
             continue
-        print(
-            Fore.YELLOW + f"{name}: {json.dumps(value)}" + Fore.RESET,
-            file=sys.stderr,
-        )
+        console.stderr().line(f"{name}: {json.dumps(value)}", "yellow")
 
 
 #: Stored-endpoint notes this process has already written. A process is one
@@ -260,7 +552,7 @@ def _note_stored_endpoint(settings: Settings) -> None:
     if said in _noted:
         return
     _noted.add(said)
-    print(Fore.YELLOW + settings.stored_endpoint_note + Fore.RESET, file=sys.stderr)
+    console.stderr().line(settings.stored_endpoint_note, "yellow")
 
 
 def connect(env: Mapping[str, str] | None = None) -> TocClient:
@@ -301,6 +593,110 @@ def resolve_command_source(source: str) -> str:
     return resolve_source(source, connect=connect)
 
 
+#: For a positional that names something the API lists, the row field holding
+#: each name and the row field holding its title when there is one, by the
+#: path of the collection that lists it. That collection is the route's path
+#: up to its first parameter, so `ccr packs get` and `ccr packs archive` both
+#: look in `ccr packs list`, and every `threatmodels` command looks in
+#: `threatmodels list`. Both lists name their rows by `tmId`, and both kinds of
+#: route call their positional `tm_id`, so the positional alone cannot say
+#: which list to read.
+NAME_LISTS: Mapping[str, tuple[str, str | None]] = {
+    "/v1/ccr/packs": ("tmId", None),
+    "/v1/threatmodels": ("tmId", "title"),
+}
+
+
+#: The row fields that list the other services a ThreatModel covers, spelled as
+#: the catalogue spells it and as the API's camelCase would.
+COVERED_FIELDS: tuple[str, ...] = ("other_covered_services", "otherCoveredServices")
+
+
+def _published_names(row: Mapping[str, Any], title_field: str) -> tuple[str, ...]:
+    """Collect the names a list row publishes for the thing it describes.
+
+    Args:
+        row: One row of a list.
+        title_field: The row field holding its title.
+
+    Returns:
+        The title as published and the forms of it people type, then the same
+        for each service the row says it also covers. Every name comes from the
+        row, so a suggestion made with them still names only what the list
+        showed.
+    """
+    covered = [
+        str(service)
+        for field in COVERED_FIELDS
+        if isinstance(row.get(field), list)
+        for service in row[field]
+    ]
+    return alternative_names(str(row.get(title_field) or ""), *covered)
+
+
+def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
+    """Say which listed name a positional the API does not know probably meant.
+
+    The command line asks only after a ``NotFound``, so a name typed right
+    costs no extra call, and `Client`'s route methods never ask, so a library
+    caller makes exactly the calls it wrote. Only what this key can list is
+    suggested, so a ThreatModel or pack outside its subscription is never
+    named.
+
+    Args:
+        client: The client the command used.
+        route: The route that answered ``NotFound``.
+        typed: The positional as typed, with any ``@release``.
+
+    Returns:
+        The ``Did you mean ...?`` sentence, with each ThreatModel's title
+        after its id. A ThreatModel's own title, the short form in its
+        brackets, and the services it also covers all lead to it, as the list
+        publishes them, so its official name typed back is never a stranger to
+        the suggestion. Empty when the route names nothing the API lists, when
+        no name was typed, when nothing listed is close, when the name is
+        itself listed (as when only its release is unknown), or when the list
+        cannot be read, in which case the API's own error is the one worth
+        reporting.
+    """
+    collection = route.path.partition("{")[0].rstrip("/")
+    lookup = NAME_LISTS.get(collection) if route.positional else None
+    if lookup is None:
+        return ""
+    # A release pins a version of the name, and is no part of the name itself.
+    wanted = typed.partition("@")[0]
+    if not wanted:
+        return ""
+    name_field, title_field = lookup
+    listing = route_for_path(collection)
+    assert listing is not None, f"{collection} is not bound"
+    try:
+        rows = call_route(client, listing, "", {}).result
+    except RemoteError:
+        return ""
+    names = [str(row.get(name_field) or "") for row in rows]
+    labels = (
+        {
+            str(row.get(name_field) or ""): str(row.get(title_field) or "")
+            for row in rows
+        }
+        if title_field
+        else None
+    )
+    # A ThreatModel is also known by the title it was published under, and by
+    # the services it covers, so each row's own words lead back to it.
+    published = (
+        {
+            str(row.get(name_field) or ""): _published_names(row, title_field)
+            for row in rows
+        }
+        if title_field
+        else None
+    )
+    found = suggest(wanted, [name for name in names if name], extra_aliases=published)
+    return did_you_mean(found, labels)
+
+
 def run_api_command(
     params: Namespace,
     *,
@@ -317,29 +713,67 @@ def run_api_command(
             the result.
 
     Returns:
-        The result and the result type `output_result` expects.
+        The result and the result type `output_result` expects: "bytes" for a
+        binary route, "json" otherwise.
 
     Raises:
-        RemoteError: On any credential, transport or server failure.
-        ValueError: If a ThreatModel reference cannot be parsed.
+        NotFound: If the API does not know the ThreatModel or pack named.
+            When one this key can list is close to the name typed, its
+            ``did_you_mean`` holds the ``Did you mean ...?`` sentence, which
+            ``str()`` puts after the message, and the code, status and request
+            id stay the API's. A ThreatModel typed in a shape no
+            reference has, such as ``Amazon EC2``, is refused before the API
+            is asked, and raises this too, with no status or request id, when
+            a listed one is close to it.
+        RemoteError: On any other credential, transport or server failure.
+        ValueError: If a ThreatModel reference cannot be parsed, and none the
+            key can list is close to it.
     """
     route = selected_route(params)
     assert route is not None, "run_api_command called for a non-API command"
-    answer = call_route(
-        client or connect(),
-        route,
-        str(getattr(params, route.positional, "") or "") if route.positional else "",
-        {
-            name: str(getattr(params, python_name(name), "") or "")
-            for name in route.filters
-        },
-        limit=int(getattr(params, "limit", 0) or 0),
-    )
+    api = client or connect()
+    typed = str(getattr(params, route.positional, "") or "") if route.positional else ""
+    # The API spells a filter in camelCase and argparse keeps it in snake_case.
+    filters = {
+        name: str(getattr(params, python_name(name), "") or "")
+        for name in route.filters
+    }
+    limit = int(getattr(params, "limit", 0) or 0)
+    try:
+        answer = call_route(api, route, typed, filters, limit=limit)
+    except NotFound as exc:
+        sentence = _did_you_mean(api, route, typed)
+        if not sentence:
+            raise
+        raise NotFound(
+            Exception.__str__(exc),
+            code=exc.code,
+            request_id=exc.request_id,
+            status=exc.status,
+            did_you_mean=sentence,
+        ) from exc
+    except ValueError as exc:
+        # A ThreatModel typed as "Amazon EC2" is refused by the reference
+        # grammar before any request is made, so no 404 follows and the name
+        # would never reach the suggestion. The refusal stays as it was when
+        # nothing listed is close, and when the reference is well formed and
+        # only its release is wrong. A pack's routes send their ThreatModel id
+        # as one encoded path segment and parse no reference, so only a route
+        # with {provider} in its path is refused this way.
+        sentence = (
+            _did_you_mean(api, route, typed)
+            if "{provider}" in route.path and not is_remote_ref(typed)
+            else ""
+        )
+        if not sentence:
+            raise
+        # The API never saw the name, so there is no status or request id.
+        raise NotFound(str(exc), code="not_found", did_you_mean=sentence) from exc
     if route.paged:
         _report_envelope(answer.envelope)
     if incomplete is not None:
         incomplete.extend(answer.missing)
-    return answer.result, "json"
+    return answer.result, "bytes" if route.binary else "json"
 
 
 def add_init_parser(subparsers: _SubParsersAction[ArgumentParser]) -> None:
@@ -486,10 +920,11 @@ def run_init(
     if environ.get("TOC_API_KEY", "").strip():
         # It silently wins over the file, so someone who just ran this and
         # still sees the old tenant would have no way to find out why.
-        print(
-            Fore.YELLOW + "Note: TOC_API_KEY is set, and it takes precedence over "
-            "this file. The check below is of the key just stored; commands will "
-            "use the environment one until you unset it." + Fore.RESET
+        console.stdout().line(
+            "Note: TOC_API_KEY is set, and it takes precedence over this file. "
+            "The check below is of the key just stored; commands will use the "
+            "environment one until you unset it.",
+            "yellow",
         )
 
     return _verify(settings, client)
@@ -521,7 +956,7 @@ def _verify(settings: Settings, client: TocClient | None) -> int:
         api = client or TocClient(settings)
         who = api.get("/v1/me")
     except RemoteError as exc:
-        print(Fore.YELLOW + f"Stored, but the key did not work: {exc}" + Fore.RESET)
+        console.stdout().line(f"Stored, but the key did not work: {exc}", "yellow")
         print(
             "If this says not found, the API may not be enabled for your "
             "organization yet, or your address may not be on its allow list."

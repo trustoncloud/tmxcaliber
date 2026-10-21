@@ -19,10 +19,14 @@ keyword arguments, and a paged route returns every row, as the CLI does.
 from __future__ import annotations
 
 import inspect
+import os
 import urllib.request
 import warnings
+from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
+from .ccr import FetchResult, RuleFilter, fetch
 from .client import TocClient
 from .config import DEFAULT_TIMEOUT, load_settings
 from .contract import ROUTES, Route, python_name, required_parameters
@@ -96,7 +100,8 @@ class Operation:
                 as the signature lists them.
 
         Returns:
-            Every row of a paged route, or the object any other route returns.
+            Every row of a paged route, the bytes of a binary route, or the
+            object any other route returns.
 
         Raises:
             TypeError: If the arguments do not match the signature.
@@ -152,6 +157,113 @@ class Group:
         return f"<{'.'.join(self._command)}: {', '.join(names)}>"
 
 
+def _many(value: str | Sequence[str]) -> tuple[str, ...]:
+    """Read an option that repeats on the command line.
+
+    A string is itself a sequence of strings, so ``tuple("gcp")`` is
+    ``("g", "c", "p")``. That selects no provider and no control, and a glob
+    such as ``"*/cloud/*.rego"`` would become the pattern ``"*"``, which
+    matches every file of every pack. The command line's ``--provider gcp`` is
+    this option with one value, and the library's other calls take plain
+    strings for options, so a lone string is read as a list of one.
+
+    Args:
+        value: One string, or the strings given.
+
+    Returns:
+        The values, as a tuple.
+    """
+    if isinstance(value, str):
+        return (value,)
+    return tuple(value)
+
+
+class CcrFetch:
+    """`tmxcaliber ccr fetch`, called as ``Client().ccr.fetch(...)``.
+
+    Written by hand because it composes three routes rather than reaching one.
+
+    Args:
+        client: The client the calls go through.
+    """
+
+    def __init__(self, client: TocClient) -> None:
+        self._client = client
+
+    def __repr__(self) -> str:
+        """Name the operation by its command.
+
+        Returns:
+            The call shape.
+        """
+        return (
+            "<ccr.fetch(*tm_ids, provider=(), service=(), control=(), "
+            "mode=(), matcher=(), file=(), out=None)>"
+        )
+
+    def __call__(
+        self,
+        *tm_ids: str,
+        provider: str | Sequence[str] = (),
+        service: str | Sequence[str] = (),
+        control: str | Sequence[str] = (),
+        mode: str | Sequence[str] = (),
+        matcher: str | Sequence[str] = (),
+        file: str | Sequence[str] = (),
+        out: str | os.PathLike[str] | None = None,
+    ) -> FetchResult:
+        """Select CCR rules, as `tmxcaliber ccr fetch` does.
+
+        Each option that repeats on the command line takes one string or a list
+        of strings. A pack that could not be fetched does not raise, so a
+        caller checks the result's ``failed``. It maps each such pack to a
+        `PackFailure`, which says at which stage the pack failed, with the
+        API's code and message, the HTTP status, the request id and the
+        release, and a hint on what to do. A named pack the API does not know
+        also carries the readable packs whose names are close to it.
+
+        Args:
+            *tm_ids: Packs to read, by ThreatModel id. Every entitled pack
+                when none.
+            provider: Narrow the listed packs to these providers.
+            service: Narrow the listed packs to these services, each given as
+                the service alone or as a whole ThreatModel id such as
+                ``gcp-vertex``.
+            control: Control ids to select.
+            mode: Modes a rule must ship one of.
+            matcher: Matchers a rule must implement one of.
+            file: Globs over ``<rule id>/<file>``.
+            out: A folder to write the selected files under.
+
+        Returns:
+            The rows, the files written and the packs that failed.
+
+        Raises:
+            ValueError: If packs are named and also narrowed, or a mode or a
+                matcher is not one of those the command line accepts. Either
+                is refused before any request.
+            NoPackMatched: If a provider or service is given and no pack this
+                key can read has it. Its ``suggestions`` name the readable
+                packs or providers close to what was given.
+            RemoteError: On a failure that is not one pack's alone, such as a
+                credential failure, a rate limit, or an outage that reaches the
+                pack list or a manifest.
+        """
+        return fetch(
+            self._client,
+            tm_ids=tm_ids,
+            providers=_many(provider),
+            services=_many(service),
+            wanted=RuleFilter(
+                controls=_many(control),
+                modes=_many(mode),
+                matchers=_many(matcher),
+                files=_many(file),
+            ),
+            out=Path(out) if out is not None else None,
+        )
+
+
 class Client(TocClient):
     """A TrustOnCloud API client whose attributes mirror the CLI's commands.
 
@@ -192,6 +304,12 @@ class Client(TocClient):
         super().__init__(settings, opener=opener)
         for route in ROUTES:
             self._attach(route)
+        # Hung after the routes so a route the API adds at `ccr fetch` is a
+        # collision caught here rather than a silent replacement.
+        ccr = getattr(self, "ccr", None)
+        if not isinstance(ccr, Group) or hasattr(ccr, "fetch"):
+            raise ValueError("ccr fetch has no free place on the client.")
+        ccr.fetch = CcrFetch(self)  # type: ignore[attr-defined]
 
     def _attach(self, route: Route) -> None:
         """Hang one route's operation at its command's attribute path.

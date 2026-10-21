@@ -164,3 +164,65 @@ def test_every_incompleteness_field_is_required_by_some_route() -> None:
 def test_paging_fields_come_from_the_page_schema() -> None:
     """The client walks by these, so they are read from the contract, not restated."""
     assert contract.paging_fields() == {"items", "nextCursor", "pageSize"}
+
+
+@pytest.mark.parametrize("route", contract.ROUTES, ids=lambda r: r.path)
+def test_binary_matches_the_contract(route: contract.Route) -> None:
+    """A route is binary exactly when the contract serves its 200 as a zip."""
+    served = contract.response_media_type(route.path)
+    assert route.binary is (served == "application/zip")
+
+
+def test_the_pack_archive_is_a_binary_command() -> None:
+    route = contract.route_for(("ccr", "packs", "archive"))
+
+    assert route is not None
+    assert route.binary is True
+    assert route.path == "/v1/ccr/packs/{tmId}/archive"
+    assert route.filters == ("kind", "release")
+    assert route.positional == "tm_id"
+
+
+def test_the_pack_archive_is_bound_once_and_left_out_of_unbound() -> None:
+    """The binary transport binds the archive, so no omission excuses it."""
+    archives = [r for r in contract.ROUTES if r.path.endswith("/archive")]
+
+    assert [r.path for r in archives] == ["/v1/ccr/packs/{tmId}/archive"]
+    assert not contract.UNBOUND
+
+
+def test_a_pack_row_names_its_release() -> None:
+    assert "releaseId" in _row_properties("/v1/ccr/packs")
+
+
+def test_a_pack_row_names_its_pack_by_tm_id_alone() -> None:
+    """`ccr fetch` reads the provider and service from the id.
+
+    The row once carried a ``service`` beside a ``releaseKey``. Both are gone,
+    so narrowing by provider or service has only ``tmId`` to go on.
+    """
+    fields = _row_properties("/v1/ccr/packs")
+
+    assert "tmId" in fields
+    assert not fields & {"releaseKey", "service"}
+
+
+def test_the_pack_list_summary_names_the_product_as_the_contract_does() -> None:
+    # The summary is the command's help, so wording of the client's own can
+    # name a product other than the one the contract describes.
+    route = contract.route_for_path("/v1/ccr/packs")
+    published = contract.contract()["paths"]["/v1/ccr/packs"]["get"]["summary"]
+
+    assert route is not None
+    assert route.summary == published
+
+
+@pytest.mark.parametrize("path", ["/v1/me", "/v1/threatmodels", "/v1/subscriptions"])
+def test_the_credential_scoped_summaries_say_what_the_contract_says(path: str) -> None:
+    # The summary is the command's help. The contract scopes these routes to
+    # the credential, which can act for a person, where it used to say tenant.
+    route = contract.route_for_path(path)
+    published = contract.contract()["paths"][path]["get"]["summary"]
+
+    assert route is not None
+    assert route.summary == published

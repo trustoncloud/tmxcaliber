@@ -20,9 +20,11 @@ from .lib.remote import (
     IncompleteAnswer,
     InvalidCursor,
     InvalidRequest,
+    NoPackMatched,
     NotFound,
     PermissionDenied,
     RateLimited,
+    ReleaseSuperseded,
     RemoteError,
     ServiceUnavailable,
 )
@@ -36,9 +38,11 @@ __all__ = [
     "IncompleteAnswer",
     "InvalidCursor",
     "InvalidRequest",
+    "NoPackMatched",
     "NotFound",
     "PermissionDenied",
     "RateLimited",
+    "ReleaseSuperseded",
     "RemoteError",
     "ServiceUnavailable",
 ]
