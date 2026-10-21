@@ -185,7 +185,9 @@ def test_what_a_collection_says_beyond_its_rows_reaches_stderr(
     assert route is not None
     client = StubClient()
     client.envelope_fields = {"unresolvedTmIds": ["aws-s3"], "empty": []}
-    params = Namespace(api_route=route, framework="nist-800-53-r5", service="", limit=0)
+    params = Namespace(
+        api_route=route, framework_id="nist-800-53-r5", tm_id="", limit=0
+    )
 
     result, _ = run_api_command(params, client=client)  # type: ignore[arg-type]
 
@@ -200,7 +202,9 @@ def test_unresolved_threatmodels_mark_the_answer_incomplete() -> None:
     assert route is not None
     client = StubClient()
     client.envelope_fields = {"unresolvedTmIds": ["aws-s3"]}
-    params = Namespace(api_route=route, framework="nist-800-53-r5", service="", limit=0)
+    params = Namespace(
+        api_route=route, framework_id="nist-800-53-r5", tm_id="", limit=0
+    )
     incomplete: list[str] = []
 
     run_api_command(params, client=client, incomplete=incomplete)  # type: ignore[arg-type]
@@ -215,7 +219,9 @@ def test_an_empty_unresolved_list_is_a_complete_answer() -> None:
     assert route is not None
     client = StubClient()
     client.envelope_fields = {"unresolvedTmIds": []}
-    params = Namespace(api_route=route, framework="nist-800-53-r5", service="", limit=0)
+    params = Namespace(
+        api_route=route, framework_id="nist-800-53-r5", tm_id="", limit=0
+    )
     incomplete: list[str] = []
 
     run_api_command(params, client=client, incomplete=incomplete)  # type: ignore[arg-type]
@@ -257,7 +263,15 @@ def test_an_incomplete_answer_is_written_and_exits_three(
     # Written first, so what the API did answer is kept; the status is what a
     # script sees.
     out = tmp_path / "mappings.json"
-    argv = ["compliance", "mappings", "list", "--framework", "x", "--output", str(out)]
+    argv = [
+        "compliance",
+        "mappings",
+        "list",
+        "--framework-id",
+        "x",
+        "--output",
+        str(out),
+    ]
 
     status = _run_cli(monkeypatch, argv, ['unresolvedTmIds: ["aws-s3"]'])
 
@@ -274,7 +288,7 @@ def test_allow_incomplete_accepts_a_partial_answer(
         "compliance",
         "mappings",
         "list",
-        "--framework",
+        "--framework-id",
         "x",
         "--output",
         str(out),
@@ -403,9 +417,9 @@ def test_a_required_filter_is_listed_as_required_and_names_its_source(
     text = _help_of(monkeypatch, capsys, ["compliance", "mappings", "list"])
 
     required = text.split("required arguments:", 1)[1]
-    assert "--framework" in required
+    assert "--framework-id" in required
     assert "tmxcaliber compliance frameworks list" in required
-    assert "filter by framework" not in text
+    assert "filter by framework id" not in text
 
 
 def test_the_group_help_says_what_its_command_needs(
@@ -413,7 +427,16 @@ def test_the_group_help_says_what_its_command_needs(
 ) -> None:
     text = _help_of(monkeypatch, capsys, ["compliance", "mappings"])
 
-    assert "Requires --framework." in " ".join(text.split())
+    assert "Requires --framework-id." in " ".join(text.split())
+
+
+def test_ccr_pack_get_names_the_id_list_reports(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = _help_of(monkeypatch, capsys, ["ccr", "packs", "get"])
+
+    assert "TMID" in text
+    assert "ccr packs list" in text
 
 
 def test_an_optional_filter_keeps_its_wording(

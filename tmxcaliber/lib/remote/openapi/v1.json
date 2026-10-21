@@ -94,13 +94,6 @@
             ],
             "x-defined-by": "this-api"
           },
-          "releaseKey": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "x-defined-by": "this-api"
-          },
           "ruleCount": {
             "type": [
               "integer",
@@ -108,7 +101,7 @@
             ],
             "x-defined-by": "this-api"
           },
-          "service": {
+          "tmId": {
             "type": [
               "string",
               "null"
@@ -117,8 +110,7 @@
           }
         },
         "required": [
-          "releaseKey",
-          "service",
+          "tmId",
           "ruleCount",
           "releaseId"
         ],
@@ -127,7 +119,7 @@
       "ComplianceFrameworksRow": {
         "properties": {
           "frameworkId": {
-            "description": "The value `/v1/compliance/mappings` takes as `framework`.",
+            "description": "The value `/v1/compliance/mappings` takes as `frameworkId`.",
             "type": [
               "string",
               "null"
@@ -315,7 +307,7 @@
             ],
             "x-defined-by": "this-api"
           },
-          "tmName": {
+          "tmId": {
             "type": [
               "string",
               "null"
@@ -324,7 +316,7 @@
           }
         },
         "required": [
-          "tmName",
+          "tmId",
           "startDate",
           "endDate"
         ],
@@ -1132,7 +1124,7 @@
                 }
               }
             },
-            "description": "One page. Ordered by releaseKey."
+            "description": "One page. Ordered by tmId."
           },
           "400": {
             "content": {
@@ -1209,13 +1201,13 @@
         "x-required-permission": "api.ccr.read"
       }
     },
-    "/v1/ccr/packs/{releaseKey}": {
+    "/v1/ccr/packs/{tmId}": {
       "get": {
-        "operationId": "ccrPacksReleaseKey",
+        "operationId": "ccrPacksTmId",
         "parameters": [
           {
             "in": "path",
-            "name": "releaseKey",
+            "name": "tmId",
             "required": true,
             "schema": {
               "type": "string"
@@ -1308,13 +1300,13 @@
         "x-required-permission": "api.ccr.read"
       }
     },
-    "/v1/ccr/packs/{releaseKey}/archive": {
+    "/v1/ccr/packs/{tmId}/archive": {
       "get": {
-        "operationId": "ccrPacksReleaseKeyArchive",
+        "operationId": "ccrPacksTmIdArchive",
         "parameters": [
           {
             "in": "path",
-            "name": "releaseKey",
+            "name": "tmId",
             "required": true,
             "schema": {
               "type": "string"
@@ -1567,7 +1559,7 @@
         "parameters": [
           {
             "in": "query",
-            "name": "framework",
+            "name": "frameworkId",
             "required": true,
             "schema": {
               "type": "string"
@@ -1575,7 +1567,7 @@
           },
           {
             "in": "query",
-            "name": "service",
+            "name": "tmId",
             "required": false,
             "schema": {
               "type": "string"
@@ -1860,7 +1852,7 @@
                 }
               }
             },
-            "description": "One page. Ordered by tmName."
+            "description": "One page. Ordered by tmId."
           },
           "400": {
             "content": {

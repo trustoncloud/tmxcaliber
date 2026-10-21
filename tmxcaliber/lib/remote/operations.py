@@ -75,7 +75,7 @@ def request_for(
     """
     path = route.path
     query = {name: filters.get(name, "") for name in route.filters}
-    if route.positional == "tm_id":
+    if "{provider}" in path and "{service}" in path:
         ref = parse_ref(positional)
         path = path.replace("{provider}", ref.provider).replace(
             "{service}", ref.service
@@ -84,8 +84,8 @@ def request_for(
         # either way and only one of them reaches the wire.
         if ref.release and not query.get("release"):
             query["release"] = ref.release
-    elif route.positional == "release_key":
-        path = path.replace("{releaseKey}", positional)
+    elif route.positional == "tm_id":
+        path = path.replace("{tmId}", positional)
     return path, query
 
 

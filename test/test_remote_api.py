@@ -28,7 +28,7 @@ from .test_remote_client import FakeOpener, FakeResponse
 from .test_remote_config import HAZARD, KEY, OTHER, STORED_URL, write_config
 
 #: A value for each kind of positional the route table uses.
-POSITIONAL_VALUES = {"tm_id": "aws-s3", "release_key": "pack-1"}
+POSITIONAL_VALUES = {"tm_id": "aws-s3"}
 
 
 @pytest.fixture(autouse=True)
