@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import pathlib
 import re
-from types import MappingProxyType
 from typing import NamedTuple
 
 import pytest
 
-from tmxcaliber.lib.remote import suggest as suggest_module
 from tmxcaliber.lib.remote.suggest import (
     ALIASES,
     alternative_names,
@@ -48,50 +45,112 @@ class ThreatModelRow(NamedTuple):
 
     tm_id: str
     title: str
-    covered: tuple[str, ...]
 
 
-#: Every ThreatModel the catalogue published when this was written, which is the
-#: list the ``threatmodels`` commands suggest from. The rows are the public list
-#: at https://trustoncloud.com/coverage/ (the ids, titles and covered services),
-#: which is where TrustOnCloud publishes this data. It is a far larger and more
-#: crowded set than the packs, and the same name can exist under several
-#: providers, so it shows what the short pack list cannot. Each line holds the
-#: id, the title and the other services it covers, separated by tabs, with the
-#: covered services separated by bars.
+#: ThreatModels as ``threatmodels list`` names them, which is what the
+#: ``threatmodels`` commands suggest from, taken from the public list at
+#: https://trustoncloud.com/coverage/. A ThreatModel list is far more crowded
+#: than the packs, and the same name can exist under several providers, so it
+#: shows what the short pack list cannot. The rows are the ThreatModels the
+#: tests below name, with the ones whose ids or titles come close enough to
+#: compete with them, and each query below answers among them exactly as it
+#: did among the whole list when they were chosen. They are written here
+#: because the specification keeps every test fixture in code.
 THREATMODELS: tuple[ThreatModelRow, ...] = tuple(
-    ThreatModelRow(tm_id, title, tuple(filter(None, covered.split("|"))))
-    for tm_id, title, covered in (
-        line.split("\t")
-        for line in pathlib.Path(__file__)
-        .with_name("threatmodels.tsv")
-        .read_text(encoding="utf-8")
-        .splitlines()
+    ThreatModelRow(tm_id, title)
+    for tm_id, title in (
+        ("aws-acm", "AWS Certificate Manager (ACM)"),
+        ("aws-acmpca", "AWS Private CA"),
+        ("aws-apigatewayv2", "Amazon API Gateway (HTTP APIs and WebSockets)"),
+        ("aws-ce", "AWS Cost Explorer"),
+        ("aws-cloudhsm", "AWS CloudHSM"),
+        ("aws-connect", "Amazon Connect"),
+        ("aws-costoptimizationhub", "AWS Cost Optimization Hub"),
+        ("aws-databrew", "AWS Glue DataBrew"),
+        ("aws-directconnect", "AWS Direct Connect"),
+        ("aws-dms", "AWS Database Migration Service"),
+        ("aws-ds", "AWS Directory Service"),
+        ("aws-ec2", "Amazon Elastic Compute Cloud (Amazon EC2)"),
+        ("aws-ecs", "Amazon Elastic Container Service (Amazon ECS)"),
+        ("aws-eks", "Amazon Elastic Kubernetes Service (Amazon EKS)"),
+        ("aws-events", "Amazon EventBridge"),
+        ("aws-firehose", "Amazon Data Firehose"),
+        ("aws-fms", "AWS Firewall Manager"),
+        ("aws-iam", "AWS Identity and Access Management (IAM)"),
+        ("aws-iotevents", "AWS IoT Events"),
+        ("aws-kafka", "Amazon Managed Streaming for Apache Kafka (Amazon MSK)"),
+        ("aws-kms", "AWS Key Management Service (AWS KMS)"),
+        ("aws-mq", "Amazon MQ"),
+        ("aws-networkfirewall", "AWS Network Firewall"),
+        ("aws-networkmanager", "AWS Network Manager"),
+        ("aws-qbusiness", "Amazon Q Business"),
+        ("aws-qconnect", "Amazon Q in Connect"),
+        ("aws-qdeveloper", "Amazon Q developer"),
+        ("aws-rds", "Amazon Relational Database Service (Amazon RDS)"),
+        ("aws-redshift", "Amazon Redshift"),
+        ("aws-secretsmanager", "AWS Secrets Manager"),
+        ("aws-ses", "Amazon SES"),
+        ("aws-sqs", "Amazon Simple Queue Service (Amazon SQS)"),
+        ("aws-ssm", "AWS Systems Manager"),
+        ("aws-stepfunctions", "AWS Step Functions"),
+        ("aws-transfer", "AWS Transfer Family"),
+        ("aws-transform", "AWS Transform"),
+        ("aws-wafv2", "AWS WAF"),
+        ("azure-aks", "Azure Kubernetes Service"),
+        ("azure-applicationgateway", "Azure Application Gateway"),
+        ("azure-botservice", "Azure AI Bot Service"),
+        ("azure-cognitiveservices", "Azure AI Services"),
+        ("azure-compute", "Azure Compute"),
+        ("azure-eventhubs", "Azure Event Hubs"),
+        ("azure-management", "Azure Management"),
+        ("azure-monitor", "Azure Monitor"),
+        ("azure-network", "Azure Virtual Network"),
+        ("azure-resourcemanager", "Azure Resource Manager"),
+        ("azure-search", "Azure AI Search"),
+        ("azure-sql", "Azure SQL"),
+        ("azure-storage", "Azure Storage"),
+        ("azure-web", "Azure Functions"),
+        ("gcp-apigateway", "API Gateway"),
+        ("gcp-bigquery", "BigQuery"),
+        ("gcp-certificatemanager", "Certificate Manager"),
+        ("gcp-cloudasset", "Cloud Asset Inventory"),
+        ("gcp-cloudkms", "Cloud Key Management Service (KMS)"),
+        ("gcp-cloudquotas", "Cloud Quotas"),
+        ("gcp-cloudsql", "Cloud SQL"),
+        ("gcp-cloudtasks", "Cloud Tasks"),
+        ("gcp-cloudtrace", "Cloud Trace"),
+        ("gcp-compute", "Compute Engine"),
+        ("gcp-dataflow", "Dataflow"),
+        ("gcp-dataform", "Dataform"),
+        ("gcp-dataproc", "Managed Service for Apache Spark"),
+        ("gcp-discoveryengine", "Gemini Enterprise"),
+        ("gcp-dns", "Cloud DNS"),
+        ("gcp-filestore", "Filestore"),
+        ("gcp-firebase", "Firebase"),
+        ("gcp-firestore", "Cloud Firestore"),
+        ("gcp-gke", "Google Kubernetes Engine (GKE)"),
+        ("gcp-iam", "Google Identity and Access Management (IAM)"),
+        ("gcp-metastore", "Dataproc Metastore"),
+        ("gcp-monitoring", "Cloud Monitoring"),
+        ("gcp-networkconnectivity", "Network Connectivity Center"),
+        ("gcp-networksecurity", "Network Security"),
+        ("gcp-notebooks", "Vertex AI Workbench"),
+        ("gcp-oracledatabase", "Oracle Database@Google Cloud"),
+        ("gcp-privateca", "Certificate Authority Service"),
+        ("gcp-redis", "Memorystore for Redis"),
+        ("gcp-secretmanager", "Secret Manager"),
+        ("gcp-storage", "Cloud Storage"),
+        ("gcp-vertex", "Vertex AI"),
     )
 )
 
 THREATMODEL_IDS: tuple[str, ...] = tuple(row.tm_id for row in THREATMODELS)
 
 #: The names each ThreatModel is also written as, from the title it was
-#: published under and the services it covers, as the command line reads them
-#: from the same list rows.
-THREATMODEL_NAMES: dict[str, tuple[str, ...]] = {
-    row.tm_id: alternative_names(row.title, *row.covered) for row in THREATMODELS
-}
-
-#: The same, from the title alone. The contract's list row carries a title but
-#: no covered services, so this is what the command line reads today, and the
-#: covered services of `THREATMODEL_NAMES` are what it would add if a row did.
+#: published under, as the command line reads them from the same list rows.
 THREATMODEL_TITLES: dict[str, tuple[str, ...]] = {
     row.tm_id: alternative_names(row.title) for row in THREATMODELS
 }
-
-#: Runs a test once for each way the list can publish names.
-PUBLISHED_AS = pytest.mark.parametrize(
-    "names",
-    [THREATMODEL_TITLES, THREATMODEL_NAMES],
-    ids=["titles", "titles-and-covered"],
-)
 
 
 @pytest.mark.parametrize(
@@ -185,26 +244,18 @@ def test_a_query_that_shares_only_its_provider_with_a_key_suggests_nothing(
     assert suggest(query, KEYS) == []
 
 
-@pytest.mark.parametrize(
-    ("candidates", "stride"),
-    [(KEYS, 1), (THREATMODEL_IDS, 5)],
-    ids=["packs", "threatmodels"],
-)
-def test_a_provider_typed_before_a_service_only_narrows_or_orders_the_suggestions(
-    candidates: tuple[str, ...], stride: int
-) -> None:
+def test_a_provider_typed_before_a_service_only_narrows_or_orders() -> None:
     # The provider prefix is shared by every key of that provider, so it may
     # decide which provider's keys are kept and in what order, and it may never
     # bring in a key that the service typed alone would not. Every service of
-    # the catalogue is tried under each provider, every fifth one among the
-    # ThreatModels to keep the suite quick.
+    # the packs and of the ThreatModels above is tried under each provider.
     services = sorted({key.partition("-")[2] for key in (*KEYS, *THREATMODEL_IDS)})
     added: dict[str, list[str]] = {}
-    for service in services[::stride]:
-        alone = set(suggest(service, candidates, limit=len(candidates)))
+    for service in services:
+        alone = set(suggest(service, KEYS, limit=len(KEYS)))
         for provider in ("aws", "azure", "gcp"):
             query = f"{provider}-{service}"
-            typed = set(suggest(query, candidates, limit=len(candidates)))
+            typed = set(suggest(query, KEYS, limit=len(KEYS)))
             if typed - alone:
                 added[query] = sorted(typed - alone)
 
@@ -230,19 +281,18 @@ def test_a_slipped_or_run_in_provider_is_read_past_to_the_service(
     assert suggest(query, KEYS)[0] == first
 
 
-@PUBLISHED_AS
 @pytest.mark.parametrize(
     ("query", "expected"),
     [("Azrue Functions", "azure-web"), ("AS Private CA", "aws-acmpca")],
 )
 def test_a_vendor_typed_with_a_slip_still_names_its_provider(
-    names: dict[str, tuple[str, ...]], query: str, expected: str
+    query: str, expected: str
 ) -> None:
     # Azure Functions is the title of azure-web, and AWS Private CA the title of
     # aws-acmpca. The services left once the vendor is read past are spelled
     # like aws-stepfunctions and gcp-privateca, and the vendor, slip and all,
     # says which provider was meant.
-    found = suggest(query, THREATMODEL_IDS, extra_aliases=names)
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
 
     assert found[0] == expected
     assert {key.partition("-")[0] for key in found} == {expected.partition("-")[0]}
@@ -325,20 +375,13 @@ def _exact_elsewhere(candidates: tuple[str, ...]) -> list[tuple[str, str]]:
     return pairs
 
 
-@pytest.mark.parametrize(
-    ("candidates", "names"),
-    [(KEYS, None), (THREATMODEL_IDS, None), (THREATMODEL_IDS, THREATMODEL_TITLES)],
-    ids=["packs", "threatmodels", "threatmodels-titled"],
-)
-def test_every_service_typed_under_another_provider_offers_its_key(
-    candidates: tuple[str, ...], names: dict[str, tuple[str, ...]] | None
-) -> None:
-    # Whatever the typed provider has that looks alike, the key whose service
+def test_every_service_typed_under_another_provider_offers_its_pack() -> None:
+    # Whatever the typed provider has that looks alike, the pack whose service
     # is exactly what was typed is among the suggestions.
     missed = {
         query: found
-        for query, key in _exact_elsewhere(candidates)
-        if key not in (found := suggest(query, candidates, extra_aliases=names))
+        for query, key in _exact_elsewhere(KEYS)
+        if key not in (found := suggest(query, KEYS))
     }
 
     assert missed == {}
@@ -462,7 +505,7 @@ def test_a_name_cut_to_its_first_words_needs_no_alias_of_its_own(name: str) -> N
         ("gemini agent", "gcp-vertex"),
     ],
 )
-def test_a_shortened_name_is_led_to_its_threatmodel_among_hundreds(
+def test_a_shortened_name_is_led_to_its_threatmodel_among_many_threatmodels(
     query: str, first: str
 ) -> None:
     assert suggest(query, THREATMODEL_IDS)[0] == first
@@ -533,7 +576,7 @@ def test_a_provider_and_a_service_of_two_providers_keeps_the_provider(
         ("amazon kms", "aws-kms"),
     ],
 )
-def test_a_provider_typed_keeps_the_suggestions_to_it_among_hundreds(
+def test_a_provider_typed_keeps_the_suggestions_to_it_among_many_threatmodels(
     query: str, first: str
 ) -> None:
     found = suggest(query, THREATMODEL_IDS)
@@ -603,10 +646,10 @@ def test_a_weak_look_alike_of_the_typed_provider_does_not_hide_an_exact_alias(
         ("aws-sql-database", "azure-sql"),
     ],
 )
-def test_an_exact_alias_of_another_provider_survives_among_hundreds(
+def test_an_exact_alias_of_another_provider_survives_among_many_threatmodels(
     query: str, named: str
 ) -> None:
-    # The same slip with the whole catalogue to look in: many keys of the typed
+    # The same slip with many ThreatModels to look in: many keys of the typed
     # provider are a little like the service, and none of them is the service.
     assert suggest(query, THREATMODEL_IDS)[0] == named
 
@@ -668,22 +711,6 @@ def test_a_title_is_also_written_without_its_brackets_and_by_what_they_hold(
     assert alternative_names(*titles) == expected
 
 
-@PUBLISHED_AS
-def test_every_threatmodel_is_reached_by_the_title_it_was_published_under(
-    names: dict[str, tuple[str, ...]],
-) -> None:
-    # The list rows say what each ThreatModel is called, so its own title typed
-    # back has to lead to it first, whatever the provider.
-    missed = {
-        row.title: found[:3]
-        for row in THREATMODELS
-        if (found := suggest(row.title, THREATMODEL_IDS, extra_aliases=names))[:1]
-        != [row.tm_id]
-    }
-
-    assert missed == {}
-
-
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
@@ -697,26 +724,19 @@ def test_every_threatmodel_is_reached_by_the_title_it_was_published_under(
         ("AWS Identity and Access Management (IAM)", "aws-iam"),
         ("Amazon Elastic Kubernetes Service", "aws-eks"),
         ("Google Kubernetes Engine (GKE)", "gcp-gke"),
-        # A service a ThreatModel also covers is named in its own words.
-        ("IAM Access Analyzer", "aws-iam"),
-        ("Amazon Elastic Block Store (Amazon EBS)", "aws-ec2"),
-        ("AWS PrivateLink", "aws-vpc"),
         # The short form in brackets, which no spelling of the service reaches.
         ("Amazon MSK", "aws-kafka"),
-        ("MSK Serverless", "aws-kafka"),
         ("Amazon Managed Streaming for Apache Kafka", "aws-kafka"),
-        ("AWS STS", "aws-iam"),
-        ("Amazon DocumentDB", "aws-rds"),
     ],
 )
 def test_a_name_the_list_publishes_leads_to_its_threatmodel_first(
     query: str, expected: str
 ) -> None:
-    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES)
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
 
     assert found[0] == expected
     # The typed AWS is a clue too, so no other provider's ThreatModel follows
-    # unless its service is exactly the name typed, as Azure's PrivateLink is.
+    # unless its service is exactly the name typed.
     provider = query.split()[0].lower()
     typed = normalize(query)
     others = [key for key in found if key.partition("-")[2] != typed]
@@ -729,7 +749,6 @@ def test_a_name_the_list_publishes_leads_to_its_threatmodel_first(
     [
         ("Azure Kubernetes Service", ["azure-aks"]),
         ("AWS Key Management Service (AWS KMS)", ["aws-kms"]),
-        ("Amazon Elastic Block Store (Amazon EBS)", ["aws-ec2"]),
         # Typed the way the list publishes it, so there is no slip to correct
         # and the look-alikes that would follow are left out.
         ("Gemini Enterprise", ["gcp-discoveryengine"]),
@@ -738,17 +757,17 @@ def test_a_name_the_list_publishes_leads_to_its_threatmodel_first(
 def test_a_name_the_list_publishes_exactly_is_not_followed_by_look_alikes(
     query: str, expected: list[str]
 ) -> None:
-    assert suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES) == expected
+    assert suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES) == expected
 
 
 def test_a_title_two_providers_share_leads_to_both() -> None:
     # "API Gateway" is Google's own title and the title of AWS's with its
     # bracket cut, and only the typed provider can tell them apart.
-    found = suggest("API Gateway", THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES)
+    found = suggest("API Gateway", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
 
     assert found == ["gcp-apigateway", "aws-apigatewayv2"]
     assert suggest(
-        "Amazon API Gateway", THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES
+        "Amazon API Gateway", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES
     ) == ["aws-apigatewayv2"]
 
 
@@ -757,7 +776,7 @@ def test_an_official_name_beats_an_alias_that_leads_to_another_provider() -> Non
     # for its own service is the same words with AWS in front.
     plain = suggest("AWS Key Management Service", THREATMODEL_IDS)
     named = suggest(
-        "AWS Key Management Service", THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES
+        "AWS Key Management Service", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES
     )
 
     assert plain[0] == "gcp-cloudkms"
@@ -770,7 +789,7 @@ def test_names_are_only_ever_taken_for_candidates() -> None:
     readable = [key for key in THREATMODEL_IDS if key != "aws-kms"]
 
     found = suggest(
-        "AWS Key Management Service", readable, extra_aliases=THREATMODEL_NAMES
+        "AWS Key Management Service", readable, extra_aliases=THREATMODEL_TITLES
     )
 
     assert "aws-kms" not in found
@@ -780,7 +799,7 @@ def test_names_are_only_ever_taken_for_candidates() -> None:
 def test_names_given_for_the_call_are_added_to_the_aliases_and_replace_none() -> None:
     # "kms" is an alias of gcp-cloudkms and a name of aws-kms, and both are
     # right until the typed provider says which.
-    found = suggest("KMS", THREATMODEL_IDS, extra_aliases=THREATMODEL_NAMES)
+    found = suggest("KMS", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
 
     assert {"gcp-cloudkms", "aws-kms"} <= set(found[:2])
     assert suggest("Gemini Agent Platform", THREATMODEL_IDS, extra_aliases={}) == [
@@ -874,42 +893,38 @@ def test_a_service_typed_exactly_is_not_hidden_by_a_provider_look_alike() -> Non
     assert suggest("aws-compute", readable)[:2] == ["azure-compute", "gcp-compute"]
 
 
-@PUBLISHED_AS
-def test_a_service_typed_exactly_is_followed_by_the_titles_that_begin_with_it(
-    names: dict[str, tuple[str, ...]],
-) -> None:
+def test_a_service_typed_exactly_is_followed_by_the_titles_that_begin_with_it() -> None:
     # Dataproc is not a title, so no name is exact and what begins with the word
     # still follows the one ThreatModel whose service it is.
-    found = suggest("Dataproc", THREATMODEL_IDS, extra_aliases=names)
+    found = suggest("Dataproc", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
 
     assert found[:2] == ["gcp-dataproc", "gcp-metastore"]
 
 
-@PUBLISHED_AS
-def test_a_name_that_is_an_alias_is_not_cut_short_by_a_title(
-    names: dict[str, tuple[str, ...]],
-) -> None:
+def test_a_name_that_is_an_alias_is_not_cut_short_by_a_title() -> None:
     # "vertex" is an alias of gcp-vertex and the first word of Vertex AI
     # Workbench's title. Typed as the alias it names the one pack, as "ec2" does
     # not also lead to "ec2 auto scaling".
-    assert suggest("vertex", THREATMODEL_IDS, extra_aliases=names) == ["gcp-vertex"]
+    assert suggest("vertex", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES) == [
+        "gcp-vertex"
+    ]
 
 
-@PUBLISHED_AS
 @pytest.mark.parametrize("provider", ["aws", "gcp"])
 def test_a_typed_provider_whose_titles_begin_with_a_service_keeps_the_provider(
-    names: dict[str, tuple[str, ...]], provider: str
+    provider: str,
 ) -> None:
     # Azure's service is exactly "network", and a title of each other provider
     # begins with that word. Typing either of them names the provider as well,
     # so its own titles stay, and Azure's exact service is offered beside them.
-    found = suggest(f"{provider}-network", THREATMODEL_IDS, extra_aliases=names)
+    found = suggest(
+        f"{provider}-network", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES
+    )
 
     assert "azure-network" in found
     assert {key.partition("-")[0] for key in found} == {provider, "azure"}
 
 
-@PUBLISHED_AS
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
@@ -922,12 +937,13 @@ def test_a_typed_provider_whose_titles_begin_with_a_service_keeps_the_provider(
     ],
 )
 def test_a_title_cut_short_or_slipped_still_leads_to_its_threatmodel(
-    names: dict[str, tuple[str, ...]], query: str, expected: str
+    query: str, expected: str
 ) -> None:
-    assert suggest(query, THREATMODEL_IDS, extra_aliases=names)[0] == expected
+    assert (
+        suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)[0] == expected
+    )
 
 
-@PUBLISHED_AS
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
@@ -941,16 +957,15 @@ def test_a_title_cut_short_or_slipped_still_leads_to_its_threatmodel(
     ],
 )
 def test_a_slip_of_a_threatmodels_id_still_leads_to_it_among_the_titles(
-    names: dict[str, tuple[str, ...]], query: str, expected: str
+    query: str, expected: str
 ) -> None:
     # Another ThreatModel's title is a near miss of each of these slips
     # (Filestore, Connect, Dataform, ACM), and none may lead the real one.
-    found = suggest(query, THREATMODEL_IDS, extra_aliases=names)
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
 
     assert found[0] == expected
 
 
-@PUBLISHED_AS
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
@@ -963,27 +978,23 @@ def test_a_slip_of_a_threatmodels_id_still_leads_to_it_among_the_titles(
     ],
 )
 def test_a_service_typed_exactly_leads_to_its_threatmodel_among_the_titles(
-    names: dict[str, tuple[str, ...]], query: str, expected: str
+    query: str, expected: str
 ) -> None:
-    # Each is a ThreatModel's own service. Among the 269, other titles hold the
+    # Each is a ThreatModel's own service. Among the rows, other titles hold the
     # same word, or one a letter away, and none of them is what was typed.
-    found = suggest(query, THREATMODEL_IDS, extra_aliases=names)
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
 
     assert found[0] == expected
 
 
-@PUBLISHED_AS
-def test_a_service_two_providers_share_leads_to_both_among_the_titles(
-    names: dict[str, tuple[str, ...]],
-) -> None:
+def test_a_service_two_providers_share_leads_to_both_among_the_titles() -> None:
     # Azure and Google both have a Compute, and the title that is exactly
     # "Compute" is Azure's. Google's must not be dropped for it.
-    found = suggest("Compute", THREATMODEL_IDS, extra_aliases=names)
+    found = suggest("Compute", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
 
     assert found == ["azure-compute", "gcp-compute"]
 
 
-@PUBLISHED_AS
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
@@ -1003,14 +1014,15 @@ def test_a_service_two_providers_share_leads_to_both_among_the_titles(
     ],
 )
 def test_a_slip_of_a_published_title_leads_to_its_own_threatmodel(
-    names: dict[str, tuple[str, ...]], query: str, expected: str
+    query: str, expected: str
 ) -> None:
     # The list says what each ThreatModel is called, and a curated alias is only
     # a guess at what a pack is called, so the title typed with a slip leads.
-    assert suggest(query, THREATMODEL_IDS, extra_aliases=names)[0] == expected
+    assert (
+        suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)[0] == expected
+    )
 
 
-@PUBLISHED_AS
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
@@ -1019,11 +1031,11 @@ def test_a_slip_of_a_published_title_leads_to_its_own_threatmodel(
     ],
 )
 def test_the_first_words_of_several_titles_lead_to_each_of_them(
-    names: dict[str, tuple[str, ...]], query: str, expected: set[str]
+    query: str, expected: set[str]
 ) -> None:
     # Each title begins with the words typed, and a ThreatModel whose service is
     # only spelled a little like the last word must not come before them.
-    found = suggest(query, THREATMODEL_IDS, extra_aliases=names)
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
 
     assert set(found[: len(expected)]) == expected
 
@@ -1061,30 +1073,25 @@ def test_a_published_name_comes_before_a_curated_one_as_long() -> None:
     ]
 
 
-@PUBLISHED_AS
-def test_a_short_query_one_edit_from_a_service_is_not_led_away_by_a_title(
-    names: dict[str, tuple[str, ...]],
-) -> None:
+def test_a_short_query_one_edit_from_a_service_is_not_led_away_by_a_title() -> None:
     # "q" begins the titles of several Amazon Q ThreatModels, and "mq" is one
     # edit from it. A query this short is as likely a slip of a service as the
     # start of a title, so the service keeps its place and the titles follow.
-    found = suggest("aws-q", THREATMODEL_IDS, extra_aliases=names)
+    found = suggest("aws-q", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
 
     assert found[0] == "aws-mq"
     assert set(found[1:]) <= {"aws-qbusiness", "aws-qconnect", "aws-qdeveloper"}
     assert len(found) == 3
 
 
-@PUBLISHED_AS
-def test_a_short_query_one_edit_from_a_published_name_reaches_it(
-    names: dict[str, tuple[str, ...]],
-) -> None:
+def test_a_short_query_one_edit_from_a_published_name_reaches_it() -> None:
     # "awf" is the "waf" of AWS WAF with two letters swapped. Its service,
     # wafv2, is further off, so the published name is what reaches it.
-    assert suggest("AWS AWF", THREATMODEL_IDS, extra_aliases=names) == ["aws-wafv2"]
+    assert suggest("AWS AWF", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES) == [
+        "aws-wafv2"
+    ]
 
 
-@PUBLISHED_AS
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
@@ -1096,37 +1103,13 @@ def test_a_short_query_one_edit_from_a_published_name_reaches_it(
     ],
 )
 def test_a_slip_of_a_name_two_threatmodels_publish_leads_to_its_own_title_first(
-    names: dict[str, tuple[str, ...]], query: str, expected: list[str]
+    query: str, expected: list[str]
 ) -> None:
     # The name is one ThreatModel's whole title and only a cut form of the
     # other's, so the whole title comes first, as it does when typed exactly.
-    found = suggest(query, THREATMODEL_IDS, extra_aliases=names)
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
 
     assert found[: len(expected)] == expected
-
-
-def _single_edit_slips(tm_id: str) -> list[str]:
-    """Spell a ThreatModel's id with one letter of its service missing or swapped.
-
-    Args:
-        tm_id: A published id, such as ``gcp-firestore``.
-
-    Returns:
-        Each id that drops one letter of the service, or swaps two neighbouring
-        letters of it, in order, leaving out any that is another published id.
-    """
-    provider, _, service = tm_id.partition("-")
-    slips = [f"{provider}-{service[:i]}{service[i + 1 :]}" for i in range(len(service))]
-    slips += [
-        f"{provider}-{service[:i]}{service[i + 1]}{service[i]}{service[i + 2 :]}"
-        for i in range(len(service) - 1)
-        if service[i] != service[i + 1]
-    ]
-    return [
-        slip
-        for slip in dict.fromkeys(slips)
-        if slip != tm_id and slip not in THREATMODEL_IDS
-    ]
 
 
 def _place(found: list[str], tm_id: str) -> int:
@@ -1142,110 +1125,21 @@ def _place(found: list[str], tm_id: str) -> int:
     return found.index(tm_id) if tm_id in found else len(found)
 
 
-@PUBLISHED_AS
-def test_publishing_titles_never_moves_a_mistyped_id_off_its_threatmodel(
-    names: dict[str, tuple[str, ...]],
-) -> None:
-    # A title can only add evidence. Typing an id with one letter dropped or two
-    # swapped must put its ThreatModel no later with the titles published than
-    # without them, for every ThreatModel there is. Every eighth slip is tried
-    # to keep the suite quick (all 4546 take half a minute), which still reaches
-    # each ThreatModel the review found out of place, and the ones it found are
-    # named in the tests above, so none of them rests on the sample.
-    slips = [
-        (row.tm_id, slip)
-        for row in THREATMODELS
-        for slip in _single_edit_slips(row.tm_id)
-    ]
-    worse: dict[str, tuple[int, int]] = {}
-    for tm_id, slip in slips[::8]:
-        named = suggest(slip, THREATMODEL_IDS, extra_aliases=names)
-        if _place(named, tm_id) == 0:
-            continue
-        plain = suggest(slip, THREATMODEL_IDS)
-        if _place(named, tm_id) > _place(plain, tm_id):
-            worse[slip] = (_place(plain, tm_id), _place(named, tm_id))
-
-    assert worse == {}
-
-
-@PUBLISHED_AS
 @pytest.mark.parametrize(
     ("query", "tm_id"),
     [("aws-ms", "aws-dms"), ("aws-ms", "aws-fms"), ("aws-es", "aws-eks")],
 )
 def test_a_near_miss_title_does_not_jump_ahead_of_a_key_spelled_as_near(
-    names: dict[str, tuple[str, ...]], query: str, tm_id: str
+    query: str, tm_id: str
 ) -> None:
     # Two letters are as near to a short title, such as the "MSK" of Amazon
     # MSK, or a short curated name, such as "kms", as to several services. A
     # title answers a curated near miss only when it is nearer than every key
     # it does not lead to, so here it waits with the keys, and the ThreatModel
     # is placed no later than with no titles at all.
-    found = suggest(query, THREATMODEL_IDS, extra_aliases=names)
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
 
     assert _place(found, tm_id) <= _place(suggest(query, THREATMODEL_IDS), tm_id)
-
-
-def _title_slips(title: str) -> list[str]:
-    """Spell a title with one letter missing or two neighbouring letters swapped.
-
-    Args:
-        title: A published title, such as ``Secret Manager``.
-
-    Returns:
-        Each spelling that drops one letter or digit, or swaps two neighbouring
-        ones that differ, sorted, leaving out any that is a published name.
-    """
-    slips = {
-        title[:i] + title[i + 1 :] for i in range(len(title)) if title[i].isalnum()
-    }
-    slips |= {
-        title[:i] + title[i + 1] + title[i] + title[i + 2 :]
-        for i in range(len(title) - 1)
-        if title[i].isalnum() and title[i + 1].isalnum() and title[i] != title[i + 1]
-    }
-    published = {
-        normalize(name) for names in THREATMODEL_TITLES.values() for name in names
-    }
-    return sorted(slip for slip in slips if normalize(slip) not in published)
-
-
-def test_the_curated_names_never_move_a_mistyped_title_off_its_threatmodel(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The curated table is a guess at what packs are called, and the list says
-    # what each ThreatModel is called. Typing a title with a slip must put its
-    # ThreatModel no later with the curated table than with an empty one. Every
-    # sixteenth slip is tried to keep the suite quick (all 8584 take a minute),
-    # which still reaches the titles round 4 found out of place, and the ones it
-    # named are pinned by the tests above.
-    slips = [
-        (row.tm_id, slip) for row in THREATMODELS for slip in _title_slips(row.title)
-    ]
-    # Only a slip whose ThreatModel is not first can be placed later, so the
-    # empty table is asked about those alone.
-    behind = [
-        (tm_id, slip, found)
-        for tm_id, slip in slips[::16]
-        if _place(
-            found := suggest(slip, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES),
-            tm_id,
-        )
-        > 0
-    ]
-    monkeypatch.setattr(suggest_module, "ALIASES", MappingProxyType({}))
-    worse = {
-        slip: (found, plain)
-        for tm_id, slip, found in behind
-        if _place(found, tm_id)
-        > _place(
-            plain := suggest(slip, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES),
-            tm_id,
-        )
-    }
-
-    assert worse == {}
 
 
 @pytest.mark.parametrize("limit", [1, 2, 3, 5])

@@ -1301,9 +1301,10 @@ def test_a_list_field_the_contract_does_not_declare_leads_nowhere(field: str) ->
     assert urllib.parse.urlsplit(listed.full_url).path == "/v1/threatmodels"
 
 
-#: ``threatmodels list`` as a key that reads the whole catalogue sees it. A row
-#: holds the five fields the contract gives it, and no covered services, so the
-#: names a suggestion can use are each title and its short form.
+#: ``threatmodels list`` as a key that reads many ThreatModels sees it, with the
+#: crowded rows of `test_remote_suggest.THREATMODELS`. A row holds the five
+#: fields the contract gives it, so the names a suggestion can use are each
+#: title and its short form.
 CATALOGUE_ROWS = [
     {
         "tmId": row.tm_id,
@@ -1333,7 +1334,7 @@ CATALOGUE_ROWS = [
         ),
     ],
 )
-def test_a_slip_of_an_id_leads_to_its_threatmodel_over_the_whole_catalogue(
+def test_a_slip_of_an_id_leads_to_its_threatmodel_over_a_crowded_list(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     typed: str,
@@ -1374,7 +1375,7 @@ def test_a_slip_of_an_id_leads_to_its_threatmodel_over_the_whole_catalogue(
         ),
     ],
 )
-def test_a_service_typed_alone_leads_to_its_threatmodel_over_the_whole_catalogue(
+def test_a_service_typed_alone_leads_to_its_threatmodel_over_a_crowded_list(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     typed: str,
