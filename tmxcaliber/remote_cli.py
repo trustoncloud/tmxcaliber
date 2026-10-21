@@ -24,19 +24,9 @@ import os
 import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 from collections.abc import Callable, Mapping
-from pathlib import Path
 from typing import Any
 
 from . import console
-from .lib.remote.ccr import (
-    MATCHERS,
-    MODES,
-    FetchResult,
-    PackFailure,
-    PackOutcome,
-    RuleFilter,
-    fetch,
-)
 from .lib.remote.client import TocClient
 from .lib.remote.config import (
     SECTION,
@@ -56,12 +46,7 @@ from .lib.remote.contract import (
     values_field,
     values_route,
 )
-from .lib.remote.errors import (
-    ConfigurationError,
-    NoPackMatched,
-    NotFound,
-    RemoteError,
-)
+from .lib.remote.errors import ConfigurationError, NotFound, RemoteError
 from .lib.remote.operations import call_route, incompleteness_fields
 from .lib.remote.ref import is_remote_ref
 from .lib.remote.resolve import resolve_source
@@ -88,6 +73,10 @@ POSITIONALS = {
 #: then option. The archive route's options choose which file comes back, and
 #: narrow no collection, so the generated text would tell the reader nothing
 #: about what to pass. Every option not listed here keeps the generated text.
+#:
+#: This table is temporary. It goes once the contract publishes each option's
+#: description and allowed values, because the interpreter that REMOTE.md
+#: targets reads those from the contract.
 OPTION_HELP: Mapping[str, Mapping[str, str]] = {
     "/v1/ccr/packs/{tmId}/archive": {
         "kind": (
@@ -246,256 +235,6 @@ def add_api_parsers(subparsers: _SubParsersAction[ArgumentParser]) -> None:
             route.command[-1], help=_summary(route), description=_summary(route)
         )
         _leaf(leaf, route)
-
-    # The one hand-written command under an API group. It composes routes the
-    # loop above bound, and names no route of its own.
-    _add_ccr_fetch(groups[("ccr",)])
-
-
-def _add_ccr_fetch(ccr: _SubParsersAction[ArgumentParser]) -> None:
-    """Add `ccr fetch` under the `ccr` group.
-
-    Args:
-        ccr: The `ccr` group's subparser action.
-    """
-    summary = "Select CCR rules by pack, control, mode, matcher or file."
-    description = (
-        f"{summary} Without --out it only previews: it prints the selection as "
-        "JSON and writes nothing. With --out it downloads each pack's archive "
-        "and writes the selected files under DIR/<ThreatModel id>/<rule id>/."
-    )
-    parser = ccr.add_parser("fetch", help=summary, description=description)
-    # The metavar and wording follow `ccr packs get`, whose positional the
-    # route table derives, so the two commands name a pack the same way.
-    metavar, _ = POSITIONALS["tm_id"]
-    parser.add_argument(
-        "tm_ids",
-        nargs="*",
-        metavar=metavar,
-        help="packs to read, by ThreatModel id, as `tmxcaliber ccr packs list` "
-        "reports them. Every entitled pack when omitted.",
-    )
-    for name, help_text in (
-        ("provider", "read only this provider's packs, for example aws."),
-        (
-            "service",
-            "read only this service's packs, for example s3. A whole "
-            "ThreatModel id, such as aws-s3, names its pack too.",
-        ),
-        ("control", "select this control, for example S3.C20."),
-        ("file", "select files whose <rule id>/<file> matches this glob."),
-    ):
-        parser.add_argument(
-            f"--{name}", action="append", default=[], help=help_text + " Repeatable."
-        )
-    parser.add_argument(
-        "--mode",
-        action="append",
-        default=[],
-        choices=MODES,
-        help="select rules that ship this mode, and only its files. Repeatable.",
-    )
-    parser.add_argument(
-        "--matcher",
-        action="append",
-        default=[],
-        choices=MATCHERS,
-        help="select rules that implement this matcher, and only its files. "
-        "Repeatable.",
-    )
-    parser.add_argument(
-        "--out",
-        default="",
-        metavar="DIR",
-        help="download each pack's archive and write the selected files under "
-        "DIR/<ThreatModel id>/<rule id>/. Without it the command only previews: "
-        "it prints the selection as JSON and writes nothing.",
-    )
-    parser.set_defaults(ccr_fetch=True)
-
-
-def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
-    """Execute `ccr fetch`.
-
-    The files written for the packs that completed are printed even when
-    another pack failed. Each pack is reported on stderr as soon as it
-    finishes, in the order the packs are read, so a long fetch shows how far
-    it got: a failed pack as a block saying at which stage it failed, why and
-    what to do, ending with the packs it was probably meant to be when it was
-    named and is unknown, and with --out each pack that had rules selected as
-    one line counting what it wrote.
-
-    **The last line on stderr says whether anything was written.** A preview's
-    JSON reads like the files themselves, so without --out the command says it
-    was only a preview and how to write the selection, and with --out it says
-    how many files it wrote and the folder they are in, in full, or that it
-    wrote nothing. Stdout stays the results alone: the JSON, or the files
-    written. Those are one path per line, as a script reads them, unless
-    stdout is a terminal, where a person reads them as a tree under the
-    folder, by pack and rule.
-
-    Args:
-        params: The parsed arguments.
-        client: A client to use, built from the environment when omitted.
-
-    Returns:
-        The exit status: 0, 1 when a pack failed or the provider or service
-        given matches no pack this key can read, 2 for a usage error.
-
-    Raises:
-        RemoteError: On a failure that is not one pack's alone, such as a
-            credential failure.
-    """
-    if params.tm_ids and (params.provider or params.service):
-        console.stderr().failure(
-            "Name packs, or narrow by --provider and --service, not both."
-        )
-        return 2
-    finished: list[PackOutcome] = []
-
-    def on_pack(key: str, outcome: PackOutcome | PackFailure) -> None:
-        # Looked up for each pack, so a stream replaced meanwhile is honored.
-        err = console.stderr()
-        if isinstance(outcome, PackFailure):
-            report_pack_failure(err, key, outcome)
-            return
-        finished.append(outcome)
-        if params.out and outcome.rows:
-            release = (
-                f"  (release {outcome.release_id[:7]})" if outcome.release_id else ""
-            )
-            err.status(
-                "ok",
-                "green",
-                f"{key}  {console.plural(len(outcome.rows), 'rule')}, "
-                f"{console.plural(len(outcome.written), 'file')}{release}",
-            )
-
-    try:
-        result = fetch(
-            client or connect(),
-            tm_ids=tuple(params.tm_ids),
-            providers=tuple(params.provider),
-            services=tuple(params.service),
-            wanted=RuleFilter(
-                controls=tuple(params.control),
-                modes=tuple(params.mode),
-                matchers=tuple(params.matcher),
-                files=tuple(params.file),
-            ),
-            out=Path(params.out) if params.out else None,
-            on_pack=on_pack,
-        )
-    except NoPackMatched as exc:
-        # Said on stderr like a failed pack, because the narrowing is what went
-        # wrong. Printing "[]" and "No rule matched" would read as packs that
-        # lack such a rule.
-        console.stderr().error(exc)
-        return 1
-    if params.out:
-        stdout = console.stdout()
-        if not stdout.terminal:
-            for path in result.written:
-                print(path)
-        elif result.written:
-            stdout.tree(os.path.abspath(params.out), _written_tree(finished))
-    else:
-        print(json.dumps(result.rows, indent=2))
-    _report_outcome(console.stderr(), result, params.out)
-    return 1 if result.failed else 0
-
-
-def _written_tree(finished: list[PackOutcome]) -> list[console.Branch]:
-    """Arrange what a fetch wrote as a tree under the output folder.
-
-    Args:
-        finished: The packs that completed, in the order they were read.
-
-    Returns:
-        A branch per pack that wrote anything, labeled with its release, then
-        a branch per rule that had files, in manifest order, then one per file,
-        relative to the rule's folder, in the order written.
-    """
-    return [
-        console.Branch(
-            outcome.tm_id
-            + (f"  (release {outcome.release_id[:7]})" if outcome.release_id else ""),
-            tuple(
-                console.Branch(
-                    str(row["ruleId"]),
-                    tuple(console.Branch(str(file)) for file in row["files"]),
-                )
-                for row in outcome.rows
-                if row["files"]
-            ),
-        )
-        for outcome in finished
-        if outcome.written
-    ]
-
-
-def _report_outcome(err: console.Console, result: FetchResult, out: str) -> None:
-    """Say, last, whether the fetch wrote anything and where.
-
-    No line ends with a full stop right after a path, so the path is never
-    read as ending in one.
-
-    Args:
-        err: Where to say it.
-        result: What the fetch found and wrote.
-        out: The folder given with --out, or empty for a preview.
-    """
-    if not result.rows and not result.failed:
-        nothing = " Nothing was written." if out else ""
-        err.status("info", "yellow", f"No rule matched the filters given.{nothing}")
-        return
-    if not out:
-        if result.rows:
-            files = sum(len(row["files"]) for row in result.rows)
-            packs = {row["tmId"] for row in result.rows}
-            err.status(
-                "info",
-                "yellow",
-                "Preview only, nothing was written: "
-                f"{console.plural(len(result.rows), 'rule')} and "
-                f"{console.plural(files, 'file')} selected from "
-                f"{console.plural(len(packs), 'pack')}.",
-                "Add --out DIR to download and write them.",
-            )
-        return
-    # Wherever the command was run, the reader can find the files from here.
-    where = os.path.abspath(out)
-    if not result.written:
-        err.status("fail", "red", f"Nothing was written to {where}")
-        return
-    # A failed pack has no rows, so these are the rules whose files were
-    # written, counted from what reached the disk.
-    rules = [row for row in result.rows if row["files"]]
-    packs = {row["tmId"] for row in rules}
-    err.status(
-        "ok",
-        "green",
-        f"Wrote {console.plural(len(result.written), 'file')} for "
-        f"{console.plural(len(rules), 'rule')} from "
-        f"{console.plural(len(packs), 'pack')} to {where}",
-    )
-
-
-def report_pack_failure(err: console.Console, key: str, failure: PackFailure) -> None:
-    """Write a failed pack as a block, from the parts its one line is made of.
-
-    Args:
-        err: Where to write it.
-        key: The pack, as it was asked for.
-        failure: Why it failed.
-    """
-    parts = failure.parts()
-    details = [f"[{parts.details}]"] if parts.details else []
-    err.failure(
-        f"{key}: {parts.headline}",
-        [*details, parts.hint],
-        parts.did_you_mean,
-    )
 
 
 def selected_route(params: Namespace) -> Route | None:

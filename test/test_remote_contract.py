@@ -195,18 +195,6 @@ def test_a_pack_row_names_its_release() -> None:
     assert "releaseId" in _row_properties("/v1/ccr/packs")
 
 
-def test_a_pack_row_names_its_pack_by_tm_id_alone() -> None:
-    """`ccr fetch` reads the provider and service from the id.
-
-    The row once carried a ``service`` beside a ``releaseKey``. Both are gone,
-    so narrowing by provider or service has only ``tmId`` to go on.
-    """
-    fields = _row_properties("/v1/ccr/packs")
-
-    assert "tmId" in fields
-    assert not fields & {"releaseKey", "service"}
-
-
 def test_the_pack_list_summary_names_the_product_as_the_contract_does() -> None:
     # The summary is the command's help, so wording of the client's own can
     # name a product other than the one the contract describes.

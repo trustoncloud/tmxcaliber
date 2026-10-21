@@ -10,17 +10,17 @@ stream's encoding can carry every one of them, with an ASCII set otherwise.
 Every message keeps its glyph or the ASCII stand-in, and its words, with color
 off, so color never carries the meaning alone.
 
-Only the command line uses this. The library (`Client`, `FetchResult`,
-``str(PackFailure)``) keeps plain one-line text, which a caller prints or logs
-as it likes.
+Only the command line uses this. The library (`Client`, and ``str()`` of the
+errors it raises) keeps plain one-line text, which a caller prints or logs as
+it likes.
 """
 
 from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, TextIO
 
@@ -34,26 +34,17 @@ GLYPHS: Final[Mapping[str, str]] = MappingProxyType(
     {
         "ok": "✔",
         "fail": "✖",
-        "info": "ⓘ",
         "arrow": "→",
-        "last": "└─",
-        "branch": "├─",
-        "pipe": "│",
     }
 )
 
 #: The same roles in ASCII, for a stream whose encoding cannot carry `GLYPHS`,
-#: such as a pipe or a file on Windows, which Python writes as cp1252. Each
-#: tree part is as wide as the glyph it stands for, so a tree keeps its shape.
+#: such as a pipe or a file on Windows, which Python writes as cp1252.
 ASCII: Final[Mapping[str, str]] = MappingProxyType(
     {
         "ok": "[ok]",
         "fail": "[x]",
-        "info": "[i]",
         "arrow": "->",
-        "last": "\\-",
-        "branch": "|-",
-        "pipe": "|",
     }
 )
 
@@ -63,11 +54,10 @@ _CODES: Final[Mapping[str, str]] = MappingProxyType(
         "red": Fore.RED,
         "green": Fore.GREEN,
         "yellow": Fore.YELLOW,
-        "dim": Style.DIM,
     }
 )
 
-#: How far the lines that explain a status line are set in under it.
+#: How far a suggestion is set in under the failure it follows.
 INDENT: Final[str] = "    "
 
 #: Whether `colorama.just_fix_windows_console` has run in this process.
@@ -136,31 +126,16 @@ def _carries_glyphs(stream: TextIO) -> bool:
 
 
 @dataclass(frozen=True)
-class Branch:
-    """One line of a tree, and the lines under it.
-
-    Attributes:
-        label: What the line says.
-        children: The lines under it, in the order they are drawn.
-    """
-
-    label: str
-    children: tuple[Branch, ...] = field(default=())
-
-
-@dataclass(frozen=True)
 class Console:
     """A stream, and how messages are styled on it.
 
     Attributes:
         stream: Where the messages go.
-        terminal: Whether a person is reading it directly.
         color: Whether escape codes are written to it.
         glyphs: The glyph for each role, from `GLYPHS` or `ASCII`.
     """
 
     stream: TextIO
-    terminal: bool
     color: bool
     glyphs: Mapping[str, str]
 
@@ -180,7 +155,7 @@ class Console:
 
         Args:
             text: The text.
-            color: One of ``red``, ``green``, ``yellow`` and ``dim``, or None.
+            color: One of ``red``, ``green`` and ``yellow``, or None.
 
         Returns:
             The text, colored or as it was.
@@ -198,33 +173,25 @@ class Console:
         """
         print(self.paint(text, color), file=self.stream)
 
-    def status(self, role: str, color: str, text: str, *more: str) -> None:
-        """Write a status line, and lines that continue it, in one color.
+    def status(self, role: str, color: str, text: str) -> None:
+        """Write a status line, its glyph first.
 
         Args:
             role: The glyph's role, such as ``ok``.
-            color: The color of every line.
+            color: The color of the line.
             text: The status.
-            *more: Lines that continue it, set in by two spaces.
         """
         self.line(f"{self.glyph(role)} {text}", color)
-        for extra in more:
-            self.line(f"  {extra}", color)
 
-    def failure(
-        self, headline: str, details: Sequence[str] = (), did_you_mean: str = ""
-    ) -> None:
-        """Write a failure as a block: what failed, then what to know about it.
+    def failure(self, headline: str, did_you_mean: str = "") -> None:
+        """Write a failure, then what was probably meant on a line of its own.
 
         Args:
             headline: What failed, in red after the failure glyph.
-            details: Lines that explain it, set in under it and left plain.
-            did_you_mean: A ``Did you mean ...?`` sentence that ends the block
-                after an arrow, or empty for none.
+            did_you_mean: A ``Did you mean ...?`` sentence, set in under the
+                headline after an arrow and left plain, or empty for none.
         """
         self.line(f"{self.glyph('fail')} {headline}", "red")
-        for detail in details:
-            self.line(f"{INDENT}{detail}")
         if did_you_mean:
             self.line(f"{INDENT}{self.glyph('arrow')} {did_you_mean}")
 
@@ -236,33 +203,6 @@ class Console:
                 ends the block on a line of its own.
         """
         self.failure(exc.headline, did_you_mean=exc.did_you_mean)
-
-    def tree(self, root: str, branches: Sequence[Branch]) -> None:
-        """Write a tree, with its root on the first line.
-
-        Args:
-            root: The first line.
-            branches: The lines under it.
-        """
-        self.line(root)
-        self._branches(branches, "")
-
-    def _branches(self, branches: Sequence[Branch], prefix: str) -> None:
-        """Write the branches of one level, each followed by its own.
-
-        Args:
-            branches: The branches.
-            prefix: What every line of this level starts with.
-        """
-        for index, branch in enumerate(branches):
-            last = index == len(branches) - 1
-            self.line(
-                f"{prefix}{self.glyph('last' if last else 'branch')} {branch.label}"
-            )
-            # A level under the last branch has no line left to continue, so
-            # it is set in by blanks as wide as the branch glyph and its space.
-            below = " " * 3 if last else f"{self.glyph('pipe')}  "
-            self._branches(branch.children, prefix + below)
 
 
 def _console(current: Callable[[], TextIO], env: Mapping[str, str] | None) -> Console:
@@ -281,8 +221,7 @@ def _console(current: Callable[[], TextIO], env: Mapping[str, str] | None) -> Co
     """
     environ = os.environ if env is None else env
     stream = current()
-    terminal = _is_terminal(stream)
-    color = terminal and not environ.get("NO_COLOR", "")
+    color = _is_terminal(stream) and not environ.get("NO_COLOR", "")
     if color:
         # colorama can replace the standard streams with ones that turn codes
         # into console calls, so the stream is looked up again afterwards.
@@ -290,7 +229,6 @@ def _console(current: Callable[[], TextIO], env: Mapping[str, str] | None) -> Co
         stream = current()
     return Console(
         stream=stream,
-        terminal=terminal,
         color=color,
         glyphs=GLYPHS if _carries_glyphs(stream) else ASCII,
     )

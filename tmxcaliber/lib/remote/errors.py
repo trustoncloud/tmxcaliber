@@ -3,7 +3,7 @@
 One class per error code the API publishes, so a caller can branch on the
 failure rather than on a string. The codes themselves are owned by the API
 (`app/containers/public-api/src/errors.ts`); this module maps them and adds
-four local failures the server never sends.
+three local failures the server never sends.
 
 Every message carries the server's `requestId` when there is one, because the
 API's own contract is that a caller quotes it to support.
@@ -107,37 +107,6 @@ class NotFound(RemoteError):
     has no access to the API at all. They are deliberately indistinguishable,
     so a message that guessed between them would mislead.
     """
-
-
-class NoPackMatched(NotFound):
-    """No pack this key can read matches the provider or service asked for.
-
-    Raised here once the pack list has answered, when none of its packs is
-    of that provider or service. It is a `NotFound`, because the API cannot
-    say either whether the pack exists or whether the key may read it. The
-    message names the filter and its value, and ends with a suggestion when a
-    listed pack or provider is close to what was typed. When a pack it names
-    belongs to a provider that ``--provider`` leaves out, it says so, because
-    typing the suggestion back with that provider still given would match
-    nothing again.
-
-    Args:
-        message: Which filters matched nothing.
-        suggestions: The listed packs or providers that were close, best
-            first; empty when none was.
-        did_you_mean: The sentence that names them, with what it says about
-            a provider ``--provider`` leaves out; empty when none was close.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        suggestions: tuple[str, ...] = (),
-        did_you_mean: str = "",
-    ) -> None:
-        super().__init__(message, code="no_pack_matched", did_you_mean=did_you_mean)
-        self.suggestions = suggestions
 
 
 class ReleaseSuperseded(RemoteError):

@@ -16,7 +16,6 @@ from tmxcaliber.lib.remote.suggest import (
     did_you_mean,
     normalize,
     suggest,
-    suggest_provider,
 )
 
 #: Every CCR pack ccr_factory publishes, as its ``services.json`` names them.
@@ -1301,19 +1300,3 @@ def test_a_known_title_follows_its_key() -> None:
     assert did_you_mean(["aws-ec2", "aws-s3", "gcp-vertex"], labels) == (
         "Did you mean aws-ec2, aws-s3 or gcp-vertex (Vertex AI)?"
     )
-
-
-@pytest.mark.parametrize(
-    ("query", "expected"),
-    [
-        ("gpc", ["gcp"]),
-        ("azr", ["azure"]),
-        ("asw", ["aws"]),
-        ("Google", ["gcp"]),
-        ("amazon", ["aws"]),
-        ("gcp", []),
-        ("oracle", []),
-    ],
-)
-def test_a_near_provider_is_suggested(query: str, expected: list[str]) -> None:
-    assert suggest_provider(query) == expected

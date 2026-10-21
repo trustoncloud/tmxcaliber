@@ -43,7 +43,6 @@ from .remote_cli import (
     add_init_parser,
     resolve_command_source,
     run_api_command,
-    run_ccr_fetch,
     run_init,
     selected_route,
 )
@@ -596,8 +595,6 @@ def _run() -> None:
         # Non-zero when the stored key did not answer, so a CI setup step
         # that cannot work does not look like one that did.
         sys.exit(run_init(params))
-    if getattr(params, "ccr_fetch", False):
-        sys.exit(run_ccr_fetch(params))
     if selected_route(params) is not None:
         incomplete: list[str] = []
         result, result_type = run_api_command(params, incomplete=incomplete)

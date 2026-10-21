@@ -72,9 +72,6 @@ _KEY_CUTOFF: Final[float] = 0.6
 #: at least what one letter hit wrong does, which clears `_KEY_CUTOFF`.
 _SHORT: Final[int] = 4
 
-#: The providers a pack or a ThreatModel belongs to, as ThreatModel ids spell them.
-PROVIDERS: Final[tuple[str, ...]] = ("aws", "azure", "gcp")
-
 #: Other names for each pack, by its ThreatModel id, as people write them.
 #:
 #: Collected from three places: the display names in ccr_factory's
@@ -177,21 +174,6 @@ _NAMES: Final[Mapping[str, tuple[str, ...]]] = {
         "private service connect",
     ),
 }
-
-#: Other names for each provider, written as `_canonical` leaves them. The
-#: vendor's own name is the alias here, so it is not dropped as it is from a
-#: service's name.
-_PROVIDER_NAMES: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType(
-    {
-        "amazon": ("aws",),
-        "amazon-web-services": ("aws",),
-        "google": ("gcp",),
-        "google-cloud": ("gcp",),
-        "google-cloud-platform": ("gcp",),
-        "microsoft": ("azure",),
-        "microsoft-azure": ("azure",),
-    }
-)
 
 
 def _canonical(name: str) -> str:
@@ -780,28 +762,6 @@ def suggest(
         limit=limit,
         provider=provider,
         published=published,
-    )
-
-
-def suggest_provider(query: str) -> list[str]:
-    """Choose the providers a mistyped provider meant.
-
-    Args:
-        query: The provider as typed, such as ``gpc`` or ``Google``.
-
-    Returns:
-        The providers of `PROVIDERS` it is close to, by the rules of
-        `suggest`, with the vendors' own names (``amazon``, ``google``,
-        ``microsoft``) as aliases. Empty when the query is itself a provider.
-    """
-    canonical = _canonical(query)
-    return _rank(
-        query,
-        PROVIDERS,
-        full=canonical,
-        bare=canonical,
-        aliases=_PROVIDER_NAMES,
-        limit=len(PROVIDERS),
     )
 
 

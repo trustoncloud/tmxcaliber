@@ -8,8 +8,8 @@ import sys
 import pytest
 
 from tmxcaliber import console
-from tmxcaliber.console import ASCII, GLYPHS, Branch
-from tmxcaliber.lib.remote.errors import NoPackMatched, NotFound
+from tmxcaliber.console import ASCII, GLYPHS
+from tmxcaliber.lib.remote.errors import NotFound
 
 GREEN = "\x1b[32m"
 RED = "\x1b[31m"
@@ -139,10 +139,10 @@ def test_a_stream_that_is_no_terminal_gets_no_escape_codes(
     err = on_stderr(monkeypatch, stream)
 
     err.status("ok", "green", "Wrote 2 files")
-    err.failure("aws-s3: archive failed", ["[unavailable]"], "Did you mean aws-ec2?")
+    err.failure("Not found.", "Did you mean aws-ec2?")
 
     assert "\x1b" not in stream.getvalue()
-    assert stream.getvalue().startswith("\u2714 Wrote 2 files\n\u2716 aws-s3")
+    assert stream.getvalue().startswith("\u2714 Wrote 2 files\n\u2716 Not found.")
 
 
 @pytest.mark.parametrize(("value", "colored"), [("1", False), ("", True)])
@@ -166,29 +166,18 @@ def test_a_cp1252_stream_gets_the_ascii_set_and_never_raises(
     stream = cp1252(tty=tty)
     err = on_stderr(monkeypatch, stream, NO_COLOR="1")
 
-    err.status("info", "yellow", "Preview only", "Add --out DIR")
-    err.failure(
-        "ec3: manifest failed: No such pack.", ["[not_found]"], "Did you mean aws-ec2?"
-    )
-    err.tree("out", [Branch("aws-s3", (Branch("a"), Branch("b")))])
+    err.status("ok", "green", "Wrote 92,162 bytes to pack.zip")
+    err.failure("Not found. (request r-404)", "Did you mean aws-ec2?")
 
     assert written(stream) == (
-        "[i] Preview only\n"
-        "  Add --out DIR\n"
-        "[x] ec3: manifest failed: No such pack.\n"
-        "    [not_found]\n"
+        "[ok] Wrote 92,162 bytes to pack.zip\n"
+        "[x] Not found. (request r-404)\n"
         "    -> Did you mean aws-ec2?\n"
-        "out\n"
-        "\\- aws-s3\n"
-        "   |- a\n"
-        "   \\- b\n"
     )
 
 
-def test_every_glyph_has_an_ascii_stand_in_of_its_width_in_a_tree() -> None:
+def test_every_glyph_has_an_ascii_stand_in() -> None:
     assert set(GLYPHS) == set(ASCII)
-    for role in ("last", "branch", "pipe"):
-        assert len(ASCII[role]) == len(GLYPHS[role])
     assert all(text.isascii() for text in ASCII.values())
 
 
@@ -204,56 +193,17 @@ def test_the_windows_console_is_fixed_once_before_the_first_colored_write(
     assert windows_fixes == [1]
 
 
-def test_a_tree_draws_each_level_under_the_one_before(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    stream = Stream(tty=True)
-    err = on_stderr(monkeypatch, stream, NO_COLOR="1")
-
-    err.tree(
-        "C:\\ccr-try",
-        [
-            Branch(
-                "aws-s3  (release 2adfa6b)",
-                (
-                    Branch("S3.C20", (Branch("metadata.json"), Branch("a/b.rego"))),
-                    Branch("S3.C21", (Branch("metadata.json"),)),
-                ),
-            ),
-            Branch("gcp-bigquery", (Branch("Bigquery.C102", (Branch("m.json"),)),)),
-        ],
-    )
-
-    assert stream.getvalue() == (
-        "C:\\ccr-try\n"
-        "\u251c\u2500 aws-s3  (release 2adfa6b)\n"
-        "\u2502  \u251c\u2500 S3.C20\n"
-        "\u2502  \u2502  \u251c\u2500 metadata.json\n"
-        "\u2502  \u2502  \u2514\u2500 a/b.rego\n"
-        "\u2502  \u2514\u2500 S3.C21\n"
-        "\u2502     \u2514\u2500 metadata.json\n"
-        "\u2514\u2500 gcp-bigquery\n"
-        "   \u2514\u2500 Bigquery.C102\n"
-        "      \u2514\u2500 m.json\n"
-    )
-
-
-def test_a_failure_is_a_red_line_and_plain_lines_under_it(
+def test_a_failure_is_a_red_line_and_a_plain_suggestion_under_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stream = Stream(tty=True)
 
     on_stderr(monkeypatch, stream).failure(
-        "ec3: manifest failed: No such pack.",
-        ["[not_found, HTTP 404]", "The pack is unknown."],
-        "Did you mean aws-ec2?",
+        "Not found. (request r-404)", "Did you mean aws-ec2?"
     )
 
     assert stream.getvalue() == (
-        f"{RED}\u2716 ec3: manifest failed: No such pack.{RESET}\n"
-        "    [not_found, HTTP 404]\n"
-        "    The pack is unknown.\n"
-        "    \u2192 Did you mean aws-ec2?\n"
+        f"{RED}✖ Not found. (request r-404){RESET}\n    → Did you mean aws-ec2?\n"
     )
 
 
@@ -288,7 +238,7 @@ def test_an_api_error_without_a_suggestion_is_one_line(
 
 
 def test_a_suggestion_after_a_message_without_a_stop_starts_a_sentence() -> None:
-    error = NoPackMatched("Nothing matched", did_you_mean="Did you mean gcp?")
+    error = NotFound("aws-ec3 is unknown", did_you_mean="Did you mean aws-ec2?")
 
-    assert str(error) == "Nothing matched. Did you mean gcp?"
-    assert error.headline == "Nothing matched"
+    assert str(error) == "aws-ec3 is unknown. Did you mean aws-ec2?"
+    assert error.headline == "aws-ec3 is unknown"

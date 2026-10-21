@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import inspect
-import json
 import pathlib
-import sys
 import urllib.parse
 import warnings
 from typing import Any
@@ -14,13 +12,9 @@ import pytest
 
 import tmxcaliber
 import tmxcaliber.lib.remote as remote_package
-from tmxcaliber import cli as cli_module
 from tmxcaliber.lib.remote import api as api_module
-from tmxcaliber.lib.remote import ccr as ccr_module
 from tmxcaliber.lib.remote import errors as errors_module
-from tmxcaliber.lib.remote.api import CcrFetch, Client, Group, Operation
-from tmxcaliber.lib.remote.ccr import MATCHERS, MODES, FetchResult
-from tmxcaliber.lib.remote.client import MAX_ATTEMPTS
+from tmxcaliber.lib.remote.api import Client, Group, Operation
 from tmxcaliber.lib.remote.config import DEFAULT_BASE_URL
 from tmxcaliber.lib.remote.contract import (
     ROUTES,
@@ -36,9 +30,7 @@ from tmxcaliber.lib.remote.errors import (
     IncompleteAnswer,
 )
 from tmxcaliber.lib.remote.operations import incompleteness_fields, request_for
-from tmxcaliber.remote_cli import run_ccr_fetch
 
-from .test_remote_ccr import MANIFEST, PackClient, two_packs
 from .test_remote_client import (
     FakeBytesResponse,
     FakeOpener,
@@ -132,33 +124,6 @@ def test_a_superseded_release_is_importable_where_every_route_failure_is() -> No
     assert "ReleaseSuperseded" in remote_package.__all__
 
 
-def test_a_narrowing_no_pack_has_is_importable_where_every_failure_is() -> None:
-    # `api.ccr.fetch(service=...)` raises it, so a caller has to be able to
-    # catch it from where the README says route failures come from.
-    from tmxcaliber import NoPackMatched as from_top
-    from tmxcaliber.lib.remote import NoPackMatched as from_remote
-
-    assert from_top is from_remote is errors_module.NoPackMatched
-    assert issubclass(from_top, errors_module.NotFound)
-    assert "NoPackMatched" in tmxcaliber.__all__
-    assert "NoPackMatched" in remote_package.__all__
-
-
-def test_fetch_raises_for_a_service_no_readable_pack_has(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    client = pack_backed_client(monkeypatch)
-
-    with pytest.raises(errors_module.NoPackMatched) as refused:
-        client.ccr.fetch(service="big qeury")
-
-    assert str(refused.value) == (
-        "No pack this key can read matches --service 'big qeury'. "
-        "Did you mean gcp-bigquery?"
-    )
-    assert refused.value.suggestions == ("gcp-bigquery",)
-
-
 @pytest.mark.parametrize(
     "command",
     [("threatmodels", "get"), ("ccr", "packs", "get")],
@@ -230,18 +195,6 @@ def test_a_pack_name_with_spaces_gets_the_apis_not_found_not_a_lost_connection(
     [sent] = opener.requests
     assert "Gemini%20Agent%20Platform" in sent.full_url
     assert " " not in sent.full_url
-
-
-def test_what_fetch_returns_is_importable_from_the_remote_package() -> None:
-    from tmxcaliber.lib.remote import FetchResult as Result
-    from tmxcaliber.lib.remote import PackFailure as Failure
-
-    assert Result is ccr_module.FetchResult
-    assert Failure is ccr_module.PackFailure
-    assert {"FetchResult", "PackFailure"} <= set(remote_package.__all__)
-    # The top level keeps to the client and the errors it raises, as its
-    # docstring says, so these stay one level down.
-    assert not {"FetchResult", "PackFailure"} & set(tmxcaliber.__all__)
 
 
 @pytest.mark.parametrize("route", ROUTES, ids=lambda route: " ".join(route.command))
@@ -518,289 +471,3 @@ def test_a_binary_route_refuses_the_json_a_sibling_route_would_answer() -> None:
 
     with pytest.raises(ContractViolation, match="not an archive"):
         client.ccr.packs.archive("aws-s3")
-
-
-def test_fetch_hangs_beside_the_pack_commands() -> None:
-    client = Client()
-
-    assert "fetch" in repr(client.ccr)
-    assert "packs" in repr(client.ccr)
-
-
-def test_fetch_lists_the_selected_rules_through_the_api() -> None:
-    manifest = {
-        "release_id": "d07d6aee",
-        "rules": [
-            {
-                "id": "S3.C20",
-                "modes": ["universal"],
-                "files": ["metadata.json"],
-                "matchers": {},
-            },
-            {
-                "id": "S3.C21",
-                "modes": ["denylist"],
-                "files": ["metadata.json"],
-                "matchers": {},
-            },
-        ],
-    }
-    client = Client(opener=FakeOpener([FakeResponse(manifest)]))
-
-    result = client.ccr.fetch("aws-s3", mode=["universal"])
-
-    assert isinstance(result, FetchResult)
-    assert [row["ruleId"] for row in result.rows] == ["S3.C20"]
-    assert result.written == []
-
-
-@pytest.mark.parametrize(
-    ("option", "value", "valid"),
-    [("mode", "Universal", MODES), ("matcher", "clouds", MATCHERS)],
-)
-def test_fetch_refuses_a_mode_or_matcher_the_command_line_would_refuse(
-    option: str, value: str, valid: tuple[str, ...]
-) -> None:
-    # The command line has argparse's choices, and the library has only this,
-    # so a misspelling must not come back as an empty answer that looks fine.
-    opener = FakeOpener([FakeResponse(MANIFEST)])
-    client = Client(opener=opener)
-
-    with pytest.raises(ValueError) as refused:
-        client.ccr.fetch("aws-s3", **{option: value})
-
-    assert repr(value) in str(refused.value)
-    for name in valid:
-        assert name in str(refused.value)
-    # Refused before any request, so no pack was read for a filter that
-    # could never match.
-    assert opener.requests == []
-
-
-def test_fetch_goes_on_past_an_archive_the_api_keeps_refusing(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    packs = two_packs()
-    listing = route_for(("ccr", "packs", "list"))
-    assert listing is not None
-    refused = {
-        "error": {
-            "code": "unavailable",
-            "message": "The source archive of aws-s3 does not match its "
-            "published digest.",
-            "requestId": "r-9",
-        }
-    }
-    opener = FakeOpener(
-        [
-            FakeResponse(page(listing, [{"tmId": "aws-s3"}, {"tmId": "gcp-bigquery"}])),
-            FakeResponse(packs["aws-s3"][1]),
-            # The client retries a 503 until its attempts are spent. Each answer
-            # is its own error, because an error's body can be read only once.
-            *(http_error(503, refused) for _ in range(MAX_ATTEMPTS)),
-            FakeResponse(packs["gcp-bigquery"][1]),
-            FakeBytesResponse(
-                packs["gcp-bigquery"][0], {"Content-Type": "application/zip"}
-            ),
-        ]
-    )
-    client = Client(opener=opener)
-    monkeypatch.setattr(client, "_sleep", lambda _: None)
-
-    result = client.ccr.fetch(out=tmp_path)
-
-    failure = result.failed["aws-s3"]
-    assert (failure.stage, failure.code, failure.status, failure.request_id) == (
-        "archive",
-        "unavailable",
-        503,
-        "r-9",
-    )
-    assert failure.release_id == "d07d6aee"
-    # The server's words, without the request id that the error's text adds.
-    assert failure.message == refused["error"]["message"]
-    assert result.written == [
-        tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json"
-    ]
-    assert opener.answers == []
-
-
-def pack_backed_client(monkeypatch: pytest.MonkeyPatch) -> Client:
-    """A real `Client` whose API calls are answered from fixture packs.
-
-    The aws-s3 pack's rules ship different modes, and one matcher or both, so
-    each filter keeps its own rows and files. Nothing is written, so no archive
-    is read and that pack needs none.
-
-    Args:
-        monkeypatch: Replaces the client's three transport calls.
-
-    Returns:
-        The client.
-    """
-    fake = PackClient(
-        {"aws-s3": (b"", MANIFEST), "gcp-bigquery": two_packs()["gcp-bigquery"]}
-    )
-    client = Client()
-    for name in ("get", "get_bytes", "paginate"):
-        monkeypatch.setattr(client, name, getattr(fake, name))
-    return client
-
-
-#: The words after `ccr fetch`, and the same request through the library: its
-#: ThreatModel ids and its options.
-SAME_REQUEST = [
-    pytest.param(("aws-s3",), ("aws-s3",), {}, id="named pack"),
-    pytest.param(("--provider", "gcp"), (), {"provider": ["gcp"]}, id="provider"),
-    pytest.param(("--service", "s3"), (), {"service": ["s3"]}, id="service"),
-    pytest.param(("--control", "S3.C21"), (), {"control": ["S3.C21"]}, id="control"),
-    pytest.param(("--mode", "universal"), (), {"mode": ["universal"]}, id="mode"),
-    pytest.param(("--matcher", "cloud"), (), {"matcher": ["cloud"]}, id="matcher"),
-    pytest.param(
-        ("--file", "*/remediation.md"), (), {"file": ["*/remediation.md"]}, id="file"
-    ),
-    pytest.param(
-        (
-            "aws-s3",
-            "--control",
-            "S3.C20",
-            "--control",
-            "S3.C22",
-            "--mode",
-            "allowlist",
-            "--matcher",
-            "terraform",
-            "--file",
-            "*.rego",
-        ),
-        ("aws-s3",),
-        {
-            "control": ["S3.C20", "S3.C22"],
-            "mode": ["allowlist"],
-            "matcher": ["terraform"],
-            "file": ["*.rego"],
-        },
-        id="combined",
-    ),
-]
-
-
-@pytest.mark.parametrize(("words", "tm_ids", "options"), SAME_REQUEST)
-def test_fetch_returns_the_rows_the_command_prints(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    words: tuple[str, ...],
-    tm_ids: tuple[str, ...],
-    options: dict[str, list[str]],
-) -> None:
-    # Both entry points map their arguments onto `fetch` separately, so one of
-    # them can wire a filter to the wrong field while the other stays right.
-    client = pack_backed_client(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["tmxcaliber", "ccr", "fetch", *words])
-    status = run_ccr_fetch(cli_module.get_params(), client=client)
-    printed = json.loads(capsys.readouterr().out)
-
-    result = client.ccr.fetch(*tm_ids, **options)
-
-    assert status == 0
-    assert printed == result.rows
-    # A request that kept every row would match even if one side ignored it.
-    assert result.rows
-    assert result.rows != client.ccr.fetch().rows
-
-
-def test_a_route_the_api_adds_at_ccr_fetch_is_refused(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    taken = Route(
-        path="/v1/ccr/fetch",
-        command=("ccr", "fetch"),
-        paged=False,
-        filters=(),
-        positional=None,
-        summary="A route that would sit where the hand-written fetch goes.",
-    )
-    monkeypatch.setattr(api_module, "ROUTES", (*ROUTES, taken))
-
-    with pytest.raises(ValueError, match="ccr fetch has no free place"):
-        Client()
-
-
-def selected(result: FetchResult) -> list[tuple[str, str]]:
-    """Name the rules a fetch selected.
-
-    Args:
-        result: The fetch's result.
-
-    Returns:
-        Each row's pack and rule id, in the order they were selected.
-    """
-    return [(row["tmId"], row["ruleId"]) for row in result.rows]
-
-
-#: Every rule the fixture packs hold, which is what a fetch that ignored its
-#: option would select.
-EVERY_RULE = [
-    ("aws-s3", "S3.C20"),
-    ("aws-s3", "S3.C21"),
-    ("aws-s3", "S3.C22"),
-    ("gcp-bigquery", "Bigquery.C102"),
-]
-
-
-@pytest.mark.parametrize(
-    ("option", "text", "expected"),
-    [
-        ("control", "S3.C21", [("aws-s3", "S3.C21")]),
-        ("mode", "universal", [("aws-s3", "S3.C20")]),
-        (
-            "matcher",
-            "cloud",
-            [("aws-s3", "S3.C20"), ("gcp-bigquery", "Bigquery.C102")],
-        ),
-        ("provider", "gcp", [("gcp-bigquery", "Bigquery.C102")]),
-        ("service", "s3", EVERY_RULE[:3]),
-        ("file", "*/remediation.md", [("aws-s3", "S3.C22")]),
-    ],
-)
-def test_one_string_for_an_option_selects_as_a_list_of_one_does(
-    option: str, text: str, expected: list[tuple[str, str]]
-) -> None:
-    # A str is a Sequence[str], so `tuple("gcp")` would be ("g", "c", "p") and
-    # the answer would be an empty success that reads as "nothing matches".
-    # Each spelling is held to a selection narrower than every rule, so a
-    # fetch that dropped the option would fail here instead of matching itself.
-    api = CcrFetch(
-        PackClient(  # type: ignore[arg-type]
-            {"aws-s3": (b"", MANIFEST), "gcp-bigquery": two_packs()["gcp-bigquery"]}
-        )
-    )
-
-    assert selected(api()) == EVERY_RULE
-    assert expected != EVERY_RULE
-    assert selected(api(**{option: text})) == expected
-    assert selected(api(**{option: [text]})) == expected
-
-
-def test_one_glob_string_writes_what_a_list_of_one_glob_writes(
-    tmp_path: pathlib.Path,
-) -> None:
-    # Split into characters, "*/cloud/*.rego" contains the pattern "*", which
-    # matches every file of every pack.
-    packs = two_packs()
-    glob = "*/cloud/*.rego"
-
-    as_text = CcrFetch(PackClient(packs))(  # type: ignore[arg-type]
-        file=glob, out=tmp_path / "text"
-    )
-    as_list = CcrFetch(PackClient(packs))(  # type: ignore[arg-type]
-        file=[glob], out=tmp_path / "list"
-    )
-
-    assert [p.relative_to(tmp_path / "list") for p in as_list.written] == [
-        pathlib.Path("aws-s3", "S3.C20", "allowlist", "cloud", "check.rego")
-    ]
-    assert [p.relative_to(tmp_path / "text") for p in as_text.written] == [
-        p.relative_to(tmp_path / "list") for p in as_list.written
-    ]
-    assert not (tmp_path / "text" / "gcp-bigquery").exists()

@@ -190,45 +190,28 @@ tmxcaliber subscriptions list
 tmxcaliber compliance frameworks list
 tmxcaliber compliance mappings list --framework-id nist-800-53-r5
 tmxcaliber ccr packs list
+tmxcaliber ccr packs get aws-s3
 tmxcaliber ccr packs archive aws-s3 --output aws-s3-source.zip
 tmxcaliber ccr packs archive aws-s3 --kind deploy --output aws-s3.zip
-tmxcaliber ccr fetch aws-s3 --control S3.C20
-tmxcaliber ccr fetch --provider gcp --mode universal --matcher terraform --out rules
-tmxcaliber ccr fetch --file '*/terraform/*.rego' --out rules
 ```
 
-`ccr fetch` reads each pack's manifest and selects rules by control, mode,
-matcher and file glob. Repeating a flag widens it; different flags narrow each
-other, and each row lists only the modes and matchers you asked for. Without
-`--out` it only previews: it prints the selected rules as JSON, writes
-nothing, and says so on stderr. With `--out` it downloads only the packs that
-matched, checks each archive against its manifest's digest, and writes the
-selected files to `<out>/<ThreatModel id>/<rule id>/`. Every pack's files come
-from the one release its manifest names.
-
-On a terminal, `--out` shows each pack as it finishes, the files it wrote as a
-tree, and last the folder they are in:
-
-```text
-$ tmxcaliber ccr fetch aws-s3 --control S3.C20 --mode universal --matcher terraform --out ccr-try
-✔ aws-s3  1 rule, 2 files  (release 2adfa6b)
-C:\dreamcentre\trustoncloud\ccr-try
-└─ aws-s3  (release 2adfa6b)
-   └─ S3.C20
-      ├─ metadata.json
-      └─ universal/terraform/vpc_endpoint_org_restriction.rego
-✔ Wrote 2 files for 1 rule from 1 pack to C:\dreamcentre\trustoncloud\ccr-try
-```
-
-The tree is on stdout and the other lines on stderr. Piped or redirected,
-stdout is one written path per line, and messages carry neither color nor
-glyphs the stream cannot encode; `NO_COLOR` turns color off on a terminal too.
+`ccr packs list` shows the Wiz Cloud Configuration Rule packs your key can
+read, and `ccr packs get` prints one pack's manifest: its rules and the release
+it was built from. `ccr packs archive` downloads a whole pack as a zip.
+`--kind source`, the default, is the rule tree, and `--kind deploy` is the
+Terraform package. `--release` pins the download to the release that
+`ccr packs get` reported, and the API refuses a release it no longer
+publishes, so the archive matches the manifest you read. `--output` names the
+file and is required; the command says on stderr how many bytes it wrote and
+where. Selecting individual rules from a pack is planned through the API, and
+these commands will gain it from the API's contract.
 
 A mistyped or renamed name gets a "Did you mean ...?" suggestion, drawn only
-from what your key can list: `ccr fetch ec3` ends its failure with
-`Did you mean aws-ec2?`, and `ccr fetch --service "Gemini Agent Platform"`
-suggests `gcp-vertex`, which `--service` accepts as it is. `ccr packs get` and
-the `threatmodels` commands do the same, and also match a ThreatModel's title.
+from what your key can list: `ccr packs get aws-ec3` ends with
+`Did you mean aws-ec2?`, and `ccr packs get "Gemini Agent Platform"` suggests
+`gcp-vertex`. The `threatmodels` commands do the same, and also match a
+ThreatModel's title. Errors and suggestions go to stderr, in color only on a
+terminal; set `NO_COLOR` to turn the color off there too.
 
 Collections are read in full; paging is handled for you. When the API reports
 that an answer is incomplete (for example, compliance mappings for
@@ -257,44 +240,18 @@ api = Client()
 api.me()
 api.threatmodels.list(provider="aws")
 api.threatmodels.threats("aws-s3", feature_class="S3.FC1")
-result = api.ccr.fetch("aws-s3", control=["S3.C20"], out="rules")
-for tm_id, failure in result.failed.items():
-    print(tm_id, failure.stage, failure.code, failure.status, failure.request_id)
+api.ccr.packs.archive("aws-s3", kind="deploy")  # the zip, as bytes
 api.compliance.mappings.list(framework_id="nist-800-53-r5")
 ```
 
 `Client()` finds the key and endpoint exactly as the CLI does. To use a key
 kept somewhere else, pass it: `Client(api_key=..., api_url=...)`. A collection
-comes back as a list of every row. An incomplete answer raises
-`IncompleteAnswer`, which carries the rows that did arrive, unless you pass
-`allow_incomplete=True`. Every failure of a route call is a `RemoteError`
-subclass, such as `AuthenticationError` or `NotFound`, importable from
-`tmxcaliber`. `api.get(path)` and `api.paginate(path)` remain available for a
-raw path.
-
-`api.ccr.fetch` composes several routes, so it answers differently. It returns
-a `FetchResult` with `rows` (one per selected rule), `written` (the files it
-wrote) and `failed` (each pack it could not fetch, by ThreatModel id, as a
-`PackFailure`). A pack that is unknown, outside your subscription, republished
-twice during the read, whose archive the API still refuses after the client's
-retries, or whose archive cannot be verified or written is named in `failed`
-and does not raise, while the other packs still complete, so check `failed`
-before relying on the files. A `PackFailure` carries the `stage` that failed
-(`manifest`, `archive`, `verify` or `extract`), the `code`, the server's
-`message`, the HTTP `status`, the `request_id`, the `release_id` and a `hint`
-on what to do. The stage, code and message tell a damaged archive (stage
-`archive`, where the server says the archive does not match its published
-digest) apart from an outage, and the request id is what support will ask
-for. The command line makes that check for you: it prints each failed pack on
-stderr as soon as it fails and exits 1. To follow a fetch yourself, pass
-`on_pack` to `tmxcaliber.lib.remote.ccr.fetch`: it is called once per pack, in
-the order read, with a `PackOutcome` or the `PackFailure`. A credential or rate limit failure, or an outage
-that reaches the pack list or a manifest, still raises a `RemoteError`. Each
-option that repeats on the command line (`provider`, `service`, `control`,
-`mode`, `matcher` and `file`) takes one string or a list of strings. A `mode`
-other than `universal`, `allowlist` or `denylist`, or a `matcher` other than
-`cloud` or `terraform`, raises `ValueError` before any request, as the command
-line refuses it, so a misspelling never reads as an empty answer.
+comes back as a list of every row, and an archive as its bytes. An incomplete
+answer raises `IncompleteAnswer`, which carries the rows that did arrive,
+unless you pass `allow_incomplete=True`. Every failure is a `RemoteError`
+subclass, such as `AuthenticationError`, `NotFound` or `ReleaseSuperseded`,
+importable from `tmxcaliber`. `api.get(path)` and `api.paginate(path)` remain
+available for a raw path.
 
 ## Command Overview
 
