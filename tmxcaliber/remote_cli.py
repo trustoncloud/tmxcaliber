@@ -347,33 +347,6 @@ NAME_LISTS: Mapping[str, tuple[str, str | None]] = {
 }
 
 
-#: The row fields that list the other services a ThreatModel covers, spelled as
-#: the catalogue spells it and as the API's camelCase would.
-COVERED_FIELDS: tuple[str, ...] = ("other_covered_services", "otherCoveredServices")
-
-
-def _published_names(row: Mapping[str, Any], title_field: str) -> tuple[str, ...]:
-    """Collect the names a list row publishes for the thing it describes.
-
-    Args:
-        row: One row of a list.
-        title_field: The row field holding its title.
-
-    Returns:
-        The title as published and the forms of it people type, then the same
-        for each service the row says it also covers. Every name comes from the
-        row, so a suggestion made with them still names only what the list
-        showed.
-    """
-    covered = [
-        str(service)
-        for field in COVERED_FIELDS
-        if isinstance(row.get(field), list)
-        for service in row[field]
-    ]
-    return alternative_names(str(row.get(title_field) or ""), *covered)
-
-
 def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
     """Say which listed name a positional the API does not know probably meant.
 
@@ -390,14 +363,13 @@ def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
 
     Returns:
         The ``Did you mean ...?`` sentence, with each ThreatModel's title
-        after its id. A ThreatModel's own title, the short form in its
-        brackets, and the services it also covers all lead to it, as the list
-        publishes them, so its official name typed back is never a stranger to
-        the suggestion. Empty when the route names nothing the API lists, when
-        no name was typed, when nothing listed is close, when the name is
-        itself listed (as when only its release is unknown), or when the list
-        cannot be read, in which case the API's own error is the one worth
-        reporting.
+        after its id. A ThreatModel's own title and the short form in its
+        brackets both lead to it, as the list publishes them, so its official
+        name typed back is never a stranger to the suggestion. Empty when the
+        route names nothing the API lists, when no name was typed, when
+        nothing listed is close, when the name is itself listed (as when only
+        its release is unknown), or when the list cannot be read, in which
+        case the API's own error is the one worth reporting.
     """
     collection = route.path.partition("{")[0].rstrip("/")
     lookup = NAME_LISTS.get(collection) if route.positional else None
@@ -428,11 +400,14 @@ def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
         if title_field
         else None
     )
-    # A ThreatModel is also known by the title it was published under, and by
-    # the services it covers, so each row's own words lead back to it.
+    # A ThreatModel is also known by the title it was published under, so the
+    # row's own words lead back to it. Only fields the contract declares are
+    # read, because the API strips any other before answering.
     published = (
         {
-            str(row.get(name_field) or ""): _published_names(row, title_field)
+            str(row.get(name_field) or ""): alternative_names(
+                str(row.get(title_field) or "")
+            )
             for row in rows
         }
         if title_field

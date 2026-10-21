@@ -253,12 +253,11 @@ def alternative_names(*titles: str) -> tuple[str, ...]:
 
     A title carries its own short form in brackets, as in ``AWS Key Management
     Service (AWS KMS)``, and people type the long name, the short one, or the
-    long one without the bracket. The services a ThreatModel also covers are
-    named the same way.
+    long one without the bracket.
 
     Args:
-        *titles: A ThreatModel's title and the titles of the other services it
-            covers, as the list publishes them.
+        *titles: The titles one ThreatModel is published under, such as the
+            title its row in ``threatmodels list`` carries.
 
     Returns:
         For each title, the title as given, then the title with each bracketed

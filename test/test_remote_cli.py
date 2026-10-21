@@ -1193,19 +1193,17 @@ def test_a_threatmodel_typed_in_a_shape_no_reference_has_is_followed_by_what_it_
 
 
 #: ``threatmodels list`` as a key that reads ThreatModels from three providers
-#: sees it: titles with their short forms in brackets, a service another one
-#: also covers, and a title that is the same words under another provider.
+#: sees it: titles with their short forms in brackets, and a title that is the
+#: same words under another provider.
 OFFICIAL_THREATMODELS = [
-    {"tmId": "aws-iam", "title": "AWS Identity and Access Management (IAM)"}
-    | {"other_covered_services": ["IAM Access Analyzer"]},
+    {"tmId": "aws-iam", "title": "AWS Identity and Access Management (IAM)"},
     {"tmId": "aws-kms", "title": "AWS Key Management Service (AWS KMS)"},
     {"tmId": "azure-aks", "title": "Azure Kubernetes Service"},
     {"tmId": "azure-botservice", "title": "Azure Bot Service"},
     {"tmId": "azure-cognitiveservices", "title": "Azure AI services"},
     {"tmId": "azure-recoveryservices", "title": "Azure Recovery Services"},
     {"tmId": "gcp-cloudkms", "title": "Cloud Key Management Service (KMS)"},
-    {"tmId": "gcp-iam", "title": "Google Identity and Access Management (IAM)"}
-    | {"otherCoveredServices": ["Policy Troubleshooter"]},
+    {"tmId": "gcp-iam", "title": "Google Identity and Access Management (IAM)"},
 ]
 
 
@@ -1236,16 +1234,6 @@ OFFICIAL_THREATMODELS = [
             "AWS Identity and Access Management (IAM)",
             "Did you mean aws-iam (AWS Identity and Access Management (IAM))?",
             id="whole title with brackets",
-        ),
-        pytest.param(
-            "IAM Access Analyzer",
-            "Did you mean aws-iam (AWS Identity and Access Management (IAM))?",
-            id="service a ThreatModel also covers",
-        ),
-        pytest.param(
-            "Policy Troubleshooter",
-            "Did you mean gcp-iam (Google Identity and Access Management (IAM))?",
-            id="service covered, as the API spells the field",
         ),
     ],
 )
@@ -1287,6 +1275,30 @@ def test_a_threatmodels_key_spelled_like_its_title_leads_to_it_after_the_404(
         "\u2716 Not found. (request r-404)\n"
         "    \u2192 Did you mean aws-kms (AWS Key Management Service (AWS KMS))?\n"
     )
+
+
+@pytest.mark.parametrize("field", ["otherCoveredServices", "other_covered_services"])
+def test_a_list_field_the_contract_does_not_declare_leads_nowhere(field: str) -> None:
+    # A suggestion reads the fields `NAME_LISTS` names, which the contract
+    # declares. The API strips any other, so a name only such a field carries
+    # is one no real answer holds, and reading it would be code that never runs.
+    assert field not in row_properties("/v1/threatmodels")
+    route = route_for(("threatmodels", "get"))
+    assert route is not None
+    rows = [
+        {"tmId": "aws-iam", "title": "AWS Identity and Access Management (IAM)"}
+        | {field: ["Zebra Crossing"]},
+    ]
+    opener = FakeOpener([_listing(("threatmodels", "list"), rows)])
+    params = Namespace(api_route=route, tm_id="Zebra Crossing", release="")
+
+    # Refused as a name with nothing close to it, with no suggestion attached.
+    with pytest.raises(ValueError, match="is not a ThreatModel reference"):
+        run_api_command(params, client=TocClient(client_settings(), opener=opener))
+
+    # The list was read, so nothing in it led to aws-iam.
+    [listed] = opener.requests
+    assert urllib.parse.urlsplit(listed.full_url).path == "/v1/threatmodels"
 
 
 #: ``threatmodels list`` as a key that reads the whole catalogue sees it. A row
