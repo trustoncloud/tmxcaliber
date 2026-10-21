@@ -184,7 +184,7 @@ the CLI use the same names:
 ```sh
 tmxcaliber threatmodels list --provider aws
 tmxcaliber threatmodels get aws-s3
-tmxcaliber threatmodels threats aws-s3 --feature-class S3.FC1
+tmxcaliber threatmodels threats aws-s3 --feature-class-id S3.FC1
 tmxcaliber threatmodels dfd aws-s3
 tmxcaliber subscriptions list
 tmxcaliber compliance frameworks list
@@ -218,7 +218,7 @@ from tmxcaliber import Client
 api = Client()
 api.me()
 api.threatmodels.list(provider="aws")
-api.threatmodels.threats("aws-s3", feature_class="S3.FC1")
+api.threatmodels.threats("aws-s3", feature_class_id="S3.FC1")
 api.compliance.mappings.list(framework_id="nist-800-53-r5")
 ```
 

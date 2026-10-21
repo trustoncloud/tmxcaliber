@@ -366,20 +366,20 @@
                 "x-canonical-name": "event_name",
                 "x-defined-by": "canonical-schema"
               },
-              "featureClass": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "x-canonical-name": "feature_class",
-                "x-defined-by": "canonical-schema"
-              },
               "featureClassActionType": {
                 "type": [
                   "string",
                   "null"
                 ],
                 "x-canonical-name": "feature_class_action_type",
+                "x-defined-by": "canonical-schema"
+              },
+              "featureClassId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-canonical-name": "feature_class",
                 "x-defined-by": "canonical-schema"
               },
               "iamPermission": {
@@ -410,7 +410,7 @@
               "actionDescription",
               "api",
               "endpoint",
-              "featureClass",
+              "featureClassId",
               "featureClassActionType",
               "iamPermission",
               "eventName",
@@ -499,8 +499,8 @@
                 "x-canonical-name": "effort",
                 "x-defined-by": "canonical-schema"
               },
-              "featureClass": {
-                "description": "An array of feature classes. A threat's field of the same name is a single string.",
+              "featureClassIds": {
+                "description": "Feature class IDs. Threats and actions carry one feature class ID.",
                 "type": [
                   "array",
                   "null"
@@ -578,7 +578,7 @@
                 "x-canonical-name": "nist_csf",
                 "x-defined-by": "canonical-schema"
               },
-              "objective": {
+              "objectiveId": {
                 "type": [
                   "string",
                   "null"
@@ -621,8 +621,8 @@
             "required": [
               "controlId",
               "description",
-              "objective",
-              "featureClass",
+              "objectiveId",
+              "featureClassIds",
               "effort",
               "testing",
               "mitigate",
@@ -708,8 +708,8 @@
                 "x-canonical-name": "description",
                 "x-defined-by": "canonical-schema"
               },
-              "featureClass": {
-                "description": "A single feature class. A control's field of the same name is an array.",
+              "featureClassId": {
+                "description": "One feature class ID. Controls carry an array of feature class IDs.",
                 "type": [
                   "string",
                   "null"
@@ -760,7 +760,7 @@
               "threatId",
               "name",
               "description",
-              "featureClass",
+              "featureClassId",
               "hlgoal",
               "mitreAttack",
               "cvss",
@@ -2201,7 +2201,7 @@
           },
           {
             "in": "query",
-            "name": "featureClass",
+            "name": "featureClassId",
             "required": false,
             "schema": {
               "type": "string"
@@ -2360,7 +2360,7 @@
           },
           {
             "in": "query",
-            "name": "featureClass",
+            "name": "featureClassId",
             "required": false,
             "schema": {
               "type": "string"
@@ -2634,7 +2634,7 @@
           },
           {
             "in": "query",
-            "name": "featureClass",
+            "name": "featureClassId",
             "required": false,
             "schema": {
               "type": "string"
