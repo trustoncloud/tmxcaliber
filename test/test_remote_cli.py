@@ -166,7 +166,7 @@ def test_an_api_command_runs_and_returns_json() -> None:
     route = route_for(("threatmodels", "threats"))
     assert route is not None
     params = Namespace(
-        api_route=route, tm_id="aws-s3", feature_class="", release="", limit=0
+        api_route=route, tm_id="aws-s3", feature_class_id="", release="", limit=0
     )
 
     result, kind = run_api_command(params, client=StubClient())  # type: ignore[arg-type]
@@ -376,7 +376,7 @@ def test_feature_class_option_sends_the_camelcase_filter(
             "threatmodels",
             "threats",
             "aws-s3",
-            "--feature-class",
+            "--feature-class-id",
             "S3.FC1",
         ],
     )
@@ -386,7 +386,7 @@ def test_feature_class_option_sends_the_camelcase_filter(
     run_api_command(params, client=client)  # type: ignore[arg-type]
 
     assert client.calls == [
-        ("/v1/threatmodels/aws/s3/threats", {"featureClass": "S3.FC1", "release": ""})
+        ("/v1/threatmodels/aws/s3/threats", {"featureClassId": "S3.FC1", "release": ""})
     ]
 
 
