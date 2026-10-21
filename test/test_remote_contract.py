@@ -114,11 +114,11 @@ def test_the_framework_filter_names_the_frameworks_list() -> None:
     mappings = contract.route_for(("compliance", "mappings", "list"))
     assert mappings is not None
 
-    lookup = contract.values_route(mappings, "framework")
+    lookup = contract.values_route(mappings, "frameworkId")
 
     assert lookup is not None
     assert lookup.command == ("compliance", "frameworks", "list")
-    assert contract.values_field("framework") == "frameworkId"
+    assert contract.values_field("frameworkId") == "frameworkId"
 
 
 @pytest.mark.parametrize("route", contract.ROUTES, ids=lambda r: r.path)

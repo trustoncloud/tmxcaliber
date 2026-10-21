@@ -150,7 +150,7 @@ ROUTES: Final[tuple[Route, ...]] = (
         path="/v1/compliance/mappings",
         command=("compliance", "mappings", "list"),
         paged=True,
-        filters=("framework", "service"),
+        filters=("frameworkId", "tmId"),
         positional=None,
         summary="Framework controls mapped to ThreatModel objectives.",
     ),
@@ -163,11 +163,11 @@ ROUTES: Final[tuple[Route, ...]] = (
         summary="Wiz Custom Configuration Rule packs.",
     ),
     Route(
-        path="/v1/ccr/packs/{releaseKey}",
+        path="/v1/ccr/packs/{tmId}",
         command=("ccr", "packs", "get"),
         paged=False,
         filters=(),
-        positional="release_key",
+        positional="tm_id",
         summary="One CCR pack.",
     ),
 )
@@ -177,7 +177,7 @@ ROUTES: Final[tuple[Route, ...]] = (
 #:
 #: The archive is binary; this client only handles JSON responses. Keeping the
 #: omission explicit holds the route table against the complete API contract.
-UNBOUND: Final[frozenset[str]] = frozenset({"/v1/ccr/packs/{releaseKey}/archive"})
+UNBOUND: Final[frozenset[str]] = frozenset({"/v1/ccr/packs/{tmId}/archive"})
 
 
 @lru_cache(maxsize=1)
@@ -284,7 +284,7 @@ def values_route(route: Route, filter_name: str) -> Route | None:
     """Find the route that lists the values one of a route's filters accepts.
 
     Derived by the same kind of mechanical rule as the command names: the
-    paged sibling collection named for the filter's plural. ``framework`` on
+    paged sibling collection named for the filter's plural. ``frameworkId`` on
     ``/v1/compliance/mappings`` is answered by ``/v1/compliance/frameworks``,
     whose rows carry a ``frameworkId``.
 
@@ -296,7 +296,8 @@ def values_route(route: Route, filter_name: str) -> Route | None:
         The listing route, or None when the API publishes no such list.
     """
     parent = route.path.rsplit("/", 1)[0]
-    candidate = route_for_path(f"{parent}/{filter_name}s")
+    noun = filter_name.removesuffix("Id")
+    candidate = route_for_path(f"{parent}/{noun}s")
     if candidate is None or not candidate.paged or candidate is route:
         return None
     return candidate
@@ -309,9 +310,9 @@ def values_field(filter_name: str) -> str:
         filter_name: The query parameter, as the API spells it.
 
     Returns:
-        The field, in the API's camelCase (``framework`` -> ``frameworkId``).
+        The field, in the API's camelCase.
     """
-    return f"{filter_name}Id"
+    return filter_name if filter_name.endswith("Id") else f"{filter_name}Id"
 
 
 def python_name(api_name: str) -> str:

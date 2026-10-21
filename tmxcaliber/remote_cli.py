@@ -12,7 +12,7 @@ The shape mirrors the API:
     tmxcaliber threatmodels get aws-s3
     tmxcaliber threatmodels threats aws-s3 --feature-class S3.FC1
     tmxcaliber threatmodels dfd aws-s3@1611187200
-    tmxcaliber compliance mappings list --framework nist-800-53-r5
+    tmxcaliber compliance mappings list --framework-id nist-800-53-r5
 """
 
 from __future__ import annotations
@@ -65,7 +65,6 @@ POSITIONALS = {
         "the ThreatModel, as `threatmodels list` reports it, "
         "optionally pinned with @release (for example aws-s3@1611187200).",
     ),
-    "release_key": ("RELEASEKEY", "the pack's release key."),
 }
 
 
@@ -131,10 +130,12 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
     """
     if route.positional:
         metavar, help_text = POSITIONALS[route.positional]
+        if "{tmId}" in route.path:
+            help_text = "the ThreatModel id, as `ccr packs list` reports it."
         parser.add_argument(route.positional, metavar=metavar, help=help_text)
     required = required_parameters(route.path)
     # argparse files every option under "options" whether or not it is
-    # required, which made a mandatory --framework read as an optional filter.
+    # required, which made a mandatory --framework-id read as an optional filter.
     required_group = parser.add_argument_group("required arguments")
     for name in route.filters:
         target = required_group if name in required else parser
