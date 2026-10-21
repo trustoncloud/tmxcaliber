@@ -12,7 +12,7 @@ The shape mirrors the API:
     tmxcaliber threatmodels get aws-s3
     tmxcaliber threatmodels threats aws-s3 --feature-class S3.FC1
     tmxcaliber threatmodels dfd aws-s3@1611187200
-    tmxcaliber compliance mappings list --framework nist-800-53-r5
+    tmxcaliber compliance mappings list --framework-id nist-800-53-r5
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ from .lib.remote.config import (
 from .lib.remote.contract import (
     ROUTES,
     Route,
+    python_name,
     required_parameters,
     values_field,
     values_route,
@@ -64,7 +65,6 @@ POSITIONALS = {
         "the ThreatModel, as `threatmodels list` reports it, "
         "optionally pinned with @release (for example aws-s3@1611187200).",
     ),
-    "release_key": ("RELEASEKEY", "the pack's release key."),
 }
 
 
@@ -75,9 +75,9 @@ def _option(filter_name: str) -> str:
         filter_name: The parameter name as the API spells it.
 
     Returns:
-        The option, with underscores turned into dashes.
+        The option, with word boundaries rendered as dashes.
     """
-    return f"--{filter_name.replace('_', '-')}"
+    return f"--{python_name(filter_name).replace('_', '-')}"
 
 
 def _filter_help(route: Route, name: str, *, required: bool) -> str:
@@ -92,7 +92,7 @@ def _filter_help(route: Route, name: str, *, required: bool) -> str:
         The help text, naming the command that lists the accepted values when
         the API publishes one.
     """
-    words = name.replace("_", " ")
+    words = _option(name)[2:].replace("-", " ")
     text = f"the {words} to read." if required else f"filter by {words}."
     lookup = values_route(route, name)
     if lookup is not None:
@@ -130,16 +130,18 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
     """
     if route.positional:
         metavar, help_text = POSITIONALS[route.positional]
+        if "{tmId}" in route.path:
+            help_text = "the ThreatModel id, as `ccr packs list` reports it."
         parser.add_argument(route.positional, metavar=metavar, help=help_text)
     required = required_parameters(route.path)
     # argparse files every option under "options" whether or not it is
-    # required, which made a mandatory --framework read as an optional filter.
+    # required, which made a mandatory --framework-id read as an optional filter.
     required_group = parser.add_argument_group("required arguments")
     for name in route.filters:
         target = required_group if name in required else parser
         target.add_argument(
             _option(name),
-            dest=name,
+            dest=python_name(name),
             default="",
             required=name in required,
             help=_filter_help(route, name, required=name in required),
@@ -327,7 +329,10 @@ def run_api_command(
         client or connect(),
         route,
         str(getattr(params, route.positional, "") or "") if route.positional else "",
-        {name: str(getattr(params, name, "") or "") for name in route.filters},
+        {
+            name: str(getattr(params, python_name(name), "") or "")
+            for name in route.filters
+        },
         limit=int(getattr(params, "limit", 0) or 0),
     )
     if route.paged:
