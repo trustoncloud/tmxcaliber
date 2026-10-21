@@ -34,9 +34,8 @@ def test_every_documented_route_has_a_command() -> None:
 def test_the_unbound_list_has_no_stale_entries() -> None:
     """Every deliberate omission still names a route that exists.
 
-    The allowlist may only ever shrink. An entry that has since gained a
-    command, or names a route the API dropped, is an excuse that outlived
-    its reason.
+    An entry that has since gained a command, or names a route the API
+    dropped, is an excuse that outlived its reason.
     """
     documented = contract.documented_paths()
     bound = {r.path for r in contract.ROUTES}
@@ -138,9 +137,9 @@ def test_every_values_route_carries_the_field_it_is_cited_for(
         )
 
 
-def test_values_field_joins_snake_case_words() -> None:
-    """Multi-word filters take the API's camelCase spelling."""
-    assert contract.values_field("feature_class") == "featureClassId"
+def test_values_field_uses_the_api_spelling() -> None:
+    """Multi-word filters keep the API's camelCase spelling."""
+    assert contract.values_field("featureClass") == "featureClassId"
 
 
 def test_the_mappings_route_requires_its_completeness_field() -> None:

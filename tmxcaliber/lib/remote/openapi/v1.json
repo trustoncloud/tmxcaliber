@@ -86,6 +86,14 @@
       },
       "CcrPacksRow": {
         "properties": {
+          "releaseId": {
+            "description": "The release this pack currently publishes: the ccr_factory commit it was built from. Null while a stage's mirror has not moved to release folders.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
           "releaseKey": {
             "type": [
               "string",
@@ -111,7 +119,8 @@
         "required": [
           "releaseKey",
           "service",
-          "ruleCount"
+          "ruleCount",
+          "releaseId"
         ],
         "type": "object"
       },
@@ -199,6 +208,70 @@
         ],
         "type": "object"
       },
+      "Me": {
+        "additionalProperties": false,
+        "properties": {
+          "credential": {
+            "additionalProperties": false,
+            "description": "How the caller authenticated.",
+            "properties": {
+              "id": {
+                "description": "The key id, the public half of the credential.",
+                "type": "string"
+              },
+              "kind": {
+                "const": "api_key",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          "permissions": {
+            "description": "What this credential may call, sorted.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "subject": {
+            "additionalProperties": false,
+            "description": "Who the credential acts for.",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "description": "`service` for a key that acts for itself, whose id is the key id; `user` for a key that acts for a person, whose id is that person's.",
+                "enum": [
+                  "service",
+                  "user"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          "tenantId": {
+            "description": "The credential's tenant. Never the subject.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenantId",
+          "credential",
+          "subject",
+          "permissions"
+        ],
+        "type": "object"
+      },
       "Page": {
         "description": "The collection envelope. A route with a declared projection narrows `items` to its own row schema.",
         "properties": {
@@ -262,6 +335,14 @@
         "oneOf": [
           {
             "properties": {
+              "actionDescription": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-canonical-name": "action_description",
+                "x-defined-by": "canonical-schema"
+              },
               "actionId": {
                 "type": [
                   "string",
@@ -269,18 +350,12 @@
                 ],
                 "x-defined-by": "this-api"
               },
-              "action_description": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "x-defined-by": "canonical-schema"
-              },
               "api": {
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "api",
                 "x-defined-by": "canonical-schema"
               },
               "endpoint": {
@@ -288,39 +363,45 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "endpoint",
                 "x-defined-by": "canonical-schema"
               },
-              "event_name": {
+              "eventName": {
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "event_name",
                 "x-defined-by": "canonical-schema"
               },
-              "feature_class": {
+              "featureClass": {
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "feature_class",
                 "x-defined-by": "canonical-schema"
               },
-              "feature_class_action_type": {
+              "featureClassActionType": {
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "feature_class_action_type",
                 "x-defined-by": "canonical-schema"
               },
-              "iam_permission": {
+              "iamPermission": {
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "iam_permission",
                 "x-defined-by": "canonical-schema"
               },
               "retired": {
                 "const": false,
                 "type": "boolean",
+                "x-canonical-name": "retired",
                 "x-defined-by": "canonical-schema"
               },
               "stage": {
@@ -328,18 +409,19 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "stage",
                 "x-defined-by": "canonical-schema"
               }
             },
             "required": [
               "actionId",
-              "action_description",
+              "actionDescription",
               "api",
               "endpoint",
-              "feature_class",
-              "feature_class_action_type",
-              "iam_permission",
-              "event_name",
+              "featureClass",
+              "featureClassActionType",
+              "iamPermission",
+              "eventName",
               "stage",
               "retired"
             ],
@@ -358,6 +440,7 @@
               "retired": {
                 "const": true,
                 "type": "boolean",
+                "x-canonical-name": "retired",
                 "x-defined-by": "canonical-schema"
               }
             },
@@ -374,12 +457,13 @@
         "oneOf": [
           {
             "properties": {
-              "assured_by": {
+              "assuredBy": {
                 "description": "A comma-separated string, published as it is rather than split into an array.",
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "assured_by",
                 "x-defined-by": "canonical-schema"
               },
               "controlId": {
@@ -394,14 +478,16 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "coso",
                 "x-defined-by": "canonical-schema"
               },
-              "depends_on": {
+              "dependsOn": {
                 "description": "A comma-separated string, published as it is rather than split into an array.",
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "depends_on",
                 "x-defined-by": "canonical-schema"
               },
               "description": {
@@ -409,6 +495,7 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "description",
                 "x-defined-by": "canonical-schema"
               },
               "effort": {
@@ -417,29 +504,86 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "effort",
                 "x-defined-by": "canonical-schema"
               },
-              "feature_class": {
+              "featureClass": {
                 "description": "An array of feature classes. A threat's field of the same name is a single string.",
                 "type": [
                   "array",
                   "null"
                 ],
+                "x-canonical-name": "feature_class",
                 "x-defined-by": "canonical-schema"
               },
               "mitigate": {
-                "description": "Objects carrying threat, impact, priority, max_dependency, priority_overall and cvss, where cvss is a severity enum from Very High to Very Low.",
+                "description": "Objects carrying threat, impact, priority, maxDependency, priorityOverall and cvss, where cvss is a severity enum from Very High to Very Low.",
+                "items": {
+                  "properties": {
+                    "cvss": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "x-canonical-name": "cvss",
+                      "x-defined-by": "canonical-schema"
+                    },
+                    "impact": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "x-canonical-name": "impact",
+                      "x-defined-by": "canonical-schema"
+                    },
+                    "maxDependency": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "x-canonical-name": "max_dependency",
+                      "x-defined-by": "canonical-schema"
+                    },
+                    "priority": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "x-canonical-name": "priority",
+                      "x-defined-by": "canonical-schema"
+                    },
+                    "priorityOverall": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "x-canonical-name": "priority_overall",
+                      "x-defined-by": "canonical-schema"
+                    },
+                    "threat": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "x-canonical-name": "threat",
+                      "x-defined-by": "canonical-schema"
+                    }
+                  },
+                  "type": "object"
+                },
                 "type": [
                   "array",
                   "null"
                 ],
+                "x-canonical-name": "mitigate",
                 "x-defined-by": "canonical-schema"
               },
-              "nist_csf": {
+              "nistCsf": {
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "nist_csf",
                 "x-defined-by": "canonical-schema"
               },
               "objective": {
@@ -447,11 +591,13 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "objective",
                 "x-defined-by": "canonical-schema"
               },
               "retired": {
                 "const": false,
                 "type": "boolean",
+                "x-canonical-name": "retired",
                 "x-defined-by": "canonical-schema"
               },
               "testing": {
@@ -459,21 +605,24 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "testing",
                 "x-defined-by": "canonical-schema"
               },
-              "weighted_priority": {
+              "weightedPriority": {
                 "description": "One of Very High, High, Medium, Low.",
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "weighted_priority",
                 "x-defined-by": "canonical-schema"
               },
-              "weighted_priority_score": {
+              "weightedPriorityScore": {
                 "type": [
                   "number",
                   "null"
                 ],
+                "x-canonical-name": "weighted_priority_score",
                 "x-defined-by": "canonical-schema"
               }
             },
@@ -481,16 +630,16 @@
               "controlId",
               "description",
               "objective",
-              "feature_class",
+              "featureClass",
               "effort",
               "testing",
               "mitigate",
-              "assured_by",
-              "depends_on",
-              "nist_csf",
+              "assuredBy",
+              "dependsOn",
+              "nistCsf",
               "coso",
-              "weighted_priority",
-              "weighted_priority_score",
+              "weightedPriority",
+              "weightedPriorityScore",
               "retired"
             ],
             "type": "object"
@@ -508,6 +657,7 @@
               "retired": {
                 "const": true,
                 "type": "boolean",
+                "x-canonical-name": "retired",
                 "x-defined-by": "canonical-schema"
               }
             },
@@ -530,6 +680,7 @@
                   "object",
                   "null"
                 ],
+                "x-canonical-name": "access",
                 "x-defined-by": "canonical-schema"
               },
               "cvss": {
@@ -538,20 +689,23 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "cvss",
                 "x-defined-by": "canonical-schema"
               },
-              "cvss_score": {
+              "cvssScore": {
                 "type": [
                   "number",
                   "null"
                 ],
+                "x-canonical-name": "cvss_score",
                 "x-defined-by": "canonical-schema"
               },
-              "cvss_severity": {
+              "cvssSeverity": {
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "cvss_severity",
                 "x-defined-by": "canonical-schema"
               },
               "description": {
@@ -559,14 +713,16 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "description",
                 "x-defined-by": "canonical-schema"
               },
-              "feature_class": {
+              "featureClass": {
                 "description": "A single feature class. A control's field of the same name is an array.",
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "feature_class",
                 "x-defined-by": "canonical-schema"
               },
               "hlgoal": {
@@ -574,14 +730,16 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "hlgoal",
                 "x-defined-by": "canonical-schema"
               },
-              "mitre_attack": {
+              "mitreAttack": {
                 "description": "One MITRE ATT&CK tactic id, such as TA0040. Not a list of mappings.",
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "mitre_attack",
                 "x-defined-by": "canonical-schema"
               },
               "name": {
@@ -589,11 +747,13 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "name",
                 "x-defined-by": "canonical-schema"
               },
               "retired": {
                 "const": false,
                 "type": "boolean",
+                "x-canonical-name": "retired",
                 "x-defined-by": "canonical-schema"
               },
               "threatId": {
@@ -608,12 +768,12 @@
               "threatId",
               "name",
               "description",
-              "feature_class",
+              "featureClass",
               "hlgoal",
-              "mitre_attack",
+              "mitreAttack",
               "cvss",
-              "cvss_severity",
-              "cvss_score",
+              "cvssSeverity",
+              "cvssScore",
               "access",
               "retired"
             ],
@@ -625,6 +785,7 @@
               "retired": {
                 "const": true,
                 "type": "boolean",
+                "x-canonical-name": "retired",
                 "x-defined-by": "canonical-schema"
               },
               "threatId": {
@@ -693,14 +854,14 @@
     },
     "securitySchemes": {
       "apiKey": {
-        "description": "A tenant API key, in `Authorization: Bearer`. Never a query parameter: that writes the credential into access logs.",
+        "description": "An API key, in `Authorization: Bearer`. Never a query parameter: that writes the credential into access logs.",
         "scheme": "bearer",
         "type": "http"
       }
     }
   },
   "info": {
-    "description": "Read access to the ThreatModel data your tenant is entitled to. Every route is read-only, authenticated with a tenant API key, and additionally restricted to your tenant's allowed IP ranges.",
+    "description": "Read access to the ThreatModel data your credential is entitled to. Every route is read-only, authenticated with an API key, and additionally restricted to your tenant's allowed IP ranges.",
     "title": "TrustOnCloud API",
     "version": "1.0.0"
   },
@@ -796,7 +957,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -885,7 +1046,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1011,7 +1172,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1044,7 +1205,7 @@
             "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
           }
         },
-        "summary": "Wiz Custom Configuration Rule packs.",
+        "summary": "Wiz Cloud Configuration Rule packs.",
         "x-required-permission": "api.ccr.read"
       }
     },
@@ -1110,7 +1271,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1144,6 +1305,132 @@
           }
         },
         "summary": "One CCR pack.",
+        "x-required-permission": "api.ccr.read"
+      }
+    },
+    "/v1/ccr/packs/{releaseKey}/archive": {
+      "get": {
+        "operationId": "ccrPacksReleaseKeyArchive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "releaseKey",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "release",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "contentMediaType": "application/zip",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The archive, exactly as published."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A parameter this operation does not accept."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The release named in `release` is no longer the one this resource publishes: it was replaced, or withdrawn by a rollback. Read the resource again without `release` to learn the current one."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "One CCR pack's archive.",
         "x-required-permission": "api.ccr.read"
       }
     },
@@ -1237,7 +1524,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1388,7 +1675,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1434,7 +1721,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/Me"
                 }
               }
             },
@@ -1478,7 +1765,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1511,7 +1798,7 @@
             "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
           }
         },
-        "summary": "The calling credential: its tenant, and what it may do."
+        "summary": "The calling credential: its tenant, who it acts for, and what it may do."
       }
     },
     "/v1/subscriptions": {
@@ -1613,7 +1900,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1646,7 +1933,7 @@
             "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
           }
         },
-        "summary": "What this tenant is entitled to, and until when.",
+        "summary": "What this credential is entitled to, and until when.",
         "x-required-permission": "api.subscriptions.read"
       }
     },
@@ -1748,7 +2035,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1781,7 +2068,7 @@
             "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
           }
         },
-        "summary": "ThreatModels this tenant is entitled to.",
+        "summary": "ThreatModels this credential is entitled to.",
         "x-required-permission": "api.threatmodels.read"
       }
     },
@@ -1863,7 +2150,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -1922,7 +2209,7 @@
           },
           {
             "in": "query",
-            "name": "feature_class",
+            "name": "featureClass",
             "required": false,
             "schema": {
               "type": "string"
@@ -2022,7 +2309,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -2081,7 +2368,7 @@
           },
           {
             "in": "query",
-            "name": "feature_class",
+            "name": "featureClass",
             "required": false,
             "schema": {
               "type": "string"
@@ -2181,7 +2468,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -2296,7 +2583,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {
@@ -2355,7 +2642,7 @@
           },
           {
             "in": "query",
-            "name": "feature_class",
+            "name": "featureClass",
             "required": false,
             "schema": {
               "type": "string"
@@ -2455,7 +2742,7 @@
                 }
               }
             },
-            "description": "No such resource, or the API is not open to this tenant. The two are deliberately indistinguishable: a surface that has not launched must not be discoverable by probing."
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
           },
           "429": {
             "content": {

@@ -25,7 +25,7 @@ from typing import Any
 
 from .client import TocClient
 from .config import DEFAULT_TIMEOUT, load_settings
-from .contract import ROUTES, Route, required_parameters
+from .contract import ROUTES, Route, python_name, required_parameters
 from .errors import IncompleteAnswer
 from .operations import call_route, incompleteness_fields
 
@@ -45,9 +45,9 @@ def _signature(route: Route) -> inspect.Signature:
     keyword = inspect.Parameter.KEYWORD_ONLY
     required = required_parameters(route.path)
     parameters = [
-        inspect.Parameter(name, keyword, default=inspect.Parameter.empty)
+        inspect.Parameter(python_name(name), keyword, default=inspect.Parameter.empty)
         if name in required
-        else inspect.Parameter(name, keyword, default=None)
+        else inspect.Parameter(python_name(name), keyword, default=None)
         for name in route.filters
     ]
     if route.positional:
@@ -114,7 +114,9 @@ class Operation:
             route,
             str(values[route.positional]) if route.positional else "",
             {
-                name: "" if values[name] is None else str(values[name])
+                name: ""
+                if values[python_name(name)] is None
+                else str(values[python_name(name)])
                 for name in route.filters
             },
             limit=int(values.get("limit", 0)),

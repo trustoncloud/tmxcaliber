@@ -41,6 +41,7 @@ from .lib.remote.config import (
 from .lib.remote.contract import (
     ROUTES,
     Route,
+    python_name,
     required_parameters,
     values_field,
     values_route,
@@ -75,9 +76,9 @@ def _option(filter_name: str) -> str:
         filter_name: The parameter name as the API spells it.
 
     Returns:
-        The option, with underscores turned into dashes.
+        The option, with word boundaries rendered as dashes.
     """
-    return f"--{filter_name.replace('_', '-')}"
+    return f"--{python_name(filter_name).replace('_', '-')}"
 
 
 def _filter_help(route: Route, name: str, *, required: bool) -> str:
@@ -92,7 +93,7 @@ def _filter_help(route: Route, name: str, *, required: bool) -> str:
         The help text, naming the command that lists the accepted values when
         the API publishes one.
     """
-    words = name.replace("_", " ")
+    words = _option(name)[2:].replace("-", " ")
     text = f"the {words} to read." if required else f"filter by {words}."
     lookup = values_route(route, name)
     if lookup is not None:
@@ -139,7 +140,7 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
         target = required_group if name in required else parser
         target.add_argument(
             _option(name),
-            dest=name,
+            dest=python_name(name),
             default="",
             required=name in required,
             help=_filter_help(route, name, required=name in required),
@@ -327,7 +328,10 @@ def run_api_command(
         client or connect(),
         route,
         str(getattr(params, route.positional, "") or "") if route.positional else "",
-        {name: str(getattr(params, name, "") or "") for name in route.filters},
+        {
+            name: str(getattr(params, python_name(name), "") or "")
+            for name in route.filters
+        },
         limit=int(getattr(params, "limit", 0) or 0),
     )
     if route.paged:
