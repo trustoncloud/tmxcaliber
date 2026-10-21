@@ -139,7 +139,7 @@ def test_every_values_route_carries_the_field_it_is_cited_for(
 
 def test_values_field_uses_the_api_spelling() -> None:
     """Multi-word filters keep the API's camelCase spelling."""
-    assert contract.values_field("featureClass") == "featureClassId"
+    assert contract.values_field("featureClassId") == "featureClassId"
 
 
 def test_the_mappings_route_requires_its_completeness_field() -> None:

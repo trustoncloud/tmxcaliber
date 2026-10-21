@@ -5,7 +5,7 @@ The library's public surface is the API client and the errors it raises:
     from tmxcaliber import Client
 
     api = Client()
-    api.threatmodels.threats("aws-s3", feature_class="S3.FC1")
+    api.threatmodels.threats("aws-s3", feature_class_id="S3.FC1")
 
 Everything else in the package backs the ``tmxcaliber`` command and may move
 between releases.
