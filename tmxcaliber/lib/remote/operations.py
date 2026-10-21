@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 from .client import TocClient
-from .contract import Route, required_page_fields
+from .contract import Route, required_page_fields, response_media_type
 from .ref import parse_ref
 
 #: Page fields that, when not empty, mean the rows are incomplete.
@@ -124,7 +124,11 @@ def call_route(
     """
     path, query = request_for(route, positional, filters)
     if route.binary:
-        return Answer(result=client.get_bytes(path, query))
+        # Held to the type the contract publishes, so the transport can tell
+        # the archive asked for from a body that only carries its label.
+        media_type = response_media_type(route.path)
+        assert media_type is not None, f"{route.path} publishes no 200 content"
+        return Answer(result=client.get_bytes(path, query, media_type=media_type))
     if not route.paged:
         return Answer(result=client.get(path, query))
 

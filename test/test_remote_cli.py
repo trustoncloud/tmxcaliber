@@ -18,6 +18,7 @@ from tmxcaliber.lib.remote.client import TocClient
 from tmxcaliber.lib.remote.config import Settings
 from tmxcaliber.lib.remote.contract import (
     ROUTES,
+    response_media_type,
     route_for,
     route_for_path,
     row_properties,
@@ -775,17 +776,27 @@ class BytesStubClient(StubClient):
 
     archive = b"PK\x03\x04\xff"
 
-    def get_bytes(self, path: str, params: Mapping[str, str] | None = None) -> bytes:
+    def __init__(self) -> None:
+        super().__init__()
+        # The media type each binary call was told the contract publishes.
+        self.media_types: list[str] = []
+
+    def get_bytes(
+        self, path: str, params: Mapping[str, str] | None = None, *, media_type: str
+    ) -> bytes:
         """Answer a binary call.
 
         Args:
             path: The path.
             params: The query.
+            media_type: The type the answer is held to. Required here, so a
+                caller that leaves it to the client's default fails.
 
         Returns:
             The archive.
         """
         self.calls.append((path, dict(params or {})))
+        self.media_types.append(media_type)
         return self.archive
 
 
@@ -816,6 +827,10 @@ def test_the_archive_command_writes_the_bytes(tmp_path: pathlib.Path) -> None:
     assert client.calls == [
         ("/v1/ccr/packs/aws-s3/archive", {"kind": "deploy", "release": ""})
     ]
+    # The answer is held to the type the contract publishes for the route.
+    assert (
+        client.media_types == [response_media_type(route.path)] == ["application/zip"]
+    )
 
 
 def test_the_archive_command_says_how_much_it_wrote_and_where(

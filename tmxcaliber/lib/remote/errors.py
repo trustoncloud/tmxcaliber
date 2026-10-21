@@ -163,7 +163,9 @@ class ContractViolation(RemoteError):
     """The server answered in a shape the contract does not allow.
 
     Local rather than served. It covers a body that is not JSON, a page that
-    is missing its envelope, and a cursor walk that does not terminate.
+    is missing its envelope, a cursor walk that does not terminate, and a
+    binary answer that is empty, declares no type or another type than the
+    contract publishes, or, for a zip, does not begin as one.
     """
 
 

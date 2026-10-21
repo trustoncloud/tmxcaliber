@@ -32,6 +32,7 @@ from tmxcaliber.lib.remote.errors import (
 from tmxcaliber.lib.remote.operations import incompleteness_fields, request_for
 
 from .test_remote_client import (
+    ZIP,
     FakeBytesResponse,
     FakeOpener,
     FakeResponse,
@@ -210,8 +211,12 @@ def test_every_route_sits_at_its_cli_command_path(route: Route) -> None:
 @pytest.mark.parametrize("route", ROUTES, ids=lambda route: " ".join(route.command))
 def test_every_route_calls_its_own_path_with_its_filters(route: Route) -> None:
     # Arrange
-    answer = page(route, []) if route.paged else {}
-    opener = FakeOpener([FakeResponse(answer)])
+    answer = (
+        FakeBytesResponse(ZIP)
+        if route.binary
+        else FakeResponse(page(route, []) if route.paged else {})
+    )
+    opener = FakeOpener([answer])
     client = Client(opener=opener)
     args, kwargs = call_arguments(route)
     wire = {name: kwargs[python_name(name)] for name in route.filters}
@@ -469,5 +474,5 @@ def test_a_binary_route_refuses_the_json_a_sibling_route_would_answer() -> None:
     served = FakeResponse({"rules": []}, {"Content-Type": "application/json"})
     client = Client(opener=FakeOpener([served]))
 
-    with pytest.raises(ContractViolation, match="not an archive"):
+    with pytest.raises(ContractViolation, match="contract publishes application/zip"):
         client.ccr.packs.archive("aws-s3")

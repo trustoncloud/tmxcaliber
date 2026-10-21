@@ -146,6 +146,11 @@ def _media_type(headers: Mapping[str, str]) -> str | None:
     return declared.split(";", 1)[0].strip().lower() or None
 
 
+#: How a zip archive begins: with a local file header, or, when it holds no
+#: entries, with its end of central directory record.
+ZIP_SIGNATURES: Final[tuple[bytes, ...]] = (b"PK\x03\x04", b"PK\x05\x06")
+
+
 #: What a gzip body that cannot be undone raises: a bad header is
 #: ``gzip.BadGzipFile``, an ``OSError``; a truncated one is ``EOFError``; corrupt
 #: data is ``zlib.error``.
@@ -454,46 +459,80 @@ class TocClient:
             )
         return parsed
 
-    def _request_bytes(self, path: str, params: Mapping[str, str]) -> bytes:
-        """Perform one GET and return the body once it proves to be a zip.
+    def _request_bytes(
+        self, path: str, params: Mapping[str, str], media_type: str
+    ) -> bytes:
+        """Perform one GET and return the body once it proves to be what it claims.
+
+        The JSON path refuses a wrong 200 because it fails to parse. Nothing
+        parses bytes, so a proxy's notice page, a sibling route's JSON or an
+        empty answer would otherwise be written out as the file asked for, and
+        found wrong only when someone opened it. Every check here fails as a
+        ``bad_body`` contract violation, which is not retried, because each of
+        these bodies arrived whole.
 
         Args:
             path: The path, beginning with a slash.
             params: Query parameters, empty values omitted.
+            media_type: The type the contract publishes for the route's 200.
 
         Returns:
             The body, with any gzip encoding undone.
 
         Raises:
-            RemoteError: On any failure, including a body the API declared as
-                something other than a zip.
+            RemoteError: On any failure, including an answer that declares no
+                type or another type, an empty body, and, for a zip, a body
+                that does not begin as a zip archive does.
         """
-        body, headers = self._send(path, params, "application/zip")
+        body, headers = self._send(path, params, media_type)
+        request_id = _header(headers, "X-Request-Id")
         served = _media_type(headers)
-        # A body is refused only when the header names another type. The JSON
-        # path rejects a wrong 200 body because it fails to parse, but a
-        # proxy's HTML notice or a sibling JSON route's answer would pass for
-        # an archive here, and nothing downstream of a raw fetch checks it. A
-        # missing header is let through, as a server may omit it.
-        if served is not None and served != "application/zip":
+        if served is None:
+            # Nothing then vouches for the body, and whatever stripped the
+            # header could as easily have replaced what came with it.
             raise ContractViolation(
-                f"{path} answered with {served}, not an archive.",
+                f"{path} answered without a Content-Type where the contract "
+                f"publishes {media_type}.",
                 code="bad_body",
-                request_id=_header(headers, "X-Request-Id"),
+                request_id=request_id,
+            )
+        if served != media_type:
+            raise ContractViolation(
+                f"{path} answered with {served} where the contract publishes "
+                f"{media_type}.",
+                code="bad_body",
+                request_id=request_id,
             )
         try:
             # Every request asks for gzip, so an archive can arrive compressed
             # on top of being a zip. Undone here, as the JSON path does, or the
-            # bytes would fail the manifest's digest check downstream. A body
-            # that will not decompress arrived whole: a bad answer, not a lost
-            # connection, so it is not retried.
-            return _decoded(body, headers)
+            # file written would be the gzip around the zip and match neither
+            # the zip's format nor the digest its manifest publishes.
+            decoded = _decoded(body, headers)
         except UNDECODABLE:
             raise ContractViolation(
                 f"{path} answered with a compressed archive that will not decompress.",
                 code="bad_body",
-                request_id=_header(headers, "X-Request-Id"),
+                request_id=request_id,
             ) from None
+        # Checked once decoded, because a gzip of nothing is a few bytes long.
+        if not decoded:
+            raise ContractViolation(
+                f"{path} answered with an empty body where the contract publishes "
+                f"{media_type}.",
+                code="bad_body",
+                request_id=request_id,
+            )
+        if media_type == "application/zip" and not decoded.startswith(ZIP_SIGNATURES):
+            # A proxy can label its own page with the type the client asked
+            # for, so the header alone does not make a body an archive.
+            raise ContractViolation(
+                f"{path} answered with a body that does not begin as a zip "
+                "archive does.",
+                code="bad_body",
+                request_id=request_id,
+            )
+        return decoded
 
     def _retrying(self, call: Callable[[], _T]) -> _T:
         """Run one request, retrying the failures worth retrying.
@@ -541,25 +580,38 @@ class TocClient:
         """
         return self._retrying(lambda: self._request(path, params or {}))
 
-    def get_bytes(self, path: str, params: Mapping[str, str] | None = None) -> bytes:
+    def get_bytes(
+        self,
+        path: str,
+        params: Mapping[str, str] | None = None,
+        *,
+        media_type: str = "application/zip",
+    ) -> bytes:
         """Fetch one resource as the bytes the API served, retrying as `get` does.
 
-        For a route whose 200 is not JSON, such as a CCR pack archive. The body
-        is returned untouched: decoding it would corrupt a zip.
+        For a route whose 200 is not JSON, such as a CCR pack archive. Only a
+        gzip encoding is undone; the body is never decoded as text, which would
+        corrupt a zip.
 
         Args:
             path: The path, beginning with a slash.
             params: Query parameters.
+            media_type: The type the contract publishes for the route's 200,
+                which is asked for and held to. `call_route` reads it from the
+                contract; the default is the CCR pack archive's.
 
         Returns:
             The body.
 
         Raises:
             RemoteError: On a failure that is not worth retrying, when the
-                attempts are exhausted, or when a 200 declares a media type
-                other than a zip.
+                attempts are exhausted, or when a 200 declares no media type
+                or another one, is empty, or, for a zip, does not begin as a
+                zip archive does.
         """
-        return self._retrying(lambda: self._request_bytes(path, params or {}))
+        return self._retrying(
+            lambda: self._request_bytes(path, params or {}, media_type)
+        )
 
     def paginate(
         self,
