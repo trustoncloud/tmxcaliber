@@ -62,23 +62,23 @@ PARTS: dict[str, list[dict[str, Any]]] = {
     "threats": [
         {
             "threatId": "S3.T1",
-            "feature_class": "S3.FC1",
+            "featureClass": "S3.FC1",
             "name": "Bucket takeover",
             "description": "An attacker recreates a deleted bucket name.",
             "access": {"OPTIONAL": "s3:DeleteBucket"},
             "hlgoal": "DataTheft",
-            "mitre_attack": "TA0009,T1586",
+            "mitreAttack": "TA0009,T1586",
             "cvss": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
             "retired": False,
-            "cvss_severity": "Medium",
-            "cvss_score": 5.2,
+            "cvssSeverity": "Medium",
+            "cvssScore": 5.2,
         }
     ],
     "controls": [
         {
             "controlId": "S3.C1",
             "coso": "Preventative",
-            "nist_csf": "Protect",
+            "nistCsf": "Protect",
             "objective": "S3.CO1",
             "retired": False,
             "description": "Block all unencrypted requests.",
@@ -92,26 +92,26 @@ PARTS: dict[str, list[dict[str, Any]]] = {
                     # The published corpus carries null here, which the
                     # canonical schema types as a number. Kept numeric so this
                     # fixture tests the assembler rather than that mismatch.
-                    "max_dependency": 4.0,
-                    "priority_overall": 4.0,
+                    "maxDependency": 4.0,
+                    "priorityOverall": 4.0,
                     "cvss": "Medium",
                 }
             ],
-            "feature_class": ["S3.FC1"],
-            "weighted_priority": "High",
-            "weighted_priority_score": 3,
+            "featureClass": ["S3.FC1"],
+            "weightedPriority": "High",
+            "weightedPriorityScore": 3,
         }
     ],
     "actions": [
         {
             "actionId": "S3.A1",
-            "action_description": "Aborts a multipart upload.",
+            "actionDescription": "Aborts a multipart upload.",
             "api": "AbortMultipartUpload",
             "endpoint": "s3",
-            "feature_class": "S3.FC1",
-            "feature_class_action_type": "other",
-            "iam_permission": "s3:AbortMultipartUpload",
-            "event_name": "Data-AWS::S3::Object-AbortMultipartUpload",
+            "featureClass": "S3.FC1",
+            "featureClassActionType": "other",
+            "iamPermission": "s3:AbortMultipartUpload",
+            "eventName": "Data-AWS::S3::Object-AbortMultipartUpload",
             "stage": "ga",
             "retired": False,
         }
@@ -228,6 +228,10 @@ def test_the_assembled_document_satisfies_the_canonical_schema() -> None:
         "threats",
     ]
     validate_threatmodel_schema(document)
+
+    assert document["threats"]["S3.T1"]["feature_class"] == "S3.FC1"
+    assert document["threats"]["S3.T1"]["access"] == {"OPTIONAL": "s3:DeleteBucket"}
+    assert document["controls"]["S3.C1"]["mitigate"][0]["max_dependency"] == 4.0
 
 
 def test_the_sections_are_keyed_by_entity_id() -> None:

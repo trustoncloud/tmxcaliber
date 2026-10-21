@@ -34,9 +34,8 @@ def test_every_documented_route_has_a_command() -> None:
 def test_the_unbound_list_has_no_stale_entries() -> None:
     """Every deliberate omission still names a route that exists.
 
-    The allowlist may only ever shrink. An entry that has since gained a
-    command, or names a route the API dropped, is an excuse that outlived
-    its reason.
+    An entry that has since gained a command, or names a route the API
+    dropped, is an excuse that outlived its reason.
     """
     documented = contract.documented_paths()
     bound = {r.path for r in contract.ROUTES}
@@ -115,11 +114,11 @@ def test_the_framework_filter_names_the_frameworks_list() -> None:
     mappings = contract.route_for(("compliance", "mappings", "list"))
     assert mappings is not None
 
-    lookup = contract.values_route(mappings, "framework")
+    lookup = contract.values_route(mappings, "frameworkId")
 
     assert lookup is not None
     assert lookup.command == ("compliance", "frameworks", "list")
-    assert contract.values_field("framework") == "frameworkId"
+    assert contract.values_field("frameworkId") == "frameworkId"
 
 
 @pytest.mark.parametrize("route", contract.ROUTES, ids=lambda r: r.path)
@@ -138,9 +137,9 @@ def test_every_values_route_carries_the_field_it_is_cited_for(
         )
 
 
-def test_values_field_joins_snake_case_words() -> None:
-    """Multi-word filters take the API's camelCase spelling."""
-    assert contract.values_field("feature_class") == "featureClassId"
+def test_values_field_uses_the_api_spelling() -> None:
+    """Multi-word filters keep the API's camelCase spelling."""
+    assert contract.values_field("featureClass") == "featureClassId"
 
 
 def test_the_mappings_route_requires_its_completeness_field() -> None:
@@ -179,12 +178,33 @@ def test_the_pack_archive_is_a_binary_command() -> None:
 
     assert route is not None
     assert route.binary is True
+    assert route.path == "/v1/ccr/packs/{tmId}/archive"
     assert route.filters == ("kind", "release")
-    assert route.positional == "release_key"
+    assert route.positional == "tm_id"
+
+
+def test_the_pack_archive_is_bound_once_and_left_out_of_unbound() -> None:
+    """The binary transport binds the archive, so no omission excuses it."""
+    archives = [r for r in contract.ROUTES if r.path.endswith("/archive")]
+
+    assert [r.path for r in archives] == ["/v1/ccr/packs/{tmId}/archive"]
+    assert not contract.UNBOUND
 
 
 def test_a_pack_row_names_its_release() -> None:
     assert "releaseId" in _row_properties("/v1/ccr/packs")
+
+
+def test_a_pack_row_names_its_pack_by_tm_id_alone() -> None:
+    """`ccr fetch` reads the provider and service from the id.
+
+    The row once carried a ``service`` beside a ``releaseKey``. Both are gone,
+    so narrowing by provider or service has only ``tmId`` to go on.
+    """
+    fields = _row_properties("/v1/ccr/packs")
+
+    assert "tmId" in fields
+    assert not fields & {"releaseKey", "service"}
 
 
 def test_the_pack_list_summary_names_the_product_as_the_contract_does() -> None:

@@ -188,7 +188,7 @@ tmxcaliber threatmodels threats aws-s3 --feature-class S3.FC1
 tmxcaliber threatmodels dfd aws-s3
 tmxcaliber subscriptions list
 tmxcaliber compliance frameworks list
-tmxcaliber compliance mappings list --framework nist-800-53-r5
+tmxcaliber compliance mappings list --framework-id nist-800-53-r5
 tmxcaliber ccr packs list
 tmxcaliber ccr packs archive aws-s3 --output aws-s3-source.zip
 tmxcaliber ccr packs archive aws-s3 --kind deploy --output aws-s3.zip
@@ -203,7 +203,7 @@ other, and each row lists only the modes and matchers you asked for. Without
 `--out` it only previews: it prints the selected rules as JSON, writes
 nothing, and says so on stderr. With `--out` it downloads only the packs that
 matched, checks each archive against its manifest's digest, and writes the
-selected files to `<out>/<release key>/<rule id>/`. Every pack's files come
+selected files to `<out>/<ThreatModel id>/<rule id>/`. Every pack's files come
 from the one release its manifest names.
 
 On a terminal, `--out` shows each pack as it finishes, the files it wrote as a
@@ -258,9 +258,9 @@ api.me()
 api.threatmodels.list(provider="aws")
 api.threatmodels.threats("aws-s3", feature_class="S3.FC1")
 result = api.ccr.fetch("aws-s3", control=["S3.C20"], out="rules")
-for key, failure in result.failed.items():
-    print(key, failure.stage, failure.code, failure.status, failure.request_id)
-api.compliance.mappings.list(framework="nist-800-53-r5")
+for tm_id, failure in result.failed.items():
+    print(tm_id, failure.stage, failure.code, failure.status, failure.request_id)
+api.compliance.mappings.list(framework_id="nist-800-53-r5")
 ```
 
 `Client()` finds the key and endpoint exactly as the CLI does. To use a key
@@ -274,7 +274,7 @@ raw path.
 
 `api.ccr.fetch` composes several routes, so it answers differently. It returns
 a `FetchResult` with `rows` (one per selected rule), `written` (the files it
-wrote) and `failed` (each pack it could not fetch, by release key, as a
+wrote) and `failed` (each pack it could not fetch, by ThreatModel id, as a
 `PackFailure`). A pack that is unknown, outside your subscription, republished
 twice during the read, whose archive the API still refuses after the client's
 retries, or whose archive cannot be verified or written is named in `failed`

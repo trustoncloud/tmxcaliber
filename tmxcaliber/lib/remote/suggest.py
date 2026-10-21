@@ -20,8 +20,8 @@ from difflib import SequenceMatcher
 from types import MappingProxyType
 from typing import Final
 
-#: The provider each word that names a vendor stands for, as release keys spell
-#: the provider. Such a word names a vendor and no service, so a leading one
+#: The provider each word that names a vendor stands for, as ThreatModel ids
+#: spell the provider. Such a word names a vendor and no service, so a leading one
 #: is dropped when it stands as its own word and ``Amazon EC2``, ``AWS EC2`` and
 #: ``ec2`` read alike. `normalize` leaves ``gcp`` inside ``gcpvertex`` alone,
 #: and `suggest` still reads it as the provider (`_typed_provider`). It also
@@ -72,10 +72,10 @@ _KEY_CUTOFF: Final[float] = 0.6
 #: at least what one letter hit wrong does, which clears `_KEY_CUTOFF`.
 _SHORT: Final[int] = 4
 
-#: The providers a pack or a ThreatModel belongs to, as release keys spell them.
+#: The providers a pack or a ThreatModel belongs to, as ThreatModel ids spell them.
 PROVIDERS: Final[tuple[str, ...]] = ("aws", "azure", "gcp")
 
-#: Other names for each pack, by its release key, as people write them.
+#: Other names for each pack, by its ThreatModel id, as people write them.
 #:
 #: Collected from three places: the display names in ccr_factory's
 #: ``services.json``, the ``service_name`` and ``other_covered_services`` of
@@ -232,7 +232,7 @@ def _by_name(names: Mapping[str, Iterable[str]]) -> Mapping[str, tuple[str, ...]
     """Turn a table of names by key into a table of keys by normalized name.
 
     Args:
-        names: Each release key, and the names people use for it, the best
+        names: Each ThreatModel id, and the names people use for it, the best
             known first.
 
     Returns:
@@ -262,7 +262,7 @@ def _by_name(names: Mapping[str, Iterable[str]]) -> Mapping[str, tuple[str, ...]
     return MappingProxyType(table)
 
 
-#: Each normalized alternative name, and the release keys it can mean.
+#: Each normalized alternative name, and the ThreatModel ids it can mean.
 ALIASES: Final[Mapping[str, tuple[str, ...]]] = _by_name(_NAMES)
 
 
@@ -295,10 +295,10 @@ def alternative_names(*titles: str) -> tuple[str, ...]:
 
 
 def _service(key: str) -> str:
-    """Take the service from a release key.
+    """Take the service from a ThreatModel id.
 
     Args:
-        key: A release key, such as ``aws-ec2``, or a provider.
+        key: A ThreatModel id, such as ``aws-ec2``, or a provider.
 
     Returns:
         What follows the first hyphen, as the API splits a key, or the whole
@@ -409,10 +409,10 @@ def _typed_provider(
 
 
 def _provider(key: str) -> str:
-    """Take the provider from a release key.
+    """Take the provider from a ThreatModel id.
 
     Args:
-        key: A release key, such as ``aws-ec2``.
+        key: A ThreatModel id, such as ``aws-ec2``.
 
     Returns:
         What precedes the first hyphen, as the API splits a key.

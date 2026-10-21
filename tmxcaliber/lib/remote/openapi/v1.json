@@ -94,13 +94,6 @@
             ],
             "x-defined-by": "this-api"
           },
-          "releaseKey": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "x-defined-by": "this-api"
-          },
           "ruleCount": {
             "type": [
               "integer",
@@ -108,7 +101,7 @@
             ],
             "x-defined-by": "this-api"
           },
-          "service": {
+          "tmId": {
             "type": [
               "string",
               "null"
@@ -117,8 +110,7 @@
           }
         },
         "required": [
-          "releaseKey",
-          "service",
+          "tmId",
           "ruleCount",
           "releaseId"
         ],
@@ -127,7 +119,7 @@
       "ComplianceFrameworksRow": {
         "properties": {
           "frameworkId": {
-            "description": "The value `/v1/compliance/mappings` takes as `framework`.",
+            "description": "The value `/v1/compliance/mappings` takes as `frameworkId`.",
             "type": [
               "string",
               "null"
@@ -315,7 +307,7 @@
             ],
             "x-defined-by": "this-api"
           },
-          "tmName": {
+          "tmId": {
             "type": [
               "string",
               "null"
@@ -324,7 +316,7 @@
           }
         },
         "required": [
-          "tmName",
+          "tmId",
           "startDate",
           "endDate"
         ],
@@ -335,6 +327,14 @@
         "oneOf": [
           {
             "properties": {
+              "actionDescription": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-canonical-name": "action_description",
+                "x-defined-by": "canonical-schema"
+              },
               "actionId": {
                 "type": [
                   "string",
@@ -342,18 +342,12 @@
                 ],
                 "x-defined-by": "this-api"
               },
-              "action_description": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "x-defined-by": "canonical-schema"
-              },
               "api": {
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "api",
                 "x-defined-by": "canonical-schema"
               },
               "endpoint": {
@@ -361,39 +355,45 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "endpoint",
                 "x-defined-by": "canonical-schema"
               },
-              "event_name": {
+              "eventName": {
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "event_name",
                 "x-defined-by": "canonical-schema"
               },
-              "feature_class": {
+              "featureClass": {
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "feature_class",
                 "x-defined-by": "canonical-schema"
               },
-              "feature_class_action_type": {
+              "featureClassActionType": {
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "feature_class_action_type",
                 "x-defined-by": "canonical-schema"
               },
-              "iam_permission": {
+              "iamPermission": {
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "iam_permission",
                 "x-defined-by": "canonical-schema"
               },
               "retired": {
                 "const": false,
                 "type": "boolean",
+                "x-canonical-name": "retired",
                 "x-defined-by": "canonical-schema"
               },
               "stage": {
@@ -401,18 +401,19 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "stage",
                 "x-defined-by": "canonical-schema"
               }
             },
             "required": [
               "actionId",
-              "action_description",
+              "actionDescription",
               "api",
               "endpoint",
-              "feature_class",
-              "feature_class_action_type",
-              "iam_permission",
-              "event_name",
+              "featureClass",
+              "featureClassActionType",
+              "iamPermission",
+              "eventName",
               "stage",
               "retired"
             ],
@@ -431,6 +432,7 @@
               "retired": {
                 "const": true,
                 "type": "boolean",
+                "x-canonical-name": "retired",
                 "x-defined-by": "canonical-schema"
               }
             },
@@ -447,12 +449,13 @@
         "oneOf": [
           {
             "properties": {
-              "assured_by": {
+              "assuredBy": {
                 "description": "A comma-separated string, published as it is rather than split into an array.",
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "assured_by",
                 "x-defined-by": "canonical-schema"
               },
               "controlId": {
@@ -467,14 +470,16 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "coso",
                 "x-defined-by": "canonical-schema"
               },
-              "depends_on": {
+              "dependsOn": {
                 "description": "A comma-separated string, published as it is rather than split into an array.",
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "depends_on",
                 "x-defined-by": "canonical-schema"
               },
               "description": {
@@ -482,6 +487,7 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "description",
                 "x-defined-by": "canonical-schema"
               },
               "effort": {
@@ -490,29 +496,86 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "effort",
                 "x-defined-by": "canonical-schema"
               },
-              "feature_class": {
+              "featureClass": {
                 "description": "An array of feature classes. A threat's field of the same name is a single string.",
                 "type": [
                   "array",
                   "null"
                 ],
+                "x-canonical-name": "feature_class",
                 "x-defined-by": "canonical-schema"
               },
               "mitigate": {
-                "description": "Objects carrying threat, impact, priority, max_dependency, priority_overall and cvss, where cvss is a severity enum from Very High to Very Low.",
+                "description": "Objects carrying threat, impact, priority, maxDependency, priorityOverall and cvss, where cvss is a severity enum from Very High to Very Low.",
+                "items": {
+                  "properties": {
+                    "cvss": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "x-canonical-name": "cvss",
+                      "x-defined-by": "canonical-schema"
+                    },
+                    "impact": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "x-canonical-name": "impact",
+                      "x-defined-by": "canonical-schema"
+                    },
+                    "maxDependency": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "x-canonical-name": "max_dependency",
+                      "x-defined-by": "canonical-schema"
+                    },
+                    "priority": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "x-canonical-name": "priority",
+                      "x-defined-by": "canonical-schema"
+                    },
+                    "priorityOverall": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "x-canonical-name": "priority_overall",
+                      "x-defined-by": "canonical-schema"
+                    },
+                    "threat": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "x-canonical-name": "threat",
+                      "x-defined-by": "canonical-schema"
+                    }
+                  },
+                  "type": "object"
+                },
                 "type": [
                   "array",
                   "null"
                 ],
+                "x-canonical-name": "mitigate",
                 "x-defined-by": "canonical-schema"
               },
-              "nist_csf": {
+              "nistCsf": {
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "nist_csf",
                 "x-defined-by": "canonical-schema"
               },
               "objective": {
@@ -520,11 +583,13 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "objective",
                 "x-defined-by": "canonical-schema"
               },
               "retired": {
                 "const": false,
                 "type": "boolean",
+                "x-canonical-name": "retired",
                 "x-defined-by": "canonical-schema"
               },
               "testing": {
@@ -532,21 +597,24 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "testing",
                 "x-defined-by": "canonical-schema"
               },
-              "weighted_priority": {
+              "weightedPriority": {
                 "description": "One of Very High, High, Medium, Low.",
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "weighted_priority",
                 "x-defined-by": "canonical-schema"
               },
-              "weighted_priority_score": {
+              "weightedPriorityScore": {
                 "type": [
                   "number",
                   "null"
                 ],
+                "x-canonical-name": "weighted_priority_score",
                 "x-defined-by": "canonical-schema"
               }
             },
@@ -554,16 +622,16 @@
               "controlId",
               "description",
               "objective",
-              "feature_class",
+              "featureClass",
               "effort",
               "testing",
               "mitigate",
-              "assured_by",
-              "depends_on",
-              "nist_csf",
+              "assuredBy",
+              "dependsOn",
+              "nistCsf",
               "coso",
-              "weighted_priority",
-              "weighted_priority_score",
+              "weightedPriority",
+              "weightedPriorityScore",
               "retired"
             ],
             "type": "object"
@@ -581,6 +649,7 @@
               "retired": {
                 "const": true,
                 "type": "boolean",
+                "x-canonical-name": "retired",
                 "x-defined-by": "canonical-schema"
               }
             },
@@ -603,6 +672,7 @@
                   "object",
                   "null"
                 ],
+                "x-canonical-name": "access",
                 "x-defined-by": "canonical-schema"
               },
               "cvss": {
@@ -611,20 +681,23 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "cvss",
                 "x-defined-by": "canonical-schema"
               },
-              "cvss_score": {
+              "cvssScore": {
                 "type": [
                   "number",
                   "null"
                 ],
+                "x-canonical-name": "cvss_score",
                 "x-defined-by": "canonical-schema"
               },
-              "cvss_severity": {
+              "cvssSeverity": {
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "cvss_severity",
                 "x-defined-by": "canonical-schema"
               },
               "description": {
@@ -632,14 +705,16 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "description",
                 "x-defined-by": "canonical-schema"
               },
-              "feature_class": {
+              "featureClass": {
                 "description": "A single feature class. A control's field of the same name is an array.",
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "feature_class",
                 "x-defined-by": "canonical-schema"
               },
               "hlgoal": {
@@ -647,14 +722,16 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "hlgoal",
                 "x-defined-by": "canonical-schema"
               },
-              "mitre_attack": {
+              "mitreAttack": {
                 "description": "One MITRE ATT&CK tactic id, such as TA0040. Not a list of mappings.",
                 "type": [
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "mitre_attack",
                 "x-defined-by": "canonical-schema"
               },
               "name": {
@@ -662,11 +739,13 @@
                   "string",
                   "null"
                 ],
+                "x-canonical-name": "name",
                 "x-defined-by": "canonical-schema"
               },
               "retired": {
                 "const": false,
                 "type": "boolean",
+                "x-canonical-name": "retired",
                 "x-defined-by": "canonical-schema"
               },
               "threatId": {
@@ -681,12 +760,12 @@
               "threatId",
               "name",
               "description",
-              "feature_class",
+              "featureClass",
               "hlgoal",
-              "mitre_attack",
+              "mitreAttack",
               "cvss",
-              "cvss_severity",
-              "cvss_score",
+              "cvssSeverity",
+              "cvssScore",
               "access",
               "retired"
             ],
@@ -698,6 +777,7 @@
               "retired": {
                 "const": true,
                 "type": "boolean",
+                "x-canonical-name": "retired",
                 "x-defined-by": "canonical-schema"
               },
               "threatId": {
@@ -1044,7 +1124,7 @@
                 }
               }
             },
-            "description": "One page. Ordered by releaseKey."
+            "description": "One page. Ordered by tmId."
           },
           "400": {
             "content": {
@@ -1121,13 +1201,13 @@
         "x-required-permission": "api.ccr.read"
       }
     },
-    "/v1/ccr/packs/{releaseKey}": {
+    "/v1/ccr/packs/{tmId}": {
       "get": {
-        "operationId": "ccrPacksReleaseKey",
+        "operationId": "ccrPacksTmId",
         "parameters": [
           {
             "in": "path",
-            "name": "releaseKey",
+            "name": "tmId",
             "required": true,
             "schema": {
               "type": "string"
@@ -1220,13 +1300,13 @@
         "x-required-permission": "api.ccr.read"
       }
     },
-    "/v1/ccr/packs/{releaseKey}/archive": {
+    "/v1/ccr/packs/{tmId}/archive": {
       "get": {
-        "operationId": "ccrPacksReleaseKeyArchive",
+        "operationId": "ccrPacksTmIdArchive",
         "parameters": [
           {
             "in": "path",
-            "name": "releaseKey",
+            "name": "tmId",
             "required": true,
             "schema": {
               "type": "string"
@@ -1479,7 +1559,7 @@
         "parameters": [
           {
             "in": "query",
-            "name": "framework",
+            "name": "frameworkId",
             "required": true,
             "schema": {
               "type": "string"
@@ -1487,7 +1567,7 @@
           },
           {
             "in": "query",
-            "name": "service",
+            "name": "tmId",
             "required": false,
             "schema": {
               "type": "string"
@@ -1772,7 +1852,7 @@
                 }
               }
             },
-            "description": "One page. Ordered by tmName."
+            "description": "One page. Ordered by tmId."
           },
           "400": {
             "content": {
@@ -2121,7 +2201,7 @@
           },
           {
             "in": "query",
-            "name": "feature_class",
+            "name": "featureClass",
             "required": false,
             "schema": {
               "type": "string"
@@ -2280,7 +2360,7 @@
           },
           {
             "in": "query",
-            "name": "feature_class",
+            "name": "featureClass",
             "required": false,
             "schema": {
               "type": "string"
@@ -2554,7 +2634,7 @@
           },
           {
             "in": "query",
-            "name": "feature_class",
+            "name": "featureClass",
             "required": false,
             "schema": {
               "type": "string"

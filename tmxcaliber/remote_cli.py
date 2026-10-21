@@ -12,7 +12,7 @@ The shape mirrors the API:
     tmxcaliber threatmodels get aws-s3
     tmxcaliber threatmodels threats aws-s3 --feature-class S3.FC1
     tmxcaliber threatmodels dfd aws-s3@1611187200
-    tmxcaliber compliance mappings list --framework nist-800-53-r5
+    tmxcaliber compliance mappings list --framework-id nist-800-53-r5
 """
 
 from __future__ import annotations
@@ -50,8 +50,9 @@ from .lib.remote.config import (
 from .lib.remote.contract import (
     ROUTES,
     Route,
+    python_name,
     required_parameters,
-    route_for,
+    route_for_path,
     values_field,
     values_route,
 )
@@ -81,7 +82,6 @@ POSITIONALS = {
         "the ThreatModel, as `threatmodels list` reports it, "
         "optionally pinned with @release (for example aws-s3@1611187200).",
     ),
-    "release_key": ("RELEASEKEY", "the pack's release key."),
 }
 
 #: Help for an option that "filter by ..." would misdescribe, by route path and
@@ -89,7 +89,7 @@ POSITIONALS = {
 #: narrow no collection, so the generated text would tell the reader nothing
 #: about what to pass. Every option not listed here keeps the generated text.
 OPTION_HELP: Mapping[str, Mapping[str, str]] = {
-    "/v1/ccr/packs/{releaseKey}/archive": {
+    "/v1/ccr/packs/{tmId}/archive": {
         "kind": (
             "which archive to download: source (the default, the rule tree) or "
             "deploy (the Terraform package)."
@@ -109,9 +109,9 @@ def _option(filter_name: str) -> str:
         filter_name: The parameter name as the API spells it.
 
     Returns:
-        The option, with underscores turned into dashes.
+        The option, with word boundaries rendered as dashes.
     """
-    return f"--{filter_name.replace('_', '-')}"
+    return f"--{python_name(filter_name).replace('_', '-')}"
 
 
 def _filter_help(route: Route, name: str, *, required: bool) -> str:
@@ -130,7 +130,7 @@ def _filter_help(route: Route, name: str, *, required: bool) -> str:
     written = OPTION_HELP.get(route.path, {}).get(name)
     if written is not None:
         return written
-    words = name.replace("_", " ")
+    words = _option(name)[2:].replace("-", " ")
     text = f"the {words} to read." if required else f"filter by {words}."
     lookup = values_route(route, name)
     if lookup is not None:
@@ -168,16 +168,18 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
     """
     if route.positional:
         metavar, help_text = POSITIONALS[route.positional]
+        if "{tmId}" in route.path:
+            help_text = "the ThreatModel id, as `ccr packs list` reports it."
         parser.add_argument(route.positional, metavar=metavar, help=help_text)
     required = required_parameters(route.path)
     # argparse files every option under "options" whether or not it is
-    # required, which made a mandatory --framework read as an optional filter.
+    # required, which made a mandatory --framework-id read as an optional filter.
     required_group = parser.add_argument_group("required arguments")
     for name in route.filters:
         target = required_group if name in required else parser
         target.add_argument(
             _option(name),
-            dest=name,
+            dest=python_name(name),
             default="",
             required=name in required,
             help=_filter_help(route, name, required=name in required),
@@ -260,22 +262,25 @@ def _add_ccr_fetch(ccr: _SubParsersAction[ArgumentParser]) -> None:
     description = (
         f"{summary} Without --out it only previews: it prints the selection as "
         "JSON and writes nothing. With --out it downloads each pack's archive "
-        "and writes the selected files under DIR/<release key>/<rule id>/."
+        "and writes the selected files under DIR/<ThreatModel id>/<rule id>/."
     )
     parser = ccr.add_parser("fetch", help=summary, description=description)
+    # The metavar and wording follow `ccr packs get`, whose positional the
+    # route table derives, so the two commands name a pack the same way.
+    metavar, _ = POSITIONALS["tm_id"]
     parser.add_argument(
-        "release_keys",
+        "tm_ids",
         nargs="*",
-        metavar="RELEASEKEY",
-        help="packs to read, as `tmxcaliber ccr packs list` reports them. "
-        "Every entitled pack when omitted.",
+        metavar=metavar,
+        help="packs to read, by ThreatModel id, as `tmxcaliber ccr packs list` "
+        "reports them. Every entitled pack when omitted.",
     )
     for name, help_text in (
         ("provider", "read only this provider's packs, for example aws."),
         (
             "service",
-            "read only this service's packs, for example s3. A whole release "
-            "key, such as aws-s3, names its pack too.",
+            "read only this service's packs, for example s3. A whole "
+            "ThreatModel id, such as aws-s3, names its pack too.",
         ),
         ("control", "select this control, for example S3.C20."),
         ("file", "select files whose <rule id>/<file> matches this glob."),
@@ -303,7 +308,7 @@ def _add_ccr_fetch(ccr: _SubParsersAction[ArgumentParser]) -> None:
         default="",
         metavar="DIR",
         help="download each pack's archive and write the selected files under "
-        "DIR/<release key>/<rule id>/. Without it the command only previews: "
+        "DIR/<ThreatModel id>/<rule id>/. Without it the command only previews: "
         "it prints the selection as JSON and writes nothing.",
     )
     parser.set_defaults(ccr_fetch=True)
@@ -341,7 +346,7 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
         RemoteError: On a failure that is not one pack's alone, such as a
             credential failure.
     """
-    if params.release_keys and (params.provider or params.service):
+    if params.tm_ids and (params.provider or params.service):
         console.stderr().failure(
             "Name packs, or narrow by --provider and --service, not both."
         )
@@ -369,7 +374,7 @@ def run_ccr_fetch(params: Namespace, *, client: TocClient | None = None) -> int:
     try:
         result = fetch(
             client or connect(),
-            release_keys=tuple(params.release_keys),
+            tm_ids=tuple(params.tm_ids),
             providers=tuple(params.provider),
             services=tuple(params.service),
             wanted=RuleFilter(
@@ -413,7 +418,7 @@ def _written_tree(finished: list[PackOutcome]) -> list[console.Branch]:
     """
     return [
         console.Branch(
-            outcome.release_key
+            outcome.tm_id
             + (f"  (release {outcome.release_id[:7]})" if outcome.release_id else ""),
             tuple(
                 console.Branch(
@@ -447,7 +452,7 @@ def _report_outcome(err: console.Console, result: FetchResult, out: str) -> None
     if not out:
         if result.rows:
             files = sum(len(row["files"]) for row in result.rows)
-            packs = {row["releaseKey"] for row in result.rows}
+            packs = {row["tmId"] for row in result.rows}
             err.status(
                 "info",
                 "yellow",
@@ -466,7 +471,7 @@ def _report_outcome(err: console.Console, result: FetchResult, out: str) -> None
     # A failed pack has no rows, so these are the rules whose files were
     # written, counted from what reached the disk.
     rules = [row for row in result.rows if row["files"]]
-    packs = {row["releaseKey"] for row in rules}
+    packs = {row["tmId"] for row in rules}
     err.status(
         "ok",
         "green",
@@ -588,12 +593,17 @@ def resolve_command_source(source: str) -> str:
     return resolve_source(source, connect=connect)
 
 
-#: For a positional that names something the API lists, the command that lists
-#: it, the row field holding each name, and the row field holding its title
-#: when there is one.
-NAME_LISTS: Mapping[str, tuple[tuple[str, ...], str, str | None]] = {
-    "release_key": (("ccr", "packs", "list"), "releaseKey", None),
-    "tm_id": (("threatmodels", "list"), "tmId", "title"),
+#: For a positional that names something the API lists, the row field holding
+#: each name and the row field holding its title when there is one, by the
+#: path of the collection that lists it. That collection is the route's path
+#: up to its first parameter, so `ccr packs get` and `ccr packs archive` both
+#: look in `ccr packs list`, and every `threatmodels` command looks in
+#: `threatmodels list`. Both lists name their rows by `tmId`, and both kinds of
+#: route call their positional `tm_id`, so the positional alone cannot say
+#: which list to read.
+NAME_LISTS: Mapping[str, tuple[str, str | None]] = {
+    "/v1/ccr/packs": ("tmId", None),
+    "/v1/threatmodels": ("tmId", "title"),
 }
 
 
@@ -649,16 +659,17 @@ def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
         cannot be read, in which case the API's own error is the one worth
         reporting.
     """
-    lookup = NAME_LISTS.get(route.positional or "")
+    collection = route.path.partition("{")[0].rstrip("/")
+    lookup = NAME_LISTS.get(collection) if route.positional else None
     if lookup is None:
         return ""
     # A release pins a version of the name, and is no part of the name itself.
     wanted = typed.partition("@")[0]
     if not wanted:
         return ""
-    command, name_field, title_field = lookup
-    listing = route_for(command)
-    assert listing is not None, f"{' '.join(command)} is not bound"
+    name_field, title_field = lookup
+    listing = route_for_path(collection)
+    assert listing is not None, f"{collection} is not bound"
     try:
         rows = call_route(client, listing, "", {}).result
     except RemoteError:
@@ -722,7 +733,11 @@ def run_api_command(
     assert route is not None, "run_api_command called for a non-API command"
     api = client or connect()
     typed = str(getattr(params, route.positional, "") or "") if route.positional else ""
-    filters = {name: str(getattr(params, name, "") or "") for name in route.filters}
+    # The API spells a filter in camelCase and argparse keeps it in snake_case.
+    filters = {
+        name: str(getattr(params, python_name(name), "") or "")
+        for name in route.filters
+    }
     limit = int(getattr(params, "limit", 0) or 0)
     try:
         answer = call_route(api, route, typed, filters, limit=limit)
@@ -742,10 +757,12 @@ def run_api_command(
         # grammar before any request is made, so no 404 follows and the name
         # would never reach the suggestion. The refusal stays as it was when
         # nothing listed is close, and when the reference is well formed and
-        # only its release is wrong.
+        # only its release is wrong. A pack's routes send their ThreatModel id
+        # as one encoded path segment and parse no reference, so only a route
+        # with {provider} in its path is refused this way.
         sentence = (
             _did_you_mean(api, route, typed)
-            if route.positional == "tm_id" and not is_remote_ref(typed)
+            if "{provider}" in route.path and not is_remote_ref(typed)
             else ""
         )
         if not sentence:

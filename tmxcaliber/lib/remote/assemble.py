@@ -24,7 +24,7 @@ from ...schema.schema import (
 )
 from ..threatmodel_data import ThreatModelData
 from .client import TocClient
-from .contract import page_maximum
+from .contract import page_maximum, row_properties
 from .errors import ContractViolation, NotFound
 from .ref import TmRef, is_release
 
@@ -33,6 +33,32 @@ from .ref import TmRef, is_release
 #: Ordered as the canonical schema lists them, so a diff between an
 #: assembled document and a published one reads cleanly.
 PARTS = ("threats", "controls", "actions")
+
+
+def _canonical_value(value: Any, properties: dict[str, Any]) -> Any:
+    """Restore only canonical keys declared by the vendored API contract.
+
+    Args:
+        value: A value from a camelCase collection row.
+        properties: The property's schemas, including canonical names.
+
+    Returns:
+        The value with schema keys in snake_case, including nested objects.
+    """
+    if isinstance(value, list):
+        return [_canonical_value(item, properties) for item in value]
+    if isinstance(value, dict):
+        restored: dict[str, Any] = {}
+        for key, item in value.items():
+            schema = properties.get(key, {})
+            nested = schema.get("items", {}).get("properties", {}) or schema.get(
+                "properties", {}
+            )
+            restored[schema.get("x-canonical-name", key)] = _canonical_value(
+                item, nested
+            )
+        return restored
+    return value
 
 
 def _detail_path(ref: TmRef) -> str:
@@ -269,6 +295,8 @@ def _by_id(part: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
     field = {"threats": "threatId", "controls": "controlId", "actions": "actionId"}[
         part
     ]
+    path = f"/v1/threatmodels/{{provider}}/{{service}}/{part}"
+    properties = row_properties(path)
     section: dict[str, Any] = {}
     for row in rows:
         identity = row.get(field)
@@ -288,7 +316,10 @@ def _by_id(part: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
             raise ContractViolation(
                 f"{part} contained {identity} twice.", code="duplicate_row"
             )
-        body = {key: value for key, value in row.items() if key != field}
+        body = _canonical_value(
+            {key: value for key, value in row.items() if key != field},
+            properties,
+        )
 
         # **A retired entity is a stub by design and carries almost
         # nothing, so the check has to know the difference.** A live row

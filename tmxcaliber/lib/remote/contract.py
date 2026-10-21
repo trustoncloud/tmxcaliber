@@ -20,6 +20,7 @@ than a 404 for whoever runs it.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
@@ -105,7 +106,7 @@ ROUTES: Final[tuple[Route, ...]] = (
         path="/v1/threatmodels/{provider}/{service}/threats",
         command=("threatmodels", "threats"),
         paged=True,
-        filters=("feature_class", "release"),
+        filters=("featureClass", "release"),
         positional="tm_id",
         summary="A ThreatModel's threats.",
     ),
@@ -113,7 +114,7 @@ ROUTES: Final[tuple[Route, ...]] = (
         path="/v1/threatmodels/{provider}/{service}/controls",
         command=("threatmodels", "controls"),
         paged=True,
-        filters=("feature_class", "release"),
+        filters=("featureClass", "release"),
         positional="tm_id",
         summary="A ThreatModel's controls.",
     ),
@@ -121,7 +122,7 @@ ROUTES: Final[tuple[Route, ...]] = (
         path="/v1/threatmodels/{provider}/{service}/actions",
         command=("threatmodels", "actions"),
         paged=True,
-        filters=("feature_class", "release"),
+        filters=("featureClass", "release"),
         positional="tm_id",
         summary="A ThreatModel's actions.",
     ),
@@ -153,7 +154,7 @@ ROUTES: Final[tuple[Route, ...]] = (
         path="/v1/compliance/mappings",
         command=("compliance", "mappings", "list"),
         paged=True,
-        filters=("framework", "service"),
+        filters=("frameworkId", "tmId"),
         positional=None,
         summary="Framework controls mapped to ThreatModel objectives.",
     ),
@@ -166,19 +167,19 @@ ROUTES: Final[tuple[Route, ...]] = (
         summary="Wiz Cloud Configuration Rule packs.",
     ),
     Route(
-        path="/v1/ccr/packs/{releaseKey}",
+        path="/v1/ccr/packs/{tmId}",
         command=("ccr", "packs", "get"),
         paged=False,
         filters=(),
-        positional="release_key",
+        positional="tm_id",
         summary="One CCR pack.",
     ),
     Route(
-        path="/v1/ccr/packs/{releaseKey}/archive",
+        path="/v1/ccr/packs/{tmId}/archive",
         command=("ccr", "packs", "archive"),
         paged=False,
         filters=("kind", "release"),
-        positional="release_key",
+        positional="tm_id",
         summary="One CCR pack's archive.",
         binary=True,
     ),
@@ -212,6 +213,25 @@ def documented_paths() -> frozenset[str]:
         The path templates.
     """
     return frozenset(contract()["paths"])
+
+
+def row_properties(path: str) -> dict[str, Any]:
+    """Read a collection's row properties from the vendored contract.
+
+    Args:
+        path: The route's OpenAPI path template.
+
+    Returns:
+        The live row's property schemas, including canonical key metadata.
+    """
+    response = contract()["paths"][path]["get"]["responses"]["200"]
+    schema = response["content"]["application/json"]["schema"]
+    member = next(part for part in schema["allOf"] if "properties" in part)
+    reference = member["properties"]["items"]["items"]["$ref"]
+    row = contract()["components"]["schemas"][reference.rsplit("/", 1)[-1]]
+    live = row["oneOf"][0] if "oneOf" in row else row
+    properties: dict[str, Any] = live["properties"]
+    return properties
 
 
 def route_for(command: tuple[str, ...]) -> Route | None:
@@ -301,7 +321,7 @@ def values_route(route: Route, filter_name: str) -> Route | None:
     """Find the route that lists the values one of a route's filters accepts.
 
     Derived by the same kind of mechanical rule as the command names: the
-    paged sibling collection named for the filter's plural. ``framework`` on
+    paged sibling collection named for the filter's plural. ``frameworkId`` on
     ``/v1/compliance/mappings`` is answered by ``/v1/compliance/frameworks``,
     whose rows carry a ``frameworkId``.
 
@@ -313,7 +333,8 @@ def values_route(route: Route, filter_name: str) -> Route | None:
         The listing route, or None when the API publishes no such list.
     """
     parent = route.path.rsplit("/", 1)[0]
-    candidate = route_for_path(f"{parent}/{filter_name}s")
+    noun = filter_name.removesuffix("Id")
+    candidate = route_for_path(f"{parent}/{noun}s")
     if candidate is None or not candidate.paged or candidate is route:
         return None
     return candidate
@@ -326,10 +347,21 @@ def values_field(filter_name: str) -> str:
         filter_name: The query parameter, as the API spells it.
 
     Returns:
-        The field, in the API's camelCase (``framework`` -> ``frameworkId``).
+        The field, in the API's camelCase.
     """
-    head, *rest = filter_name.split("_")
-    return head + "".join(word.title() for word in rest) + "Id"
+    return filter_name if filter_name.endswith("Id") else f"{filter_name}Id"
+
+
+def python_name(api_name: str) -> str:
+    """Spell an API parameter as a Python keyword or argparse destination.
+
+    Args:
+        api_name: The camelCase query parameter from OpenAPI.
+
+    Returns:
+        Its snake_case spelling.
+    """
+    return re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\1", api_name).lower()
 
 
 def route_for_path(path: str) -> Route | None:

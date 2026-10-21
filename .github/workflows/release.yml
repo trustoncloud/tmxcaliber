@@ -40,6 +40,9 @@ jobs:
       run: uv run python .github/scripts/check_release_version.py
       continue-on-error: false
 
+    - name: Validate vendored OpenAPI field names
+      run: uv run python -m tmxcaliber.lib.remote.contract_naming
+
     - name: Run pytest test suite with coverage
       run: |
         uv run coverage run ./test/run_tests.py

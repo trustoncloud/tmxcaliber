@@ -114,12 +114,12 @@ def test_a_name_is_normalized(name: str, expected: str) -> None:
     assert normalize(name) == expected
 
 
-def test_every_alias_is_stored_normalized_and_names_a_release_key() -> None:
-    release_key = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)+")
+def test_every_alias_is_stored_normalized_and_names_a_tm_id() -> None:
+    tm_id = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)+")
     for name, keys in ALIASES.items():
         assert normalize(name) == name
         assert keys
-        assert all(release_key.fullmatch(key) for key in keys)
+        assert all(tm_id.fullmatch(key) for key in keys)
 
 
 def test_every_published_pack_has_an_alias() -> None:

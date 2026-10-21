@@ -211,7 +211,7 @@ def test_a_row_carries_the_pack_the_release_and_the_selected_files() -> None:
     )
 
     assert rule_row("aws-s3", "d07d6aee", chosen) == {
-        "releaseKey": "aws-s3",
+        "tmId": "aws-s3",
         "releaseId": "d07d6aee",
         "ruleId": "S3.C21",
         "name": "check",
@@ -1265,14 +1265,14 @@ ABSOLUTE_KEY = "<an absolute path>"
         "absolute",
     ],
 )
-def test_a_release_key_that_could_leave_the_output_folder_is_refused_unread(
+def test_a_pack_id_that_could_leave_the_output_folder_is_refused_unread(
     tmp_path: pathlib.Path, key: str
 ) -> None:
-    # The key is joined onto ``out`` as a folder name, and it reaches this
-    # client from the API with nothing between it and the disk. The archive is
-    # honest and its one file is safe under every check on names, so only a
-    # check on the key refuses this pack. With the key ``..`` the file would
-    # replace one that belongs to a sibling of ``out``.
+    # The pack's ThreatModel id is joined onto ``out`` as a folder name, and it
+    # reaches this client from the API with nothing between it and the disk.
+    # The archive is honest and its one file is safe under every check on
+    # names, so only a check on the id refuses this pack. With the id ``..``
+    # the file would replace one that belongs to a sibling of ``out``.
     if key == ABSOLUTE_KEY:
         key = str(tmp_path / "elsewhere")
     home = tmp_path / "home"
@@ -1294,7 +1294,7 @@ def test_a_release_key_that_could_leave_the_output_folder_is_refused_unread(
 @pytest.mark.parametrize(
     "key", ["aws-s3", "gcp-cloud-storage", "azure-key-vault-2", "a-1"]
 )
-def test_a_release_key_in_the_servers_form_is_written_under_its_own_folder(
+def test_a_pack_id_in_the_servers_form_is_written_under_its_own_folder(
     tmp_path: pathlib.Path, key: str
 ) -> None:
     data, manifest = pack(ENTRIES)
@@ -1462,9 +1462,9 @@ class PackClient:
     def __init__(self, packs: dict[str, tuple[bytes, dict[str, Any]]]) -> None:
         self.packs = packs
         self.calls: list[tuple[str, dict[str, str]]] = []
-        #: Release keys whose next archive call answers 410 once.
+        #: ThreatModel ids whose next archive call answers 410 once.
         self.supersede_once: set[str] = set()
-        #: Release keys whose archive call raises this error, as the client
+        #: ThreatModel ids whose archive call raises this error, as the client
         #: raises it once its own retries are spent.
         self.archive_errors: dict[str, RemoteError] = {}
 
@@ -1472,7 +1472,7 @@ class PackClient:
         self, path: str, params: Mapping[str, str] | None = None, **_: Any
     ) -> Any:
         self.calls.append((path, dict(params or {})))
-        yield from ({"releaseKey": key} for key in sorted(self.packs))
+        yield from ({"tmId": key} for key in sorted(self.packs))
 
     def get(self, path: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
         self.calls.append((path, dict(params or {})))
@@ -1498,7 +1498,7 @@ def two_packs() -> dict[str, tuple[bytes, dict[str, Any]]]:
     """Two packs, one per provider.
 
     Returns:
-        Each pack's archive and manifest, by release key.
+        Each pack's archive and manifest, by ThreatModel id.
     """
     return {
         "aws-s3": pack(ENTRIES),
@@ -1525,14 +1525,12 @@ def test_the_rows_a_fetch_returns_list_only_the_modes_and_matchers_asked_for() -
 
     trimmed = fetch(  # type: ignore[arg-type]
         client,
-        release_keys=("aws-s3",),
+        tm_ids=("aws-s3",),
         wanted=RuleFilter(
             controls=("S3.C20",), modes=("universal",), matchers=("cloud",)
         ),
     )
-    whole = fetch(
-        client, release_keys=("aws-s3",), wanted=RuleFilter(controls=("S3.C20",))
-    )  # type: ignore[arg-type]
+    whole = fetch(client, tm_ids=("aws-s3",), wanted=RuleFilter(controls=("S3.C20",)))  # type: ignore[arg-type]
 
     [row] = trimmed.rows
     assert (row["modes"], list(row["matchers"])) == (["universal"], ["cloud"])
@@ -1548,21 +1546,21 @@ def test_provider_and_service_narrow_the_listed_packs() -> None:
 
     result = fetch(client, providers=("gcp",))  # type: ignore[arg-type]
 
-    assert {row["releaseKey"] for row in result.rows} == {"gcp-bigquery"}
+    assert {row["tmId"] for row in result.rows} == {"gcp-bigquery"}
     assert ("/v1/ccr/packs/aws-s3", {}) not in client.calls
 
 
 def test_named_packs_are_read_without_listing() -> None:
     client = PackClient(two_packs())
 
-    fetch(client, release_keys=("aws-s3",))  # type: ignore[arg-type]
+    fetch(client, tm_ids=("aws-s3",))  # type: ignore[arg-type]
 
     assert client.calls == [("/v1/ccr/packs/aws-s3", {})]
 
 
 def test_naming_packs_and_narrowing_them_is_refused() -> None:
     with pytest.raises(ValueError):
-        fetch(PackClient({}), release_keys=("aws-s3",), providers=("aws",))  # type: ignore[arg-type]
+        fetch(PackClient({}), tm_ids=("aws-s3",), providers=("aws",))  # type: ignore[arg-type]
 
 
 def test_only_packs_with_a_match_are_downloaded_pinned_to_their_release(
@@ -1590,7 +1588,7 @@ def test_a_full_length_release_id_pins_the_archive_and_fills_every_row(
     packs["aws-s3"] = (data, {**manifest, "release_id": FULL_RELEASE})
     client = PackClient(packs)
 
-    result = fetch(client, release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
+    result = fetch(client, tm_ids=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
 
     archives = [query for path, query in client.calls if path.endswith("/archive")]
     assert archives == [{"kind": "source", "release": FULL_RELEASE}]
@@ -1602,7 +1600,7 @@ def test_a_superseded_release_is_read_again_once(tmp_path: pathlib.Path) -> None
     client = PackClient(two_packs())
     client.supersede_once.add("aws-s3")
 
-    result = fetch(client, release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
+    result = fetch(client, tm_ids=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
 
     assert result.failed == {}
     assert [p for p, _ in client.calls].count("/v1/ccr/packs/aws-s3") == 2
@@ -1656,7 +1654,7 @@ def test_each_pack_is_reported_once_as_it_finishes_in_the_order_read(
     assert [key for key, _ in calls] == ["aws-s3", "gcp-bigquery"]
     assert calls[0][1] is result.failed["aws-s3"]
     assert calls[1][1] == PackOutcome(
-        release_key="gcp-bigquery",
+        tm_id="gcp-bigquery",
         release_id="d07d6aee",
         rows=tuple(result.rows),
         written=(tmp_path / "gcp-bigquery" / "Bigquery.C102" / "metadata.json",),
@@ -1674,7 +1672,7 @@ def test_a_preview_reports_each_pack_with_its_rows_and_nothing_written() -> None
 
 
 def test_an_unknown_named_pack_is_reported_with_its_suggestions() -> None:
-    result, calls = heard(PackClient(readable_packs("aws-ec2")), release_keys=("ec3",))
+    result, calls = heard(PackClient(readable_packs("aws-ec2")), tm_ids=("ec3",))
 
     [(key, failure)] = calls
     assert key == "ec3"
@@ -1702,7 +1700,7 @@ def test_a_fetch_without_the_callback_is_unchanged(tmp_path: pathlib.Path) -> No
 
 
 def test_an_unknown_named_pack_is_reported_not_raised() -> None:
-    result = fetch(PackClient(two_packs()), release_keys=("aws-nothing",))  # type: ignore[arg-type]
+    result = fetch(PackClient(two_packs()), tm_ids=("aws-nothing",))  # type: ignore[arg-type]
 
     failure = result.failed["aws-nothing"]
     assert (failure.stage, failure.code, failure.status) == (
@@ -1718,10 +1716,10 @@ def readable_packs(*extra: str) -> dict[str, tuple[bytes, dict[str, Any]]]:
     """The two packs, and more that the key can read.
 
     Args:
-        *extra: More release keys, each a pack with one rule.
+        *extra: More ThreatModel ids, each a pack with one rule.
 
     Returns:
-        Each pack's archive and manifest, by release key.
+        Each pack's archive and manifest, by ThreatModel id.
     """
     packs = two_packs()
     for key in extra:
@@ -1744,7 +1742,7 @@ def list_reads(client: PackClient) -> int:
 def test_an_unknown_named_pack_suggests_a_pack_the_key_can_read() -> None:
     client = PackClient(readable_packs("aws-ec2"))
 
-    result = fetch(client, release_keys=("ec3",))  # type: ignore[arg-type]
+    result = fetch(client, tm_ids=("ec3",))  # type: ignore[arg-type]
 
     failure = result.failed["ec3"]
     assert failure.suggestions == ("aws-ec2",)
@@ -1760,7 +1758,7 @@ def test_a_release_typed_after_a_pack_is_left_out_of_its_suggestion() -> None:
     # the release wrong, so there is no name to correct.
     client = PackClient(readable_packs("aws-ec2"))
 
-    result = fetch(client, release_keys=("ec3@1611187200", "aws-ec2@1"))  # type: ignore[arg-type]
+    result = fetch(client, tm_ids=("ec3@1611187200", "aws-ec2@1"))  # type: ignore[arg-type]
 
     assert result.failed["ec3@1611187200"].suggestions == ("aws-ec2",)
     assert result.failed["aws-ec2@1"].suggestions == ()
@@ -1780,7 +1778,7 @@ class BareNotFound(PackClient):
 def test_an_unknown_pack_answered_by_a_bare_404_gets_a_suggestion() -> None:
     # Whatever sits in front of the API can answer 404 without the API's
     # envelope, and the pack typed is just as unknown.
-    result = fetch(BareNotFound(readable_packs("aws-ec2")), release_keys=("ec3",))  # type: ignore[arg-type]
+    result = fetch(BareNotFound(readable_packs("aws-ec2")), tm_ids=("ec3",))  # type: ignore[arg-type]
 
     failure = result.failed["ec3"]
     assert (failure.stage, failure.code) == ("manifest", "NotFound")
@@ -1790,12 +1788,12 @@ def test_an_unknown_pack_answered_by_a_bare_404_gets_a_suggestion() -> None:
 def test_the_pack_list_is_read_once_however_many_named_packs_are_unknown() -> None:
     client = PackClient(readable_packs("aws-ec2"))
 
-    result = fetch(client, release_keys=("ec3", "aws-s4", "aws-s3"))  # type: ignore[arg-type]
+    result = fetch(client, tm_ids=("ec3", "aws-s4", "aws-s3"))  # type: ignore[arg-type]
 
     assert list_reads(client) == 1
     assert result.failed["ec3"].suggestions == ("aws-ec2",)
     assert result.failed["aws-s4"].suggestions[0] == "aws-s3"
-    assert {row["releaseKey"] for row in result.rows} == {"aws-s3"}
+    assert {row["tmId"] for row in result.rows} == {"aws-s3"}
 
 
 def test_the_pack_list_is_not_read_when_every_named_pack_is_known(
@@ -1812,7 +1810,7 @@ def test_the_pack_list_is_not_read_when_every_named_pack_is_known(
     )
 
     result = fetch(  # type: ignore[arg-type]
-        client, release_keys=("aws-s3", "gcp-bigquery", "aws-ec2"), out=tmp_path
+        client, tm_ids=("aws-s3", "gcp-bigquery", "aws-ec2"), out=tmp_path
     )
 
     assert list_reads(client) == 0
@@ -1858,12 +1856,12 @@ def test_a_pack_list_that_cannot_be_read_leaves_the_fetch_as_it_was(
     # the caller the packs that did answer.
     client = Unlisted(readable_packs("aws-ec2"), error)
 
-    result = fetch(client, release_keys=("aws-s4", "ec3", "aws-s3"))  # type: ignore[arg-type]
+    result = fetch(client, tm_ids=("aws-s4", "ec3", "aws-s3"))  # type: ignore[arg-type]
 
     assert list_reads(client) == 1
     assert result.failed == {
         key: PackFailure(
-            release_key=key,
+            tm_id=key,
             stage="manifest",
             code="not_found",
             message="No such pack.",
@@ -1871,7 +1869,7 @@ def test_a_pack_list_that_cannot_be_read_leaves_the_fetch_as_it_was(
         )
         for key in ("aws-s4", "ec3")
     }
-    assert {row["releaseKey"] for row in result.rows} == {"aws-s3"}
+    assert {row["tmId"] for row in result.rows} == {"aws-s3"}
 
 
 @pytest.mark.parametrize(
@@ -1972,20 +1970,20 @@ def test_a_narrowing_that_leaves_a_pack_is_not_refused() -> None:
 
     result = fetch(client, services=("nothing", "vertex"))  # type: ignore[arg-type]
 
-    assert {row["releaseKey"] for row in result.rows} == {"gcp-vertex"}
+    assert {row["tmId"] for row in result.rows} == {"gcp-vertex"}
 
 
-def test_a_service_given_as_a_listed_release_key_reads_that_pack() -> None:
+def test_a_service_given_as_a_listed_tm_id_reads_that_pack() -> None:
     # The provider is part of the key, so the key names the one pack, and the
     # service of any other pack that happens to share its tail stays out.
     client = PackClient(readable_packs("gcp-vertex", "aws-vertex"))
 
     result = fetch(client, services=("gcp-vertex",))  # type: ignore[arg-type]
 
-    assert {row["releaseKey"] for row in result.rows} == {"gcp-vertex"}
+    assert {row["tmId"] for row in result.rows} == {"gcp-vertex"}
 
 
-def test_a_listed_release_key_still_obeys_the_provider_beside_it() -> None:
+def test_a_listed_tm_id_still_obeys_the_provider_beside_it() -> None:
     client = PackClient(readable_packs("gcp-vertex"))
 
     with pytest.raises(NoPackMatched):
@@ -2009,7 +2007,7 @@ def test_the_pack_a_refused_service_suggests_can_be_given_back_as_the_service(
     result = fetch(client, services=(suggested,))  # type: ignore[arg-type]
 
     assert suggested == "gcp-vertex"
-    assert {row["releaseKey"] for row in result.rows} == {suggested}
+    assert {row["tmId"] for row in result.rows} == {suggested}
 
 
 @pytest.mark.parametrize(
@@ -2046,7 +2044,7 @@ def test_following_a_suggestion_with_the_provider_still_given_never_dead_ends(
                 or provider in again.suggestions
             ), str(again)
         else:
-            assert {row["releaseKey"] for row in result.rows} == {suggested}
+            assert {row["tmId"] for row in result.rows} == {suggested}
 
 
 @pytest.mark.parametrize("typed", ["aws-kms", "AWS KMS", "kms"])
@@ -2058,7 +2056,7 @@ def test_a_provider_with_no_such_pack_still_gets_the_pack_that_service_names(
     # the look-alike, whether the name is a pack or a service.
     client = PackClient(readable_packs("gcp-cloudkms", "aws-eks"))
 
-    named = fetch(client, release_keys=(typed,))  # type: ignore[arg-type]
+    named = fetch(client, tm_ids=(typed,))  # type: ignore[arg-type]
     with pytest.raises(NoPackMatched) as refused:
         fetch(client, services=(typed,))  # type: ignore[arg-type]
 
@@ -2071,7 +2069,7 @@ def test_a_pack_the_key_cannot_read_is_never_suggested() -> None:
     # would tell the caller about a pack outside their subscription.
     client = PackClient(two_packs())
 
-    result = fetch(client, release_keys=("gemini-agent-platform",))  # type: ignore[arg-type]
+    result = fetch(client, tm_ids=("gemini-agent-platform",))  # type: ignore[arg-type]
     with pytest.raises(NoPackMatched) as refused:
         fetch(client, services=("gemini agent platform",))  # type: ignore[arg-type]
 
@@ -2083,7 +2081,7 @@ def test_a_pack_the_key_cannot_read_is_never_suggested() -> None:
 
 def test_a_pack_failure_with_suggestions_ends_with_them() -> None:
     failure = PackFailure(
-        release_key="aws-ec3",
+        tm_id="aws-ec3",
         stage="manifest",
         code="",
         message="Gone.",
@@ -2329,7 +2327,7 @@ def test_a_republished_manifest_that_is_malformed_reports_its_own_release(
     client = Republished(packs)
     client.supersede_once.add("aws-s3")
 
-    result = fetch(client, release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
+    result = fetch(client, tm_ids=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
 
     failure = result.failed["aws-s3"]
     assert (failure.stage, failure.code) == ("manifest", "bad_manifest")
@@ -2356,7 +2354,7 @@ def test_a_manifest_with_a_full_release_id_or_none_is_fetched(
     unpinned = {name: value for name, value in manifest.items() if name != "release_id"}
     packs["aws-s3"] = (data, {**unpinned, **release})
 
-    result = fetch(PackClient(packs), release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
+    result = fetch(PackClient(packs), tm_ids=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
 
     assert result.failed == {}
     assert len(result.written) == len(ENTRIES)
@@ -2390,7 +2388,7 @@ def test_a_refused_archive_fails_only_its_pack(tmp_path: pathlib.Path) -> None:
 
     assert result.failed == {
         "aws-s3": PackFailure(
-            release_key="aws-s3",
+            tm_id="aws-s3",
             stage="archive",
             code="unavailable",
             message=DAMAGED,
@@ -2438,7 +2436,7 @@ def test_a_failure_without_a_code_is_named_by_its_class(
         "The API answered 502.", status=502
     )
 
-    result = fetch(client, release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
+    result = fetch(client, tm_ids=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
 
     assert result.failed["aws-s3"].code == "ServiceUnavailable"
 
@@ -2456,7 +2454,7 @@ def test_a_release_that_changes_twice_in_a_row_fails_the_pack(
 ) -> None:
     client = AlwaysSuperseded(two_packs())
 
-    result = fetch(client, release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
+    result = fetch(client, tm_ids=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
 
     assert set(result.failed) == {"aws-s3"}
     failure = result.failed["aws-s3"]
@@ -2475,7 +2473,7 @@ def test_a_credential_failure_is_not_a_packs_failure() -> None:
             raise AuthenticationError("Bad key.", status=401)
 
     with pytest.raises(AuthenticationError):
-        fetch(Unauthorised(two_packs()), release_keys=("aws-s3",))  # type: ignore[arg-type]
+        fetch(Unauthorised(two_packs()), tm_ids=("aws-s3",))  # type: ignore[arg-type]
 
 
 #: The hint for an archive the API refused, as people read it on stderr.
@@ -2495,7 +2493,7 @@ UNKNOWN_HINT = (
 
 def test_a_pack_failure_reads_as_one_line() -> None:
     failure = PackFailure(
-        release_key="aws-s3",
+        tm_id="aws-s3",
         stage="archive",
         code="unavailable",
         message=DAMAGED,
@@ -2521,7 +2519,7 @@ def test_a_failed_pack_keeps_a_full_length_release_id_and_prints_seven(
         DAMAGED, code="unavailable", status=503, request_id="r-1"
     )
 
-    result = fetch(client, release_keys=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
+    result = fetch(client, tm_ids=("aws-s3",), out=tmp_path)  # type: ignore[arg-type]
 
     failure = result.failed["aws-s3"]
     # The field keeps the whole id for a script; the line people read is cut
@@ -2535,7 +2533,7 @@ def test_a_failed_pack_keeps_a_full_length_release_id_and_prints_seven(
 
 def test_a_pack_failure_leaves_out_what_it_does_not_know() -> None:
     failure = PackFailure(
-        release_key="aws-nothing",
+        tm_id="aws-nothing",
         stage="manifest",
         code="not_found",
         message="No such pack.",
@@ -2548,9 +2546,7 @@ def test_a_pack_failure_leaves_out_what_it_does_not_know() -> None:
 
 
 def test_a_pack_failure_with_nothing_to_bracket_has_no_brackets() -> None:
-    failure = PackFailure(
-        release_key="aws-s3", stage="manifest", code="", message="Gone."
-    )
+    failure = PackFailure(tm_id="aws-s3", stage="manifest", code="", message="Gone.")
 
     # The message already ends its sentence, so no second full stop follows.
     assert str(failure) == f"manifest failed: Gone. {failure.hint}"
@@ -2571,6 +2567,6 @@ def test_a_pack_failure_with_nothing_to_bracket_has_no_brackets() -> None:
     ],
 )
 def test_a_pack_failure_says_what_to_do(stage: str, code: str, expected: str) -> None:
-    failure = PackFailure(release_key="aws-s3", stage=stage, code=code, message="x")
+    failure = PackFailure(tm_id="aws-s3", stage=stage, code=code, message="x")
 
     assert expected in failure.hint

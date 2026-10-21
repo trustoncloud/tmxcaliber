@@ -29,7 +29,7 @@ from typing import Any
 from .ccr import FetchResult, RuleFilter, fetch
 from .client import TocClient
 from .config import DEFAULT_TIMEOUT, load_settings
-from .contract import ROUTES, Route, required_parameters
+from .contract import ROUTES, Route, python_name, required_parameters
 from .errors import IncompleteAnswer
 from .operations import call_route, incompleteness_fields
 
@@ -49,9 +49,9 @@ def _signature(route: Route) -> inspect.Signature:
     keyword = inspect.Parameter.KEYWORD_ONLY
     required = required_parameters(route.path)
     parameters = [
-        inspect.Parameter(name, keyword, default=inspect.Parameter.empty)
+        inspect.Parameter(python_name(name), keyword, default=inspect.Parameter.empty)
         if name in required
-        else inspect.Parameter(name, keyword, default=None)
+        else inspect.Parameter(python_name(name), keyword, default=None)
         for name in route.filters
     ]
     if route.positional:
@@ -119,7 +119,9 @@ class Operation:
             route,
             str(values[route.positional]) if route.positional else "",
             {
-                name: "" if values[name] is None else str(values[name])
+                name: ""
+                if values[python_name(name)] is None
+                else str(values[python_name(name)])
                 for name in route.filters
             },
             limit=int(values.get("limit", 0)),
@@ -195,13 +197,13 @@ class CcrFetch:
             The call shape.
         """
         return (
-            "<ccr.fetch(*release_keys, provider=(), service=(), control=(), "
+            "<ccr.fetch(*tm_ids, provider=(), service=(), control=(), "
             "mode=(), matcher=(), file=(), out=None)>"
         )
 
     def __call__(
         self,
-        *release_keys: str,
+        *tm_ids: str,
         provider: str | Sequence[str] = (),
         service: str | Sequence[str] = (),
         control: str | Sequence[str] = (),
@@ -221,10 +223,11 @@ class CcrFetch:
         also carries the readable packs whose names are close to it.
 
         Args:
-            *release_keys: Packs to read. Every entitled pack when none.
+            *tm_ids: Packs to read, by ThreatModel id. Every entitled pack
+                when none.
             provider: Narrow the listed packs to these providers.
             service: Narrow the listed packs to these services, each given as
-                the service alone or as a whole release key such as
+                the service alone or as a whole ThreatModel id such as
                 ``gcp-vertex``.
             control: Control ids to select.
             mode: Modes a rule must ship one of.
@@ -248,7 +251,7 @@ class CcrFetch:
         """
         return fetch(
             self._client,
-            release_keys=release_keys,
+            tm_ids=tm_ids,
             providers=_many(provider),
             services=_many(service),
             wanted=RuleFilter(

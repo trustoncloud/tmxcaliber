@@ -18,7 +18,12 @@ from tmxcaliber import console, remote_cli
 from tmxcaliber.lib.remote.ccr import PackFailure
 from tmxcaliber.lib.remote.client import TocClient
 from tmxcaliber.lib.remote.config import Settings
-from tmxcaliber.lib.remote.contract import route_for
+from tmxcaliber.lib.remote.contract import (
+    ROUTES,
+    route_for,
+    route_for_path,
+    row_properties,
+)
 from tmxcaliber.lib.remote.errors import (
     AuthenticationError,
     NotFound,
@@ -204,7 +209,9 @@ def test_what_a_collection_says_beyond_its_rows_reaches_stderr(
     assert route is not None
     client = StubClient()
     client.envelope_fields = {"unresolvedTmIds": ["aws-s3"], "empty": []}
-    params = Namespace(api_route=route, framework="nist-800-53-r5", service="", limit=0)
+    params = Namespace(
+        api_route=route, framework_id="nist-800-53-r5", tm_id="", limit=0
+    )
 
     result, _ = run_api_command(params, client=client)  # type: ignore[arg-type]
 
@@ -219,7 +226,9 @@ def test_unresolved_threatmodels_mark_the_answer_incomplete() -> None:
     assert route is not None
     client = StubClient()
     client.envelope_fields = {"unresolvedTmIds": ["aws-s3"]}
-    params = Namespace(api_route=route, framework="nist-800-53-r5", service="", limit=0)
+    params = Namespace(
+        api_route=route, framework_id="nist-800-53-r5", tm_id="", limit=0
+    )
     incomplete: list[str] = []
 
     run_api_command(params, client=client, incomplete=incomplete)  # type: ignore[arg-type]
@@ -234,7 +243,9 @@ def test_an_empty_unresolved_list_is_a_complete_answer() -> None:
     assert route is not None
     client = StubClient()
     client.envelope_fields = {"unresolvedTmIds": []}
-    params = Namespace(api_route=route, framework="nist-800-53-r5", service="", limit=0)
+    params = Namespace(
+        api_route=route, framework_id="nist-800-53-r5", tm_id="", limit=0
+    )
     incomplete: list[str] = []
 
     run_api_command(params, client=client, incomplete=incomplete)  # type: ignore[arg-type]
@@ -276,7 +287,15 @@ def test_an_incomplete_answer_is_written_and_exits_three(
     # Written first, so what the API did answer is kept; the status is what a
     # script sees.
     out = tmp_path / "mappings.json"
-    argv = ["compliance", "mappings", "list", "--framework", "x", "--output", str(out)]
+    argv = [
+        "compliance",
+        "mappings",
+        "list",
+        "--framework-id",
+        "x",
+        "--output",
+        str(out),
+    ]
 
     status = _run_cli(monkeypatch, argv, ['unresolvedTmIds: ["aws-s3"]'])
 
@@ -293,7 +312,7 @@ def test_allow_incomplete_accepts_a_partial_answer(
         "compliance",
         "mappings",
         "list",
-        "--framework",
+        "--framework-id",
         "x",
         "--output",
         str(out),
@@ -372,6 +391,32 @@ def test_the_api_commands_are_reachable_from_the_parser(
     assert params.tm_id == "aws-s3"
 
 
+def test_feature_class_option_sends_the_camelcase_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI keeps its kebab-case option while the wire uses camelCase."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tmxcaliber",
+            "threatmodels",
+            "threats",
+            "aws-s3",
+            "--feature-class",
+            "S3.FC1",
+        ],
+    )
+    params = cli_module.get_params()
+    client = StubClient()
+
+    run_api_command(params, client=client)  # type: ignore[arg-type]
+
+    assert client.calls == [
+        ("/v1/threatmodels/aws/s3/threats", {"featureClass": "S3.FC1", "release": ""})
+    ]
+
+
 def _help_of(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -399,9 +444,9 @@ def test_a_required_filter_is_listed_as_required_and_names_its_source(
     text = _help_of(monkeypatch, capsys, ["compliance", "mappings", "list"])
 
     required = text.split("required arguments:", 1)[1]
-    assert "--framework" in required
+    assert "--framework-id" in required
     assert "tmxcaliber compliance frameworks list" in required
-    assert "filter by framework" not in text
+    assert "filter by framework id" not in text
 
 
 def test_the_group_help_says_what_its_command_needs(
@@ -409,7 +454,46 @@ def test_the_group_help_says_what_its_command_needs(
 ) -> None:
     text = _help_of(monkeypatch, capsys, ["compliance", "mappings"])
 
-    assert "Requires --framework." in " ".join(text.split())
+    assert "Requires --framework-id." in " ".join(text.split())
+
+
+def test_ccr_pack_get_names_the_id_list_reports(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    text = _help_of(monkeypatch, capsys, ["ccr", "packs", "get"])
+
+    assert "TMID" in text
+    assert "ccr packs list" in text
+
+
+def test_every_written_option_help_names_a_bound_route_and_its_option() -> None:
+    """A route the contract renames cannot leave its written help behind.
+
+    `OPTION_HELP` is looked up by path, so a stale key would only drop the
+    written text back to the generated "filter by" wording, with no failure.
+    """
+    for path, options in remote_cli.OPTION_HELP.items():
+        route = route_for_path(path)
+        assert route is not None, path
+        assert set(options) <= set(route.filters), path
+
+
+def test_every_positional_route_suggests_from_a_list_that_carries_its_name() -> None:
+    """A field the contract renames cannot leave a suggestion reading nothing.
+
+    A row without the name field reads as an empty name, so a stale field
+    would end every suggestion quietly.
+    """
+    for route in ROUTES:
+        if route.positional:
+            collection = route.path.partition("{")[0].rstrip("/")
+            assert collection in remote_cli.NAME_LISTS, route.path
+    for collection, (name, title) in remote_cli.NAME_LISTS.items():
+        listing = route_for_path(collection)
+        assert listing is not None and listing.paged, collection
+        fields = row_properties(collection)
+        assert name in fields, collection
+        assert title is None or title in fields, collection
 
 
 def test_an_optional_filter_keeps_its_wording(
@@ -734,7 +818,7 @@ def test_the_archive_command_needs_a_file_to_write_to(
 def test_the_archive_command_writes_the_bytes(tmp_path: pathlib.Path) -> None:
     route = route_for(("ccr", "packs", "archive"))
     assert route is not None
-    params = Namespace(api_route=route, release_key="aws-s3", kind="deploy", release="")
+    params = Namespace(api_route=route, tm_id="aws-s3", kind="deploy", release="")
     client = BytesStubClient()
 
     result, kind = run_api_command(params, client=client)  # type: ignore[arg-type]
@@ -795,7 +879,7 @@ def test_fetch_parses_every_filter(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     assert params.ccr_fetch is True
-    assert params.release_keys == ["aws-s3"]
+    assert params.tm_ids == ["aws-s3"]
     assert (params.control, params.mode, params.matcher, params.file) == (
         ["S3.C20"],
         ["allowlist"],
@@ -955,7 +1039,20 @@ def test_the_fetch_help_says_it_only_previews_without_out(
     assert "Without --out it only previews" in text
     assert "prints the selection as JSON and writes nothing" in text
     assert "downloads each pack's archive and writes the selected files under " in text
-    assert "DIR/<release key>/<rule id>/" in text
+    assert "DIR/<ThreatModel id>/<rule id>/" in text
+
+
+def test_fetch_names_its_packs_as_ccr_packs_get_does(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Both commands take a pack by the ThreatModel id the pack list reports."""
+    fetch_help = " ".join(_help_of(monkeypatch, capsys, ["ccr", "fetch"]).split())
+    get_help = _help_of(monkeypatch, capsys, ["ccr", "packs", "get"])
+
+    assert "[TMID ...]" in fetch_help
+    assert "by ThreatModel id, as `tmxcaliber ccr packs list` reports" in fetch_help
+    assert "TMID" in get_help
+    assert "RELEASEKEY" not in fetch_help + get_help
 
 
 # The tests above that parse a command only read the namespace, so each filter
@@ -964,7 +1061,7 @@ def test_the_fetch_help_says_it_only_previews_without_out(
 
 
 @pytest.mark.parametrize(
-    ("words", "release_keys"),
+    ("words", "tm_ids"),
     [
         (("--provider", "gcp"), {"gcp-bigquery"}),
         (("--service", "s3"), {"aws-s3"}),
@@ -975,7 +1072,7 @@ def test_fetch_narrows_the_packs_by_provider_or_service(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     words: tuple[str, ...],
-    release_keys: set[str],
+    tm_ids: set[str],
 ) -> None:
     params = _fetch_params(monkeypatch, *words)
 
@@ -983,7 +1080,7 @@ def test_fetch_narrows_the_packs_by_provider_or_service(
 
     rows = json.loads(capsys.readouterr().out)
     assert status == 0
-    assert {row["releaseKey"] for row in rows} == release_keys
+    assert {row["tmId"] for row in rows} == tm_ids
 
 
 def test_fetch_selects_only_rules_that_ship_the_mode(
@@ -1169,7 +1266,7 @@ def test_the_service_a_refusal_suggests_is_accepted_when_typed_back(
     assert status == 0
     # Only the note that this was a preview, and no refusal.
     assert captured.err.startswith("ⓘ Preview only, nothing was written: ")
-    assert {row["releaseKey"] for row in json.loads(captured.out)} == {"gcp-vertex"}
+    assert {row["tmId"] for row in json.loads(captured.out)} == {"gcp-vertex"}
 
 
 def test_the_service_a_refusal_suggests_beside_a_provider_names_that_provider(
@@ -1437,13 +1534,8 @@ THREATMODELS = [
 
 #: ``ccr packs list`` as a key that reads two packs sees it.
 PACKS = [
-    {"releaseKey": "aws-ec2", "service": "ec2", "ruleCount": 3, "releaseId": None},
-    {
-        "releaseKey": "gcp-bigquery",
-        "service": "bigquery",
-        "ruleCount": 1,
-        "releaseId": None,
-    },
+    {"tmId": "aws-ec2", "ruleCount": 3, "releaseId": None},
+    {"tmId": "gcp-bigquery", "ruleCount": 1, "releaseId": None},
 ]
 
 
@@ -1539,6 +1631,38 @@ def test_a_name_the_api_does_not_know_is_followed_by_what_it_probably_meant(
     list_route = route_for(listing)
     assert list_route is not None
     assert urllib.parse.urlsplit(opener.requests[1].full_url).path == list_route.path
+    assert opener.answers == []
+
+
+def test_fetch_finds_a_service_in_a_pack_row_that_carries_only_its_tm_id(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--service s3`` still reaches aws-s3 once the rows stopped naming it.
+
+    A pack list row carries ``tmId``, ``ruleCount`` and ``releaseId`` and no
+    ``service``, so the provider and service are read from the id. Run over
+    the real client, so the row is held to the contract as the API sends it.
+    """
+    rows = [
+        {"tmId": "aws-s3", "ruleCount": 3, "releaseId": None},
+        {"tmId": "gcp-bigquery", "ruleCount": 1, "releaseId": None},
+    ]
+    _, manifest = two_packs()["aws-s3"]
+
+    status, opener = _main_over(
+        monkeypatch,
+        [_listing(("ccr", "packs", "list"), rows), FakeResponse(manifest)],
+        ["ccr", "fetch", "--service", "s3"],
+    )
+
+    printed = json.loads(capsys.readouterr().out)
+    assert status == 0
+    assert printed
+    assert {row["tmId"] for row in printed} == {"aws-s3"}
+    assert [urllib.parse.urlsplit(r.full_url).path for r in opener.requests] == [
+        "/v1/ccr/packs",
+        "/v1/ccr/packs/aws-s3",
+    ]
     assert opener.answers == []
 
 
@@ -1645,8 +1769,8 @@ def test_the_suggestion_starts_a_sentence_of_its_own() -> None:
 #: ``ccr packs list`` as a key that reads the packs of two renamed services sees it.
 VERTEX_PACKS = [
     *PACKS,
-    {"releaseKey": "gcp-vertex", "service": "vertex", "ruleCount": 2},
-    {"releaseKey": "gcp-pubsub", "service": "pubsub", "ruleCount": 1},
+    {"tmId": "gcp-vertex", "ruleCount": 2, "releaseId": None},
+    {"tmId": "gcp-pubsub", "ruleCount": 1, "releaseId": None},
 ]
 
 

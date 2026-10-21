@@ -187,7 +187,7 @@ def select_rules(manifest: Mapping[str, Any], wanted: RuleFilter) -> list[Select
 
 
 def rule_row(
-    release_key: str,
+    tm_id: str,
     release_id: str,
     chosen: Selected,
     *,
@@ -205,7 +205,7 @@ def rule_row(
     these two fields alone: the row's ``files`` already shows what a glob kept.
 
     Args:
-        release_key: The pack.
+        tm_id: The pack.
         release_id: The release the manifest came from.
         chosen: The rule.
         wanted: The filter the rule was chosen by.
@@ -228,7 +228,7 @@ def rule_row(
         if not wanted.matchers or name in wanted.matchers
     }
     return {
-        "releaseKey": release_key,
+        "tmId": tm_id,
         "releaseId": release_id,
         "ruleId": str(rule.get("id", "")),
         "name": rule.get("name", ""),
@@ -239,7 +239,7 @@ def rule_row(
     }
 
 
-def verify_archive(data: bytes, manifest: Mapping[str, Any], release_key: str) -> None:
+def verify_archive(data: bytes, manifest: Mapping[str, Any], tm_id: str) -> None:
     """Refuse an archive that is not the one its manifest describes.
 
     The API checks the same digest before serving, so a mismatch here means
@@ -249,7 +249,7 @@ def verify_archive(data: bytes, manifest: Mapping[str, Any], release_key: str) -
     Args:
         data: The archive.
         manifest: The manifest the rules were selected from.
-        release_key: The pack, for the message.
+        tm_id: The pack, for the message.
 
     Raises:
         ContractViolation: If the manifest describes no source archive, or the
@@ -258,18 +258,18 @@ def verify_archive(data: bytes, manifest: Mapping[str, Any], release_key: str) -
     block = manifest.get("bundle")
     if not isinstance(block, Mapping) or not block.get("sha256"):
         raise ContractViolation(
-            f"{release_key}'s manifest describes no source archive.",
+            f"{tm_id}'s manifest describes no source archive.",
             code="bad_manifest",
         )
     size = block.get("bytes")
     if isinstance(size, int) and size != len(data):
         raise ContractViolation(
-            f"{release_key}'s archive is {len(data)} bytes; its manifest says {size}.",
+            f"{tm_id}'s archive is {len(data)} bytes; its manifest says {size}.",
             code="archive_mismatch",
         )
     if hashlib.sha256(data).hexdigest() != block["sha256"]:
         raise ContractViolation(
-            f"{release_key}'s archive does not match its manifest's digest.",
+            f"{tm_id}'s archive does not match its manifest's digest.",
             code="archive_mismatch",
         )
 
@@ -303,14 +303,15 @@ _WINDOWS_DEVICES: Final[frozenset[str]] = frozenset(
     | {f"lpt{n}" for n in range(1, 10)}
 )
 
-#: The form of a pack's release key, which is the API's own rule
-#: (``isSafeReleaseKey``): lowercase letters and digits in two or more groups
-#: joined by single hyphens, as in ``aws-s3``. The key becomes a folder name
-#: under the output folder and the API never sends one that does not fit, so
+#: The form of a pack's ThreatModel id, which is the API's own rule
+#: (``isSafeReleaseKey``, from when the API called the id a release key):
+#: lowercase letters and digits in two or more groups joined by single hyphens,
+#: as in ``aws-s3``. The id becomes a folder name under the output folder and
+#: the API never sends one that does not fit, so
 #: this client accepts exactly that form instead of listing what could go wrong
 #: in a folder name. It is matched with ``fullmatch`` because ``$`` also accepts
 #: a trailing newline.
-_RELEASE_KEY: Final[re.Pattern[str]] = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)+")
+_TM_ID: Final[re.Pattern[str]] = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)+")
 
 
 def _is_safe(name: str) -> bool:
@@ -359,32 +360,32 @@ def _is_portable(name: str) -> bool:
     return True
 
 
-def _refuse_unsafe_key(release_key: str) -> None:
-    """Refuse a release key that is not the form the API issues.
+def _refuse_unsafe_id(tm_id: str) -> None:
+    """Refuse a pack's ThreatModel id that is not the form the API issues.
 
-    The key is joined onto ``out`` as a folder name, and it reaches this client
-    from an API response, so a key such as ``..`` or ``a/b`` would send every
+    The id is joined onto ``out`` as a folder name, and it reaches this client
+    from an API response, so an id such as ``..`` or ``a/b`` would send every
     file of the pack outside ``out``. The checks on the manifest's paths and on
-    the archive's names cannot see it, because the key is not part of either.
-    A null byte in a key would also end a fetch with a raw ``ValueError`` from
+    the archive's names cannot see it, because the id is not part of either.
+    A null byte in an id would also end a fetch with a raw ``ValueError`` from
     the disk calls.
 
     Args:
-        release_key: The pack.
+        tm_id: The pack.
 
     Raises:
-        ContractViolation: If the key does not match the API's own form (code
+        ContractViolation: If the id does not match the API's own form (code
             ``archive_unsafe``).
     """
-    if not _RELEASE_KEY.fullmatch(release_key):
+    if not _TM_ID.fullmatch(tm_id):
         raise ContractViolation(
-            f"The pack key {release_key!r} is not in the form the API issues, so "
+            f"The pack id {tm_id!r} is not in the form the API issues, so "
             "nothing is written under it.",
             code="archive_unsafe",
         )
 
 
-def _refuse_unwritable(wanted: Sequence[str], release_key: str) -> None:
+def _refuse_unwritable(wanted: Sequence[str], tm_id: str) -> None:
     """Refuse a selection that cannot be laid out as separate files.
 
     Run before anything is written, so a refused pack leaves ``out`` as it was.
@@ -399,7 +400,7 @@ def _refuse_unwritable(wanted: Sequence[str], release_key: str) -> None:
 
     Args:
         wanted: The selected paths, each ``<rule id>/<file>``.
-        release_key: The pack, for the message.
+        tm_id: The pack, for the message.
 
     Raises:
         ContractViolation: If the manifest lists a path twice (code
@@ -411,7 +412,7 @@ def _refuse_unwritable(wanted: Sequence[str], release_key: str) -> None:
     for name in wanted:
         if name in seen:
             raise ContractViolation(
-                f"{release_key}'s manifest lists {name} more than once.",
+                f"{tm_id}'s manifest lists {name} more than once.",
                 code="bad_manifest",
             )
         seen.add(name)
@@ -419,20 +420,19 @@ def _refuse_unwritable(wanted: Sequence[str], release_key: str) -> None:
     for name in wanted:
         if not _is_safe(name):
             raise ContractViolation(
-                f"{release_key}'s manifest declares {name!r}, which could leave "
-                "its folder.",
+                f"{tm_id}'s manifest declares {name!r}, which could leave its folder.",
                 code="archive_unsafe",
             )
         if not _is_portable(name):
             raise ContractViolation(
-                f"{release_key}'s manifest declares {name!r}, which cannot be "
+                f"{tm_id}'s manifest declares {name!r}, which cannot be "
                 "written as a file on Windows.",
                 code="archive_unsafe",
             )
         other = by_folded.setdefault(name.casefold(), name)
         if other != name:
             raise ContractViolation(
-                f"{release_key}'s manifest declares {other} and {name}, which are "
+                f"{tm_id}'s manifest declares {other} and {name}, which are "
                 "one file wherever case does not matter.",
                 code="archive_unsafe",
             )
@@ -442,15 +442,13 @@ def _refuse_unwritable(wanted: Sequence[str], release_key: str) -> None:
             parent = by_folded.get("/".join(parts[:depth]))
             if parent is not None:
                 raise ContractViolation(
-                    f"{release_key}'s manifest declares {parent} as a file and "
+                    f"{tm_id}'s manifest declares {parent} as a file and "
                     f"{name} inside it as a folder.",
                     code="archive_unsafe",
                 )
 
 
-def _refuse_folders_in_the_way(
-    wanted: Sequence[str], release_key: str, out: Path
-) -> None:
+def _refuse_folders_in_the_way(wanted: Sequence[str], tm_id: str, out: Path) -> None:
     """Refuse a selection when a folder sits where one of its files belongs.
 
     A file already at its final path is set aside and put back if the pack
@@ -461,7 +459,7 @@ def _refuse_folders_in_the_way(
 
     Args:
         wanted: The paths to write, each ``<rule id>/<file>``.
-        release_key: The pack.
+        tm_id: The pack.
         out: The folder to write under.
 
     Raises:
@@ -472,30 +470,30 @@ def _refuse_folders_in_the_way(
             ``Path.is_dir``, and without this it would end a whole fetch.
     """
     for name in wanted:
-        final = out.joinpath(release_key, *name.split("/"))
+        final = out.joinpath(tm_id, *name.split("/"))
         try:
             in_the_way = final.is_dir()
         except OSError as exc:
             raise ContractViolation(
-                f"{release_key}'s file {name} cannot be written, because {final} "
+                f"{tm_id}'s file {name} cannot be written, because {final} "
                 f"cannot be examined: {exc} Nothing was changed.",
                 code="archive_unwritable",
             ) from exc
         if in_the_way:
             raise ContractViolation(
-                f"{release_key}'s file {name} cannot be written, because {final} "
+                f"{tm_id}'s file {name} cannot be written, because {final} "
                 "is a folder.",
                 code="archive_unwritable",
             )
 
 
-def _read_member(archive: zipfile.ZipFile, name: str, release_key: str) -> bytes:
+def _read_member(archive: zipfile.ZipFile, name: str, tm_id: str) -> bytes:
     """Read one entry, naming the pack when the archive cannot give it up.
 
     Args:
         archive: The open archive.
         name: The entry.
-        release_key: The pack, for the message.
+        tm_id: The pack, for the message.
 
     Returns:
         The entry's content.
@@ -508,7 +506,7 @@ def _read_member(archive: zipfile.ZipFile, name: str, release_key: str) -> bytes
         return archive.read(name)
     except _UNREADABLE as exc:
         raise ContractViolation(
-            f"{release_key}'s archive cannot give up {name}: {exc}",
+            f"{tm_id}'s archive cannot give up {name}: {exc}",
             code="archive_unreadable",
         ) from exc
 
@@ -585,11 +583,11 @@ def _remove_tree(folder: Path) -> None:
 def _install(
     archive: zipfile.ZipFile,
     wanted: Sequence[str],
-    release_key: str,
+    tm_id: str,
     out: Path,
     created: list[Path],
 ) -> list[Path]:
-    """Stage the selected files, then move them into ``out/<release_key>``.
+    """Stage the selected files, then move them into ``out/<tm_id>``.
 
     A file already at its final path is set aside inside the staging folder
     first. If any step then fails, the files already moved are taken out again
@@ -600,7 +598,7 @@ def _install(
     Args:
         archive: The open archive.
         wanted: The paths to write, each ``<rule id>/<file>``.
-        release_key: The pack.
+        tm_id: The pack.
         out: The folder to write under.
         created: Receives each folder this call makes, outermost first.
 
@@ -621,14 +619,14 @@ def _install(
     staging: Path | None = None
     try:
         _make_folder(out, created)
-        staging = Path(tempfile.mkdtemp(prefix=f".{release_key}-", dir=out))
+        staging = Path(tempfile.mkdtemp(prefix=f".{tm_id}-", dir=out))
         for name in wanted:
             staged = staging.joinpath("new", *name.split("/"))
             staged.parent.mkdir(parents=True, exist_ok=True)
-            staged.write_bytes(_read_member(archive, name, release_key))
+            staged.write_bytes(_read_member(archive, name, tm_id))
         written: list[Path] = []
         for index, name in enumerate(wanted):
-            final = out.joinpath(release_key, *name.split("/"))
+            final = out.joinpath(tm_id, *name.split("/"))
             _make_folder(final.parent, created)
             displaced: Path | None = None
             if os.path.lexists(final):
@@ -650,7 +648,7 @@ def _install(
             else f"Files it replaced could not be put back, and are kept in {staging}."
         )
         raise ContractViolation(
-            f"{release_key}'s files could not be written under {out}: {exc} {outcome}",
+            f"{tm_id}'s files could not be written under {out}: {exc} {outcome}",
             code="archive_unwritable",
         ) from exc
     except BaseException:
@@ -664,11 +662,11 @@ def _install(
 def extract(
     data: bytes,
     manifest: Mapping[str, Any],
-    release_key: str,
+    tm_id: str,
     chosen: Sequence[Selected],
     out: Path,
 ) -> list[Path]:
-    """Write the selected files of a verified archive under ``out/<release_key>``.
+    """Write the selected files of a verified archive under ``out/<tm_id>``.
 
     **All or nothing per pack.** Every check runs, and every selected file is
     read and written to a staging folder inside ``out``, before anything
@@ -680,7 +678,7 @@ def extract(
     Args:
         data: The archive, already verified with `verify_archive`.
         manifest: The manifest the rules were selected from.
-        release_key: The pack.
+        tm_id: The pack.
         chosen: The rules and files to write.
         out: The folder to write under.
 
@@ -694,12 +692,12 @@ def extract(
             missing from the archive, or the selection lists a path twice,
             holds one that could leave its folder, or names files that cannot
             sit side by side on every platform. Also, with code
-            ``archive_unsafe``, if the pack's key is not in the form the API
-            issues, because a key such as ``..`` would name a folder outside
-            ``out``. Also, with code ``archive_unwritable``, if a folder is
-            where a file belongs, a path under ``out`` cannot be examined, or
-            the disk refuses to make ``out`` or to write or move a file, in
-            which case ``out`` has been put back as it was.
+            ``archive_unsafe``, if the pack's ThreatModel id is not in the
+            form the API issues, because an id such as ``..`` would name a
+            folder outside ``out``. Also, with code ``archive_unwritable``, if
+            a folder is where a file belongs, a path under ``out`` cannot be
+            examined, or the disk refuses to make ``out`` or to write or move
+            a file, in which case ``out`` has been put back as it was.
     """
     declared = {
         f"{rule.get('id')}/{file}"
@@ -708,16 +706,16 @@ def extract(
         for file in rule.get("files") or []
     }
     wanted = [f"{s.rule.get('id')}/{file}" for s in chosen for file in s.files]
-    # The key and these paths are what gets joined onto ``out``, so they are
+    # The id and these paths are what gets joined onto ``out``, so they are
     # judged before the archive is looked at. Nothing the archive's names say
     # can vouch for them.
-    _refuse_unsafe_key(release_key)
-    _refuse_unwritable(wanted, release_key)
+    _refuse_unsafe_id(tm_id)
+    _refuse_unwritable(wanted, tm_id)
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except _UNREADABLE as exc:
         raise ContractViolation(
-            f"{release_key}'s archive is not a readable zip: {exc}",
+            f"{tm_id}'s archive is not a readable zip: {exc}",
             code="archive_unreadable",
         ) from exc
     with archive:
@@ -734,7 +732,7 @@ def extract(
         )
         if unsafe:
             raise ContractViolation(
-                f"{release_key}'s archive holds an unsafe entry: {unsafe[0]!r}.",
+                f"{tm_id}'s archive holds an unsafe entry: {unsafe[0]!r}.",
                 code="archive_unsafe",
             )
         # zipfile reports a name that an extra field gives an entry, and a name
@@ -750,28 +748,27 @@ def extract(
         )
         if renamed:
             raise ContractViolation(
-                f"{release_key}'s archive holds an entry stored as {renamed[0]!r} "
+                f"{tm_id}'s archive holds an entry stored as {renamed[0]!r} "
                 "that reads as another name.",
                 code="archive_unsafe",
             )
         undeclared = sorted(entries - declared)
         if undeclared:
             raise ContractViolation(
-                f"{release_key}'s archive holds {undeclared[0]}, which its manifest "
+                f"{tm_id}'s archive holds {undeclared[0]}, which its manifest "
                 "does not declare.",
                 code="archive_mismatch",
             )
         missing = [name for name in wanted if name not in entries]
         if missing:
             raise ContractViolation(
-                f"{release_key}'s archive lacks {missing[0]}, which its manifest "
-                "declares.",
+                f"{tm_id}'s archive lacks {missing[0]}, which its manifest declares.",
                 code="archive_mismatch",
             )
-        _refuse_folders_in_the_way(wanted, release_key, out)
+        _refuse_folders_in_the_way(wanted, tm_id, out)
         created: list[Path] = []
         try:
-            return _install(archive, wanted, release_key, out, created)
+            return _install(archive, wanted, tm_id, out, created)
         except BaseException:
             # Whatever the install put in these folders is gone by now, so the
             # ones left are empty and removing them restores ``out``.
@@ -789,11 +786,11 @@ def extract(
 _RELEASE_ID: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{7,64}")
 
 
-def _malformed(release_key: str, field: str, expected: str) -> ContractViolation:
+def _malformed(tm_id: str, field: str, expected: str) -> ContractViolation:
     """Describe one manifest field that is not the shape this module reads.
 
     Args:
-        release_key: The pack.
+        tm_id: The pack.
         field: Where the field sits, such as ``rules[0].modes``.
         expected: What the field should have been.
 
@@ -801,7 +798,7 @@ def _malformed(release_key: str, field: str, expected: str) -> ContractViolation
         The error, with code ``bad_manifest``.
     """
     return ContractViolation(
-        f"{release_key}'s manifest field {field} is not {expected}.",
+        f"{tm_id}'s manifest field {field} is not {expected}.",
         code="bad_manifest",
     )
 
@@ -818,7 +815,7 @@ def _is_strings(value: Any) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
-def _manifest_release_id(manifest: Any, release_key: str) -> str:
+def _manifest_release_id(manifest: Any, tm_id: str) -> str:
     """Take the release id from a manifest, refusing one the API would refuse.
 
     This is the first check on a manifest, and it hands the id back so the
@@ -830,7 +827,7 @@ def _manifest_release_id(manifest: Any, release_key: str) -> str:
 
     Args:
         manifest: The manifest, as the API answered it.
-        release_key: The pack, for the message.
+        tm_id: The pack, for the message.
 
     Returns:
         The release id, or the empty string when the manifest names none, as
@@ -844,17 +841,17 @@ def _manifest_release_id(manifest: Any, release_key: str) -> str:
     """
     if not isinstance(manifest, Mapping):
         raise ContractViolation(
-            f"{release_key}'s manifest is not an object.", code="bad_manifest"
+            f"{tm_id}'s manifest is not an object.", code="bad_manifest"
         )
     release_id = manifest.get("release_id")
     if release_id in (None, ""):
         return ""
     if not (isinstance(release_id, str) and _RELEASE_ID.fullmatch(release_id)):
-        raise _malformed(release_key, "release_id", "7 to 64 lowercase hex digits")
+        raise _malformed(tm_id, "release_id", "7 to 64 lowercase hex digits")
     return release_id
 
 
-def _refuse_malformed_rules(manifest: Mapping[str, Any], release_key: str) -> None:
+def _refuse_malformed_rules(manifest: Mapping[str, Any], tm_id: str) -> None:
     """Refuse a manifest whose rules are not the shapes this module reads.
 
     Selection and extraction trust the types of the rules' fields. Unchecked, a
@@ -867,7 +864,7 @@ def _refuse_malformed_rules(manifest: Mapping[str, Any], release_key: str) -> No
 
     Args:
         manifest: The manifest, once `_manifest_release_id` has accepted it.
-        release_key: The pack, for the message.
+        tm_id: The pack, for the message.
 
     Raises:
         ContractViolation: If ``rules`` is not a list of objects, a rule's
@@ -879,24 +876,24 @@ def _refuse_malformed_rules(manifest: Mapping[str, Any], release_key: str) -> No
     if rules is None:
         return
     if not isinstance(rules, list):
-        raise _malformed(release_key, "rules", "a list")
+        raise _malformed(tm_id, "rules", "a list")
     for index, rule in enumerate(rules):
         where = f"rules[{index}]"
         if not isinstance(rule, Mapping):
-            raise _malformed(release_key, where, "an object")
+            raise _malformed(tm_id, where, "an object")
         rule_id = rule.get("id")
         if not isinstance(rule_id, str) or not rule_id:
-            raise _malformed(release_key, f"{where}.id", "a non-empty string")
+            raise _malformed(tm_id, f"{where}.id", "a non-empty string")
         for name in ("modes", "files"):
             value = rule.get(name)
             if value is not None and not _is_strings(value):
-                raise _malformed(release_key, f"{where}.{name}", "a list of strings")
+                raise _malformed(tm_id, f"{where}.{name}", "a list of strings")
         matchers = rule.get("matchers")
         if matchers is not None and not (
             isinstance(matchers, Mapping)
             and all(isinstance(matcher, Mapping) for matcher in matchers.values())
         ):
-            raise _malformed(release_key, f"{where}.matchers", "an object of objects")
+            raise _malformed(tm_id, f"{where}.matchers", "an object of objects")
 
 
 def _route(command: tuple[str, ...]) -> Route:
@@ -997,7 +994,7 @@ class PackFailure:
     own, so a script can branch on it without parsing the line people read.
 
     Attributes:
-        release_key: The pack.
+        tm_id: The pack.
         stage: The step that failed, one of `STAGES`.
         code: The API's error code, such as ``unavailable``, or this client's
             own, such as ``archive_mismatch``. Never empty: an error that
@@ -1012,7 +1009,7 @@ class PackFailure:
             best first. Empty otherwise, and when none is close.
     """
 
-    release_key: str
+    tm_id: str
     stage: str
     code: str
     message: str
@@ -1090,7 +1087,7 @@ class PackOutcome:
     """What one pack that completed gave.
 
     Attributes:
-        release_key: The pack.
+        tm_id: The pack.
         release_id: The release its manifest named, or empty when it named
             none.
         rows: One row per rule selected from it, in manifest order.
@@ -1098,14 +1095,14 @@ class PackOutcome:
             empty when no folder was given or nothing was selected.
     """
 
-    release_key: str
+    tm_id: str
     release_id: str
     rows: tuple[dict[str, Any], ...]
     written: tuple[Path, ...]
 
 
-#: What `fetch` calls once per pack as the pack finishes: with the key as the
-#: caller named or the list gave it, and the pack's outcome or failure.
+#: What `fetch` calls once per pack as the pack finishes: with the ThreatModel
+#: id as the caller named or the list gave it, and the pack's outcome or failure.
 OnPack = Callable[[str, "PackOutcome | PackFailure"], None]
 
 
@@ -1116,7 +1113,7 @@ class FetchResult:
     Attributes:
         rows: One row per selected rule, across every pack that completed.
         written: Every file written, when a folder was given.
-        failed: Each pack that could not be fetched, by release key, with the
+        failed: Each pack that could not be fetched, by ThreatModel id, with the
             stage it reached and why.
     """
 
@@ -1125,21 +1122,21 @@ class FetchResult:
     failed: dict[str, PackFailure] = field(default_factory=dict)
 
 
-def _listed_keys(client: TocClient) -> list[str]:
-    """Read the release key of every pack this key can read.
+def _listed_ids(client: TocClient) -> list[str]:
+    """Read the ThreatModel id of every pack this key can read.
 
     Args:
         client: The client.
 
     Returns:
-        Each listed pack's release key, in the API's order. A row without one
+        Each listed pack's ThreatModel id, in the API's order. A row without one
         reads as the empty string.
 
     Raises:
         RemoteError: If the list cannot be read.
     """
     return [
-        str(row.get("releaseKey") or "")
+        str(row.get("tmId") or "")
         for row in call_route(client, _route(("ccr", "packs", "list")), "", {}).result
     ]
 
@@ -1153,7 +1150,7 @@ def _no_pack_matched(
     key cannot read is never named, whatever an alias says.
 
     Args:
-        listed: The release keys of every pack this key can read.
+        listed: The ThreatModel ids of every pack this key can read.
         providers: The providers asked for.
         services: The services asked for.
 
@@ -1162,7 +1159,7 @@ def _no_pack_matched(
         one filter joined by "or" and different filters by "and", as the
         filters combine. Its suggestions are, for each provider, the listed
         providers close to it, then, for each service, the listed packs whose
-        key or service is close to it, without repeats, and its
+        ThreatModel id or service is close to it, without repeats, and its
         ``did_you_mean`` is the sentence that names them, which ``str()``
         puts after the message.
 
@@ -1191,7 +1188,7 @@ def _no_pack_matched(
         near_packs += suggest(value, keys)
     suggestions = tuple(dict.fromkeys([*near_providers, *near_packs]))
     message = f"No pack this key can read matches {' and '.join(named)}."
-    # The packs the services name, either as typed (a whole release key is
+    # The packs the services name, either as typed (a whole ThreatModel id is
     # accepted as a service) or by suggestion, grouped by the provider they
     # belong to.
     given = [value for value in services if value in keys]
@@ -1221,9 +1218,9 @@ def _no_pack_matched(
     return NoPackMatched(" ".join([message, *notes]), suggestions=suggestions)
 
 
-def _pack_keys(
+def _pack_ids(
     client: TocClient,
-    release_keys: Sequence[str],
+    tm_ids: Sequence[str],
     providers: Sequence[str],
     services: Sequence[str],
 ) -> list[str]:
@@ -1231,32 +1228,33 @@ def _pack_keys(
 
     Args:
         client: The client.
-        release_keys: Packs named by the caller.
+        tm_ids: Packs named by the caller.
         providers: Providers to narrow the listed packs to.
         services: Services to narrow the listed packs to, each given as the
-            service alone, such as ``vertex``, or as the whole release key,
+            service alone, such as ``vertex``, or as the whole ThreatModel id,
             such as ``gcp-vertex``.
 
     Returns:
-        The release keys, in the order they will be read.
+        The ThreatModel ids, in the order they will be read.
 
     Raises:
         NoPackMatched: If a provider or service was given and no listed pack
             has it. Read as "no rule matched", a misspelled or renamed
             service would look like a pack with no such rule.
     """
-    if release_keys:
-        return list(dict.fromkeys(release_keys))
-    listed = _listed_keys(client)
+    if tm_ids:
+        return list(dict.fromkeys(tm_ids))
+    listed = _listed_ids(client)
     keys: list[str] = []
     for key in listed:
-        # A release key is `<provider>-<service>`, split on its first hyphen,
-        # as the API splits it to check entitlement.
+        # A pack's ThreatModel id is `<provider>-<service>`, split on its first
+        # hyphen, as the API splits it to check entitlement. The list rows carry
+        # the id alone, so the provider and service are read from it.
         provider, _, service = key.partition("-")
         if providers and provider not in providers:
             continue
-        # A whole release key also names its service. The refusal below
-        # suggests release keys, so a person answers it by typing one here.
+        # A whole ThreatModel id also names its service. The refusal below
+        # suggests ids, so a person answers it by typing one here.
         if services and service not in services and key not in services:
             continue
         keys.append(key)
@@ -1265,7 +1263,7 @@ def _pack_keys(
     return keys
 
 
-def _readable_keys(client: TocClient) -> list[str]:
+def _readable_ids(client: TocClient) -> list[str]:
     """Read the packs this key can read, for suggestions, surviving any failure.
 
     A suggestion is a courtesy on a pack that has already failed, so a list
@@ -1275,10 +1273,10 @@ def _readable_keys(client: TocClient) -> list[str]:
         client: The client.
 
     Returns:
-        The listed release keys, or none when the list cannot be read.
+        The listed ThreatModel ids, or none when the list cannot be read.
     """
     try:
-        return [key for key in _listed_keys(client) if key]
+        return [key for key in _listed_ids(client) if key]
     except RemoteError:
         return []
 
@@ -1305,13 +1303,11 @@ _PACK_ERRORS: Final[Mapping[str, tuple[type[RemoteError], ...]]] = {
 _UNKNOWN_PACK: Final[frozenset[str]] = frozenset({"not_found", NotFound.__name__})
 
 
-def _failure(
-    release_key: str, stage: str, exc: RemoteError, release_id: str
-) -> PackFailure:
+def _failure(tm_id: str, stage: str, exc: RemoteError, release_id: str) -> PackFailure:
     """Describe the error that ended one pack.
 
     Args:
-        release_key: The pack.
+        tm_id: The pack.
         stage: The step that failed, one of `STAGES`.
         exc: The error.
         release_id: The release the manifest named, or empty when no manifest
@@ -1321,7 +1317,7 @@ def _failure(
         The failure.
     """
     return PackFailure(
-        release_key=release_key,
+        tm_id=tm_id,
         stage=stage,
         # A bare status from whatever sits in front of the API arrives without
         # a code, and an empty code would tell a script nothing.
@@ -1415,7 +1411,7 @@ def _fetch_pack(
 def fetch(
     client: TocClient,
     *,
-    release_keys: Sequence[str] = (),
+    tm_ids: Sequence[str] = (),
     providers: Sequence[str] = (),
     services: Sequence[str] = (),
     wanted: RuleFilter = _NO_FILTER,
@@ -1442,16 +1438,18 @@ def fetch(
 
     Args:
         client: The client.
-        release_keys: Packs to read. Every entitled pack when empty.
+        tm_ids: Packs to read. Every entitled pack when empty.
         providers: Narrow the listed packs to these providers.
         services: Narrow the listed packs to these services, each given as
-            the service alone or as a whole release key such as ``gcp-vertex``.
+            the service alone or as a whole ThreatModel id such as
+            ``gcp-vertex``.
         wanted: Which rules and files to select.
         out: The folder to write under, or None to only list.
         on_pack: Called once per pack as soon as it finishes, in the order
-            the packs are read, with its key and its `PackOutcome`, or the
-            `PackFailure` that ended it, suggestions included. The command
-            line reports progress with it; a fetch without it is unchanged.
+            the packs are read, with its ThreatModel id and its `PackOutcome`,
+            or the `PackFailure` that ended it, suggestions included. The
+            command line reports progress with it; a fetch without it is
+            unchanged.
 
     Returns:
         The rows, the files written and the packs that failed.
@@ -1462,22 +1460,18 @@ def fetch(
             can read has it. Nothing past the list is read then.
         RemoteError: On a failure that is not one pack's alone.
     """
-    if release_keys and (providers or services):
+    if tm_ids and (providers or services):
         raise ValueError("Name packs, or narrow by provider and service, not both.")
     result = FetchResult()
     readable: list[str] | None = None
-    for key in _pack_keys(client, release_keys, providers, services):
+    for key in _pack_ids(client, tm_ids, providers, services):
         outcome = _fetch_pack(client, key, wanted, out)
         if isinstance(outcome, PackFailure):
             # Only a name the caller typed can be mistyped. A listed pack that
             # is not found was withdrawn between the two reads.
-            if (
-                release_keys
-                and outcome.stage == "manifest"
-                and outcome.code in _UNKNOWN_PACK
-            ):
+            if tm_ids and outcome.stage == "manifest" and outcome.code in _UNKNOWN_PACK:
                 if readable is None:
-                    readable = _readable_keys(client)
+                    readable = _readable_ids(client)
                 # A release pins a version of the name and is no part of it,
                 # as the derived commands read it. A listed name is then left
                 # with nothing to correct, because only its release is wrong.

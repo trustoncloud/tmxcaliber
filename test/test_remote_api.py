@@ -25,6 +25,7 @@ from tmxcaliber.lib.remote.config import DEFAULT_BASE_URL
 from tmxcaliber.lib.remote.contract import (
     ROUTES,
     Route,
+    python_name,
     required_page_fields,
     required_parameters,
     route_for,
@@ -48,7 +49,7 @@ from .test_remote_client import (
 from .test_remote_config import HAZARD, KEY, OTHER, STORED_URL, write_config
 
 #: A value for each kind of positional the route table uses.
-POSITIONAL_VALUES = {"tm_id": "aws-s3", "release_key": "pack-1"}
+POSITIONAL_VALUES = {"tm_id": "aws-s3"}
 
 
 @pytest.fixture(autouse=True)
@@ -112,7 +113,7 @@ def call_arguments(route: Route) -> tuple[tuple[str, ...], dict[str, str]]:
         The positional arguments and the keyword arguments.
     """
     args = (POSITIONAL_VALUES[route.positional],) if route.positional else ()
-    return args, {name: f"{name}-value" for name in route.filters}
+    return args, {python_name(name): f"{name}-value" for name in route.filters}
 
 
 def test_the_client_is_importable_from_the_package() -> None:
@@ -260,7 +261,8 @@ def test_every_route_calls_its_own_path_with_its_filters(route: Route) -> None:
     opener = FakeOpener([FakeResponse(answer)])
     client = Client(opener=opener)
     args, kwargs = call_arguments(route)
-    expected_path, expected_query = request_for(route, args[0] if args else "", kwargs)
+    wire = {name: kwargs[python_name(name)] for name in route.filters}
+    expected_path, expected_query = request_for(route, args[0] if args else "", wire)
 
     # Act
     operation_for(client, route)(*args, **kwargs)
@@ -276,12 +278,14 @@ def test_the_signature_reads_like_the_cli_command(route: Route) -> None:
     parameters = inspect.signature(operation_for(Client(), route)).parameters
 
     names = [name for name in parameters if name not in ("limit", "allow_incomplete")]
-    expected = ([route.positional] if route.positional else []) + list(route.filters)
+    expected = ([route.positional] if route.positional else []) + [
+        python_name(name) for name in route.filters
+    ]
     assert names == expected
     assert ("limit" in parameters) is route.paged
     assert ("allow_incomplete" in parameters) is bool(incompleteness_fields(route))
     for name in required_parameters(route.path) & set(route.filters):
-        assert parameters[name].default is inspect.Parameter.empty
+        assert parameters[python_name(name)].default is inspect.Parameter.empty
 
 
 def test_a_paged_route_returns_every_row_across_pages() -> None:
@@ -302,6 +306,21 @@ def test_a_paged_route_returns_every_row_across_pages() -> None:
         "limit": "1",
         "cursor": "next",
     }
+
+
+def test_python_feature_class_keyword_uses_snake_case() -> None:
+    route = next(
+        route for route in ROUTES if route.command == ("threatmodels", "threats")
+    )
+    opener = FakeOpener([FakeResponse(page(route, []))])
+    client = Client(opener=opener)
+
+    client.threatmodels.threats("aws-s3", feature_class="S3.FC1")
+
+    sent = urllib.parse.urlsplit(opener.requests[0].full_url)
+    assert dict(urllib.parse.parse_qsl(sent.query))["featureClass"] == "S3.FC1"
+    with pytest.raises(TypeError):
+        client.threatmodels.threats("aws-s3", featureClass="S3.FC1")
 
 
 def test_a_pinned_reference_sends_its_release() -> None:
@@ -574,11 +593,7 @@ def test_fetch_goes_on_past_an_archive_the_api_keeps_refusing(
     }
     opener = FakeOpener(
         [
-            FakeResponse(
-                page(
-                    listing, [{"releaseKey": "aws-s3"}, {"releaseKey": "gcp-bigquery"}]
-                )
-            ),
+            FakeResponse(page(listing, [{"tmId": "aws-s3"}, {"tmId": "gcp-bigquery"}])),
             FakeResponse(packs["aws-s3"][1]),
             # The client retries a 503 until its attempts are spent. Each answer
             # is its own error, because an error's body can be read only once.
@@ -633,7 +648,7 @@ def pack_backed_client(monkeypatch: pytest.MonkeyPatch) -> Client:
 
 
 #: The words after `ccr fetch`, and the same request through the library: its
-#: release keys and its options.
+#: ThreatModel ids and its options.
 SAME_REQUEST = [
     pytest.param(("aws-s3",), ("aws-s3",), {}, id="named pack"),
     pytest.param(("--provider", "gcp"), (), {"provider": ["gcp"]}, id="provider"),
@@ -670,12 +685,12 @@ SAME_REQUEST = [
 ]
 
 
-@pytest.mark.parametrize(("words", "release_keys", "options"), SAME_REQUEST)
+@pytest.mark.parametrize(("words", "tm_ids", "options"), SAME_REQUEST)
 def test_fetch_returns_the_rows_the_command_prints(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     words: tuple[str, ...],
-    release_keys: tuple[str, ...],
+    tm_ids: tuple[str, ...],
     options: dict[str, list[str]],
 ) -> None:
     # Both entry points map their arguments onto `fetch` separately, so one of
@@ -685,7 +700,7 @@ def test_fetch_returns_the_rows_the_command_prints(
     status = run_ccr_fetch(cli_module.get_params(), client=client)
     printed = json.loads(capsys.readouterr().out)
 
-    result = client.ccr.fetch(*release_keys, **options)
+    result = client.ccr.fetch(*tm_ids, **options)
 
     assert status == 0
     assert printed == result.rows
@@ -720,7 +735,7 @@ def selected(result: FetchResult) -> list[tuple[str, str]]:
     Returns:
         Each row's pack and rule id, in the order they were selected.
     """
-    return [(row["releaseKey"], row["ruleId"]) for row in result.rows]
+    return [(row["tmId"], row["ruleId"]) for row in result.rows]
 
 
 #: Every rule the fixture packs hold, which is what a fetch that ignored its

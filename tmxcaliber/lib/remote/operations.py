@@ -70,15 +70,15 @@ def request_for(
             filters are not sent.
 
     Returns:
-        The concrete path, with a pack's release key percent-encoded as one
-        path segment, and the query to send with it.
+        The concrete path, with a pack's ThreatModel id percent-encoded as
+        one path segment, and the query to send with it.
 
     Raises:
         ValueError: If a ThreatModel reference cannot be parsed.
     """
     path = route.path
     query = {name: filters.get(name, "") for name in route.filters}
-    if route.positional == "tm_id":
+    if "{provider}" in path and "{service}" in path:
         ref = parse_ref(positional)
         path = path.replace("{provider}", ref.provider).replace(
             "{service}", ref.service
@@ -87,14 +87,14 @@ def request_for(
         # either way and only one of them reaches the wire.
         if ref.release and not query.get("release"):
             query["release"] = ref.release
-    elif route.positional == "release_key":
-        # A release key is typed by a person, and what they type may be a
-        # product's name with spaces in it, or hold a slash or a question
+    elif "{tmId}" in path:
+        # A pack's ThreatModel id is typed by a person, and what they type may
+        # be a product's name with spaces in it, or hold a slash or a question
         # mark. Left as typed, the transport refuses the path before sending
         # anything, which the client reports as a lost connection and retries,
         # and a name that was only wrong never reaches the API's own 404. One
         # encoded segment is a name the API can answer for, however odd.
-        path = path.replace("{releaseKey}", urllib.parse.quote(positional, safe=""))
+        path = path.replace("{tmId}", urllib.parse.quote(positional, safe=""))
     return path, query
 
 
