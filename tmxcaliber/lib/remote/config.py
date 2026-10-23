@@ -62,11 +62,13 @@ _HELP = """No TrustOnCloud API key found.
 Set TOC_API_KEY, or add one to ~/.trustoncloud/credentials:
 
   [default]
-  api_key = toc-tak1-...
+  api_key = toc-uak1-...
 
-Create a key in the app under Settings, Service API keys. Your organization
-must have IP filtering configured first, and the address you run from has to
-be on the allow list."""
+Create a key in the app under Settings: a personal key under Personal API
+keys for your own use, or a service key under Service API keys for an
+integration that belongs to your organization. Your organization must have IP
+filtering configured first, and the address you run from has to be on the
+allow list."""
 
 
 @dataclass(frozen=True, repr=False)
@@ -313,8 +315,8 @@ def write_credentials(
     """
     if CREDENTIAL_PATTERN.match(api_key) is None:
         raise ConfigurationError(
-            "That is not a TrustOnCloud key. A key looks like toc-tak1- "
-            "followed by an id and a secret.",
+            "That is not a TrustOnCloud key. A key looks like toc-uak1- or "
+            "toc-tak1- followed by an id and a secret.",
             code="bad_credential",
         )
     path = config_path(os.environ if env is None else env)
@@ -436,7 +438,8 @@ def settings_for(
         # still a secret if it was only mistyped by one character.
         raise ConfigurationError(
             f"The API key from {source or 'input'} is not a TrustOnCloud key. "
-            "A key looks like toc-tak1- followed by an id and a secret.",
+            "A key looks like toc-uak1- or toc-tak1- followed by an id and a "
+            "secret.",
             code="bad_credential",
         )
     base_url = (api_url or DEFAULT_BASE_URL).rstrip("/")
