@@ -107,7 +107,9 @@ entitled ThreatModels directly instead of working from files you downloaded.
 
 ### Set a key
 
-Create a key in the app under Settings, Service API keys, then:
+Create a key in the app under Settings: Personal API keys for a key of your
+own, which reads what you can read in the app, or Service API keys for one that
+belongs to your organization, such as a CI integration. Then:
 
 ```sh
 tmxcaliber init
