@@ -2,10 +2,9 @@ import json
 import os
 import pathlib
 import sys
+import tomllib
 import urllib.error
 import urllib.request
-
-import tomllib
 
 
 def main() -> int:
