@@ -14,7 +14,7 @@
 
 ## Quickstart
 
-`tmxcaliber` supports Python `3.10+`.
+`tmxcaliber` supports Python `3.11+`.
 
 ```sh
 pip install tmxcaliber
