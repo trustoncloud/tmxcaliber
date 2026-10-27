@@ -1,7 +1,7 @@
 import json
 import re
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, TypeVar
 
 T = TypeVar("T")
@@ -167,7 +167,7 @@ def drop_retired_stubs(section: dict[str, T]) -> dict[str, T]:
 
 
 def convert_epoch_to_utc(seconds_epoch: int) -> str:
-    utc_datetime = datetime.fromtimestamp(seconds_epoch, tz=timezone.utc)
+    utc_datetime = datetime.fromtimestamp(seconds_epoch, tz=UTC)
     return utc_datetime.strftime("%Y-%m-%d-%H-%M-%S")
 
 
