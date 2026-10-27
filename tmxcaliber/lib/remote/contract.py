@@ -162,7 +162,7 @@ ROUTES: Final[tuple[Route, ...]] = (
         path="/v1/ccr/packs",
         command=("ccr", "packs", "list"),
         paged=True,
-        filters=(),
+        filters=("provider", "service"),
         positional=None,
         summary="Wiz Cloud Configuration Rule packs.",
     ),
@@ -442,6 +442,30 @@ def required_page_fields(path: str) -> dict[str, tuple[type, ...]]:
                     accepted.append(python)
             fields[name] = tuple(accepted) or (object,)
     return fields
+
+
+def query_parameter(path: str, name: str) -> dict[str, Any]:
+    """Read one query parameter as the contract declares it.
+
+    What an option means, which values it takes and what it defaults to are
+    the API's to say, so the command line prints the parameter's own
+    description and offers its enum rather than restating either.
+
+    Args:
+        path: The OpenAPI path template.
+        name: The parameter, as the API spells it.
+
+    Returns:
+        The parameter object, with its ``description`` and ``schema``; empty
+        when the route declares no such query parameter.
+    """
+    for parameter in (
+        contract()["paths"].get(path, {}).get("get", {}).get("parameters", [])
+    ):
+        if parameter.get("in") == "query" and parameter.get("name") == name:
+            declared: dict[str, Any] = parameter
+            return declared
+    return {}
 
 
 def query_parameters(path: str) -> frozenset[str]:

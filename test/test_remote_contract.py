@@ -65,6 +65,14 @@ def test_declared_filters_match_the_contract(route: contract.Route) -> None:
 
 
 @pytest.mark.parametrize("route", contract.ROUTES, ids=lambda r: r.path)
+def test_every_filter_is_described_by_the_contract(route: contract.Route) -> None:
+    """An option's help is its parameter's description, so each needs one."""
+    for name in route.filters:
+        described = contract.query_parameter(route.path, name).get("description")
+        assert described, f"{route.path} publishes no description for {name}"
+
+
+@pytest.mark.parametrize("route", contract.ROUTES, ids=lambda r: r.path)
 def test_paged_matches_the_contract(route: contract.Route) -> None:
     """A route is walked if, and only if, the contract pages it."""
     assert route.paged is (contract.page_maximum(route.path) is not None), (

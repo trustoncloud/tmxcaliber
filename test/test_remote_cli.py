@@ -19,6 +19,7 @@ from tmxcaliber.lib.remote.config import Settings
 from tmxcaliber.lib.remote.contract import (
     ROUTES,
     page_maximum,
+    query_parameter,
     response_media_type,
     route_for,
     route_for_path,
@@ -406,6 +407,22 @@ def test_feature_class_option_sends_the_camelcase_filter(
     ]
 
 
+def test_the_pack_list_sends_its_provider_and_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["tmxcaliber", "ccr", "packs", "list", "--provider", "aws", "--service", "s3"],
+    )
+    params = cli_module.get_params()
+    client = StubClient()
+
+    run_api_command(params, client=client)  # type: ignore[arg-type]
+
+    assert client.calls == [("/v1/ccr/packs", {"provider": "aws", "service": "s3"})]
+
+
 def _help_of(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -432,7 +449,7 @@ def test_a_required_filter_is_listed_as_required_and_names_its_source(
 ) -> None:
     text = _help_of(monkeypatch, capsys, ["compliance", "mappings", "list"])
 
-    required = text.split("required arguments:", 1)[1]
+    required = " ".join(text.split("required arguments:", 1)[1].split())
     assert "--framework-id" in required
     assert "tmxcaliber compliance frameworks list" in required
     assert "filter by framework id" not in text
@@ -455,18 +472,6 @@ def test_ccr_pack_get_names_the_id_list_reports(
     assert "ccr packs list" in text
 
 
-def test_every_written_option_help_names_a_bound_route_and_its_option() -> None:
-    """A route the contract renames cannot leave its written help behind.
-
-    `OPTION_HELP` is looked up by path, so a stale key would only drop the
-    written text back to the generated "filter by" wording, with no failure.
-    """
-    for path, options in remote_cli.OPTION_HELP.items():
-        route = route_for_path(path)
-        assert route is not None, path
-        assert set(options) <= set(route.filters), path
-
-
 def test_every_positional_route_suggests_from_a_list_that_carries_its_name() -> None:
     """A field the contract renames cannot leave a suggestion reading nothing.
 
@@ -485,40 +490,72 @@ def test_every_positional_route_suggests_from_a_list_that_carries_its_name() -> 
         assert title is None or title in fields, collection
 
 
-def test_an_optional_filter_keeps_its_wording(
+def test_an_optional_filter_is_not_listed_as_required(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     text = _help_of(monkeypatch, capsys, ["threatmodels", "list"])
 
-    assert "filter by provider." in text
+    assert "--provider" in text
     assert "required arguments:" not in text
 
 
-def test_the_archive_options_say_what_they_choose(
+@pytest.mark.parametrize(
+    "route", [route for route in ROUTES if route.filters], ids=lambda r: r.path
+)
+def test_every_option_s_help_is_the_contract_s_description(
+    route: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The contract describes each filter, so the command line restates none.
+
+    The generated "filter by kind." told the reader nothing about what to
+    pass, and text written here could drift from what the API does.
+    """
+    # Wide enough that argparse never wraps a sentence at one of its hyphens.
+    monkeypatch.setenv("COLUMNS", "1000")
+    text = " ".join(_help_of(monkeypatch, capsys, list(route.command)).split())
+
+    for name in route.filters:
+        described = query_parameter(route.path, name)["description"]
+        assert " ".join(described.split()) in text, name
+    assert "filter by" not in text
+
+
+def test_the_archive_kind_offers_the_contract_s_values_and_default(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Neither option narrows a collection, so "filter by kind." and "filter by
-    # release." told the reader nothing about what to pass.
     text = " ".join(_help_of(monkeypatch, capsys, ["ccr", "packs", "archive"]).split())
 
-    assert (
-        "which archive to download: source (the default, the rule tree) or deploy "
-        "(the Terraform package)." in text
-    )
-    assert (
-        "the release to pin the download to, as `tmxcaliber ccr packs get` reports "
-        "it; the API refuses a release it no longer publishes." in text
-    )
-    assert "filter by kind" not in text
-    assert "filter by release" not in text
+    assert "--kind {source,deploy}" in text
+    assert "Defaults to source." in text
 
 
-def test_a_release_filter_elsewhere_keeps_its_wording(
+def test_a_kind_the_contract_does_not_list_is_refused_before_any_call(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    text = _help_of(monkeypatch, capsys, ["threatmodels", "get"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tmxcaliber",
+            "ccr",
+            "packs",
+            "archive",
+            "aws-s3",
+            "--kind",
+            "zip",
+            "--output",
+            "pack.zip",
+        ],
+    )
 
-    assert "filter by release." in text
+    with pytest.raises(SystemExit):
+        cli_module.get_params()
+
+    refused = capsys.readouterr().err
+    assert "invalid choice" in refused
+    assert "zip" in refused
 
 
 def test_a_second_credential_does_not_read_the_first_one_s_cache(

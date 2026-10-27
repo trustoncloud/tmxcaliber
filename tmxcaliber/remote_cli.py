@@ -42,6 +42,7 @@ from .lib.remote.contract import (
     Route,
     page_maximum,
     python_name,
+    query_parameter,
     required_parameters,
     route_for_path,
     values_field,
@@ -70,27 +71,6 @@ POSITIONALS = {
     ),
 }
 
-#: Help for an option that "filter by ..." would misdescribe, by route path and
-#: then option. The archive route's options choose which file comes back, and
-#: narrow no collection, so the generated text would tell the reader nothing
-#: about what to pass. Every option not listed here keeps the generated text.
-#:
-#: This table is temporary. It goes once the contract publishes each option's
-#: description and allowed values, because the interpreter that REMOTE.md
-#: targets reads those from the contract.
-OPTION_HELP: Mapping[str, Mapping[str, str]] = {
-    "/v1/ccr/packs/{tmId}/archive": {
-        "kind": (
-            "which archive to download: source (the default, the rule tree) or "
-            "deploy (the Terraform package)."
-        ),
-        "release": (
-            "the release to pin the download to, as `tmxcaliber ccr packs get` "
-            "reports it; the API refuses a release it no longer publishes."
-        ),
-    },
-}
-
 
 def _option(filter_name: str) -> str:
     """Render a query parameter as its command-line option.
@@ -104,30 +84,29 @@ def _option(filter_name: str) -> str:
     return f"--{python_name(filter_name).replace('_', '-')}"
 
 
-def _filter_help(route: Route, name: str, *, required: bool) -> str:
+def _filter_help(route: Route, name: str) -> str:
     """Describe one query parameter for a command's help.
 
     Args:
         route: The route the command reaches.
         name: The parameter, as the API spells it.
-        required: Whether the route refuses to answer without it.
 
     Returns:
-        The route's own text for the option in `OPTION_HELP` when it has one.
-        Otherwise the generated text, naming the command that lists the
-        accepted values when the API publishes one.
+        The contract's description of the parameter, then the command that
+        lists the accepted values when the API publishes one, then the
+        default when the contract declares one.
     """
-    written = OPTION_HELP.get(route.path, {}).get(name)
-    if written is not None:
-        return written
-    words = _option(name)[2:].replace("-", " ")
-    text = f"the {words} to read." if required else f"filter by {words}."
+    declared = query_parameter(route.path, name)
+    text = str(declared.get("description", ""))
     lookup = values_route(route, name)
     if lookup is not None:
         text += (
             f" Takes a {values_field(name)} as "
             f"`tmxcaliber {' '.join(lookup.command)}` reports it."
         )
+    default = declared.get("schema", {}).get("default")
+    if default is not None:
+        text += f" Defaults to {default}."
     return text
 
 
@@ -172,7 +151,10 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
             dest=python_name(name),
             default="",
             required=name in required,
-            help=_filter_help(route, name, required=name in required),
+            # The contract's own list, so a value the API would refuse is
+            # refused here before any call, and the help shows what it takes.
+            choices=query_parameter(route.path, name).get("schema", {}).get("enum"),
+            help=_filter_help(route, name),
         )
     if route.paged:
         parser.add_argument(

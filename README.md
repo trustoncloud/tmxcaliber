@@ -192,21 +192,24 @@ tmxcaliber subscriptions list
 tmxcaliber compliance frameworks list
 tmxcaliber compliance mappings list --framework-id nist-800-53-r5
 tmxcaliber ccr packs list
+tmxcaliber ccr packs list --provider aws --service s3
 tmxcaliber ccr packs get aws-s3
 tmxcaliber ccr packs archive aws-s3 --output aws-s3-source.zip
 tmxcaliber ccr packs archive aws-s3 --kind deploy --output aws-s3.zip
 ```
 
 `ccr packs list` shows the Wiz Cloud Configuration Rule packs your key can
-read, and `ccr packs get` prints one pack's manifest: its rules and the release
-it was built from. `ccr packs archive` downloads a whole pack as a zip.
+read, narrowed by `--provider` and `--service` when you give them, and
+`ccr packs get` prints one pack's manifest: its rules and the release it was
+built from. `ccr packs archive` downloads a whole pack as a zip.
 `--kind source`, the default, is the rule tree, and `--kind deploy` is the
 Terraform package. `--release` pins the download to the release that
 `ccr packs get` reported, and the API refuses a release it no longer
 publishes, so the archive matches the manifest you read. `--output` names the
 file and is required; the command says on stderr how many bytes it wrote and
-where. Selecting individual rules from a pack is planned through the API, and
-these commands will gain it from the API's contract.
+where. Each option's help, and the values it accepts, come from the API's
+contract. Selecting individual rules from a pack is planned through the API,
+and these commands will gain it from the API's contract.
 
 A mistyped or renamed name gets a "Did you mean ...?" suggestion, drawn only
 from what your key can list: `ccr packs get aws-ec3` ends with
