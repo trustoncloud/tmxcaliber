@@ -47,7 +47,7 @@ PERMISSION_REGEX = {
         rf"Role\:[a-zA-Z0-9 ]+$|"
         rf"VaultAccessPolicy\:[a-zA-Z0-9.]+$|"
         rf"API\:[a-zA-Z0-9_-]+\.?[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]+|"
-        rf"ApiKey/(?:adminKey|queryKey|secretKey)|BasicAuth|"
+        rf"ApiKey/(?:adminKey|queryKey|secretKey|key)|BasicAuth|"
         rf"directory:[RWX]{{1,3}};file:[RWX]{{1,3}})$"
     ),
 }
