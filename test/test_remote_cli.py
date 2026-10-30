@@ -416,7 +416,7 @@ def test_a_required_filter_is_listed_as_required_and_names_its_source(
 ) -> None:
     text = _help_of(monkeypatch, capsys, ["compliance", "mappings", "list"])
 
-    required = text.split("required arguments:", 1)[1]
+    required = " ".join(text.split("required arguments:", 1)[1].split())
     assert "--framework-id" in required
     assert "tmxcaliber compliance frameworks list" in required
     assert "filter by framework id" not in text
@@ -439,12 +439,17 @@ def test_ccr_pack_get_names_the_id_list_reports(
     assert "ccr packs list" in text
 
 
-def test_an_optional_filter_keeps_its_wording(
+def test_an_optional_filter_reads_as_the_contract_describes_it(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    text = _help_of(monkeypatch, capsys, ["threatmodels", "list"])
+    route = route_for(("threatmodels", "list"))
+    assert route is not None
+    (provider,) = route.options
 
-    assert "filter by provider." in text
+    text = " ".join(_help_of(monkeypatch, capsys, ["threatmodels", "list"]).split())
+
+    assert provider.description
+    assert provider.description in text
     assert "required arguments:" not in text
 
 
