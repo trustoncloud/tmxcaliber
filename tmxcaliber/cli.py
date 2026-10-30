@@ -80,7 +80,7 @@ def get_params() -> Namespace:
     parsers.add_gen_parser(subparsers)
     parsers.add_list_parser(subparsers)
     parsers.add_changelog_parser(subparsers)
-    # Built from the route contract rather than written out here, so the API
+    # Built from the vendored API contract rather than written out here, so the API
     # surface and the CLI cannot drift apart.
     add_api_parsers(subparsers)
     # The one command with no route behind it; see add_init_parser.

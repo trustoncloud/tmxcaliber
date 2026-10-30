@@ -1,6 +1,6 @@
 """How one route becomes one request, for the CLI and for `Client` alike.
 
-Both surfaces are built from `contract.ROUTES`, and both need the same three
+Both surfaces are built from `contract.routes()`, and both need the same three
 answers for a route: which concrete path a positional fills in, which query
 it sends, and whether the rows that came back are whole. Giving those one
 owner here is what keeps ``tmxcaliber threatmodels threats aws-s3`` and
@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 from .client import TocClient
-from .contract import Route, required_page_fields
+from .contract import REFERENCE_PARAMETERS, Route, required_page_fields
 from .ref import parse_ref
 
 #: Page fields that, when not empty, mean the rows are incomplete.
@@ -75,7 +75,7 @@ def request_for(
     """
     path = route.path
     query = {name: filters.get(name, "") for name in route.filters}
-    if "{provider}" in path and "{service}" in path:
+    if route.path_parameters == REFERENCE_PARAMETERS:
         ref = parse_ref(positional)
         path = path.replace("{provider}", ref.provider).replace(
             "{service}", ref.service
@@ -84,8 +84,9 @@ def request_for(
         # either way and only one of them reaches the wire.
         if ref.release and not query.get("release"):
             query["release"] = ref.release
-    elif route.positional == "tm_id":
-        path = path.replace("{tmId}", positional)
+    elif route.path_parameters:
+        (name,) = route.path_parameters
+        path = path.replace(f"{{{name}}}", positional)
     return path, query
 
 
