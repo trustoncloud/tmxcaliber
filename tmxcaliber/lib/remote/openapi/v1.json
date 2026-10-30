@@ -86,6 +86,13 @@
       },
       "CcrPacksRow": {
         "properties": {
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
           "releaseId": {
             "description": "The release this pack currently publishes: the ccr_factory commit it was built from. Null while a stage's mirror has not moved to release folders.",
             "type": [
@@ -101,6 +108,14 @@
             ],
             "x-defined-by": "this-api"
           },
+          "title": {
+            "description": "The pack's display name in the CCR catalogue, such as AWS S3. Null when the catalogue names none.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
           "tmId": {
             "type": [
               "string",
@@ -111,6 +126,8 @@
         },
         "required": [
           "tmId",
+          "title",
+          "provider",
           "ruleCount",
           "releaseId"
         ],
@@ -1079,6 +1096,24 @@
         "operationId": "ccrPacks",
         "parameters": [
           {
+            "description": "Only rows from this provider, such as `aws`: the part of `tmId` before the first hyphen, matched ignoring case. Empty or absent lists every provider.",
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only rows for this service, such as `s3`: the part of `tmId` after the first hyphen, matched ignoring case. Empty or absent lists every service.",
+            "in": "query",
+            "name": "service",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "description": "Defaults to 100, capped at 200.",
             "in": "query",
             "name": "limit",
@@ -1313,14 +1348,21 @@
             }
           },
           {
+            "description": "Which archive to serve. `source` is the rule tree (`bundle.zip`) a reviewer reads, one folder per control. `deploy` is the Terraform package (`deploy.zip`) a customer applies.",
             "in": "query",
             "name": "kind",
             "required": false,
             "schema": {
+              "default": "source",
+              "enum": [
+                "source",
+                "deploy"
+              ],
               "type": "string"
             }
           },
           {
+            "description": "Pins the download to this release id, the `release_id` the pack's manifest names. A release that is no longer current answers 410 `release_superseded`. Absent serves the current release.",
             "in": "query",
             "name": "release",
             "required": false,
@@ -1349,7 +1391,7 @@
                 }
               }
             },
-            "description": "A parameter this operation does not accept."
+            "description": "A filter value outside its allowed set or a parameter this operation does not accept."
           },
           "401": {
             "content": {
@@ -1558,6 +1600,7 @@
         "operationId": "complianceMappings",
         "parameters": [
           {
+            "description": "The framework whose controls to map, exactly as `/v1/compliance/frameworks` lists it, such as `scf`. A framework this API does not map answers an empty page.",
             "in": "query",
             "name": "frameworkId",
             "required": true,
@@ -1566,6 +1609,7 @@
             }
           },
           {
+            "description": "Only mappings for this ThreatModel, such as `aws-s3`, matched ignoring case. Empty or absent covers every entitled ThreatModel.",
             "in": "query",
             "name": "tmId",
             "required": false,
@@ -1934,6 +1978,7 @@
         "operationId": "threatmodels",
         "parameters": [
           {
+            "description": "Only rows from this provider, such as `aws`: the part of `tmId` before the first hyphen, matched ignoring case. Empty or absent lists every provider.",
             "in": "query",
             "name": "provider",
             "required": false,
@@ -2085,6 +2130,7 @@
             }
           },
           {
+            "description": "The release to read, by its `version` key, such as `1611187200`. Absent reads the latest. A release this ThreatModel does not publish answers 404 `not_found`, and an empty value is refused.",
             "in": "query",
             "name": "release",
             "required": false,
@@ -2200,6 +2246,7 @@
             }
           },
           {
+            "description": "Only rows in the feature class with this ID, such as `S3.FC1`, matched exactly. A control matches when any of its feature class IDs is this one. Empty or absent applies no filter.",
             "in": "query",
             "name": "featureClassId",
             "required": false,
@@ -2208,6 +2255,7 @@
             }
           },
           {
+            "description": "The release to read, by its `version` key, such as `1611187200`. Absent reads the latest. A release this ThreatModel does not publish answers 404 `not_found`, and an empty value is refused.",
             "in": "query",
             "name": "release",
             "required": false,
@@ -2359,6 +2407,7 @@
             }
           },
           {
+            "description": "Only rows in the feature class with this ID, such as `S3.FC1`, matched exactly. A control matches when any of its feature class IDs is this one. Empty or absent applies no filter.",
             "in": "query",
             "name": "featureClassId",
             "required": false,
@@ -2367,6 +2416,7 @@
             }
           },
           {
+            "description": "The release to read, by its `version` key, such as `1611187200`. Absent reads the latest. A release this ThreatModel does not publish answers 404 `not_found`, and an empty value is refused.",
             "in": "query",
             "name": "release",
             "required": false,
@@ -2518,6 +2568,7 @@
             }
           },
           {
+            "description": "The release to read, by its `version` key, such as `1611187200`. Absent reads the latest. A release this ThreatModel does not publish answers 404 `not_found`, and an empty value is refused.",
             "in": "query",
             "name": "release",
             "required": false,
@@ -2633,6 +2684,7 @@
             }
           },
           {
+            "description": "Only rows in the feature class with this ID, such as `S3.FC1`, matched exactly. A control matches when any of its feature class IDs is this one. Empty or absent applies no filter.",
             "in": "query",
             "name": "featureClassId",
             "required": false,
@@ -2641,6 +2693,7 @@
             }
           },
           {
+            "description": "The release to read, by its `version` key, such as `1611187200`. Absent reads the latest. A release this ThreatModel does not publish answers 404 `not_found`, and an empty value is refused.",
             "in": "query",
             "name": "release",
             "required": false,

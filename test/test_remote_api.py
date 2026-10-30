@@ -15,11 +15,11 @@ from tmxcaliber.lib.remote import api as api_module
 from tmxcaliber.lib.remote.api import Client, Group, Operation
 from tmxcaliber.lib.remote.config import DEFAULT_BASE_URL
 from tmxcaliber.lib.remote.contract import (
-    ROUTES,
+    REFERENCE_PARAMETERS,
     Route,
     python_name,
     required_page_fields,
-    required_parameters,
+    routes,
 )
 from tmxcaliber.lib.remote.errors import ConfigurationError, IncompleteAnswer
 from tmxcaliber.lib.remote.operations import incompleteness_fields, request_for
@@ -27,7 +27,7 @@ from tmxcaliber.lib.remote.operations import incompleteness_fields, request_for
 from .test_remote_client import FakeOpener, FakeResponse
 from .test_remote_config import HAZARD, KEY, OTHER, STORED_URL, write_config
 
-#: A value for each kind of positional the route table uses.
+#: A value for each kind of positional the contract's routes use.
 POSITIONAL_VALUES = {"tm_id": "aws-s3"}
 
 
@@ -100,7 +100,7 @@ def test_the_client_is_importable_from_the_package() -> None:
     assert "Client" in tmxcaliber.__all__
 
 
-@pytest.mark.parametrize("route", ROUTES, ids=lambda route: " ".join(route.command))
+@pytest.mark.parametrize("route", routes(), ids=lambda route: " ".join(route.command))
 def test_every_route_sits_at_its_cli_command_path(route: Route) -> None:
     client = Client()
 
@@ -110,7 +110,7 @@ def test_every_route_sits_at_its_cli_command_path(route: Route) -> None:
     assert found.__doc__ == route.summary
 
 
-@pytest.mark.parametrize("route", ROUTES, ids=lambda route: " ".join(route.command))
+@pytest.mark.parametrize("route", routes(), ids=lambda route: " ".join(route.command))
 def test_every_route_calls_its_own_path_with_its_filters(route: Route) -> None:
     # Arrange
     answer = page(route, []) if route.paged else {}
@@ -129,7 +129,7 @@ def test_every_route_calls_its_own_path_with_its_filters(route: Route) -> None:
     assert dict(urllib.parse.parse_qsl(sent.query)) == expected_query
 
 
-@pytest.mark.parametrize("route", ROUTES, ids=lambda route: " ".join(route.command))
+@pytest.mark.parametrize("route", routes(), ids=lambda route: " ".join(route.command))
 def test_the_signature_reads_like_the_cli_command(route: Route) -> None:
     parameters = inspect.signature(operation_for(Client(), route)).parameters
 
@@ -140,12 +140,17 @@ def test_the_signature_reads_like_the_cli_command(route: Route) -> None:
     assert names == expected
     assert ("limit" in parameters) is route.paged
     assert ("allow_incomplete" in parameters) is bool(incompleteness_fields(route))
-    for name in required_parameters(route.path) & set(route.filters):
-        assert parameters[python_name(name)].default is inspect.Parameter.empty
+    for option in route.options:
+        if option.required:
+            assert (
+                parameters[python_name(option.name)].default is inspect.Parameter.empty
+            )
 
 
 def test_a_paged_route_returns_every_row_across_pages() -> None:
-    route = next(route for route in ROUTES if route.command == ("threatmodels", "list"))
+    route = next(
+        route for route in routes() if route.command == ("threatmodels", "list")
+    )
     opener = FakeOpener(
         [
             FakeResponse(page(route, [{"tmId": "aws-s3"}], cursor="next")),
@@ -166,7 +171,7 @@ def test_a_paged_route_returns_every_row_across_pages() -> None:
 
 def test_python_feature_class_keyword_uses_snake_case() -> None:
     route = next(
-        route for route in ROUTES if route.command == ("threatmodels", "threats")
+        route for route in routes() if route.command == ("threatmodels", "threats")
     )
     opener = FakeOpener([FakeResponse(page(route, []))])
     client = Client(opener=opener)
@@ -180,7 +185,9 @@ def test_python_feature_class_keyword_uses_snake_case() -> None:
 
 
 def test_a_pinned_reference_sends_its_release() -> None:
-    route = next(route for route in ROUTES if route.positional == "tm_id")
+    route = next(
+        route for route in routes() if route.path_parameters == REFERENCE_PARAMETERS
+    )
     answer = page(route, []) if route.paged else {}
     opener = FakeOpener([FakeResponse(answer)])
 
@@ -210,7 +217,9 @@ def test_arguments_the_route_does_not_take_are_refused(
 
 
 def test_a_required_filter_cannot_be_left_out() -> None:
-    route = next(route for route in ROUTES if required_parameters(route.path))
+    route = next(
+        route for route in routes() if any(option.required for option in route.options)
+    )
     opener = FakeOpener([])
 
     with pytest.raises(TypeError, match="missing a required"):
@@ -225,7 +234,7 @@ def incomplete_route() -> Route:
     Returns:
         The first such route.
     """
-    return next(route for route in ROUTES if incompleteness_fields(route))
+    return next(route for route in routes() if incompleteness_fields(route))
 
 
 def test_an_incomplete_answer_is_refused_with_its_rows() -> None:
@@ -341,11 +350,12 @@ def test_a_command_word_that_would_hide_a_client_attribute_is_refused(
         path="/v1/get",
         command=("get",),
         paged=False,
-        filters=(),
+        options=(),
+        path_parameters=(),
         positional=None,
         summary="A route whose command would hide Client.get.",
     )
-    monkeypatch.setattr(api_module, "ROUTES", (*ROUTES, clash))
+    monkeypatch.setattr(api_module, "routes", lambda: (*routes(), clash))
 
     with pytest.raises(ValueError, match="'get' is already taken"):
         Client()

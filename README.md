@@ -192,6 +192,7 @@ tmxcaliber subscriptions list
 tmxcaliber compliance frameworks list
 tmxcaliber compliance mappings list --framework-id nist-800-53-r5
 tmxcaliber ccr packs list
+tmxcaliber ccr packs list --provider aws
 ```
 
 Collections are read in full; paging is handled for you. When the API reports

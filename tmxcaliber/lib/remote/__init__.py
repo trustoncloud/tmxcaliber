@@ -13,7 +13,7 @@ from .api import Client
 from .assemble import fetch_document, load_remote
 from .client import TocClient
 from .config import Credentials, Settings, load_settings
-from .contract import ROUTES, Route, route_for
+from .contract import Route, UnsupportedOperation, route_for, routes
 from .errors import (
     AddressNotAllowed,
     AuthenticationError,
@@ -32,7 +32,6 @@ from .ref import TmRef, is_remote_ref, parse_ref
 from .resolve import fetch_to_cache, resolve_source
 
 __all__ = [
-    "ROUTES",
     "AddressNotAllowed",
     "AuthenticationError",
     "Client",
@@ -51,6 +50,7 @@ __all__ = [
     "Settings",
     "TmRef",
     "TocClient",
+    "UnsupportedOperation",
     "fetch_document",
     "fetch_to_cache",
     "is_remote_ref",
@@ -59,4 +59,5 @@ __all__ = [
     "parse_ref",
     "resolve_source",
     "route_for",
+    "routes",
 ]
