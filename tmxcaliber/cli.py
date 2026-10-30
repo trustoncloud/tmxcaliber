@@ -12,9 +12,7 @@ from itertools import product
 from shutil import rmtree
 from typing import Any
 
-from colorama import Fore
-
-from . import parsers
+from . import console, parsers
 from .lib.change_log import generate_change_log
 from .lib.control_selector import resolve_control_ids
 from .lib.errors import BinaryNotFound, FeatureClassCycleError
@@ -500,6 +498,23 @@ def output_result(
     result_type: str,
     output_removed_json: JsonDict | None = None,
 ) -> None:
+    if result_type == "bytes":
+        # Written as received. The parser already insists on a file for a
+        # binary command, so there is no terminal case to handle.
+        if not output_param:
+            raise TypeError("Binary output needs a file to write to")
+        with open(output_param, "wb") as file:
+            file.write(result)
+        # On stderr, and with the whole path, so the reader knows the archive
+        # arrived and where it is wherever the command was run.
+        console.stderr().status(
+            "ok",
+            "green",
+            f"Wrote {console.plural(len(result), 'byte')} to "
+            f"{os.path.abspath(output_param)}",
+        )
+        return
+
     removed_json = output_removed_json or {}
     json_result = ""
     output_removed_result = ""
@@ -562,12 +577,15 @@ def main() -> None:
 
     The wrapper exists because nothing here caught anything before. A failed
     call would surface as a raw traceback, and a urllib traceback carries the
-    Request object, which carries the Authorization header.
+    Request object, which carries the Authorization header. The message goes
+    to stderr, so a command whose output is redirected keeps only results in
+    the redirect and still shows the reader what went wrong, with any ``Did
+    you mean ...?`` on a line of its own.
     """
     try:
         _run()
     except RemoteError as exc:
-        print(Fore.RED + str(exc) + Fore.RESET)
+        console.stderr().error(exc)
         sys.exit(1)
 
 
@@ -589,12 +607,9 @@ def _run() -> None:
         # Written first, so what the API did answer is never lost; the exit
         # status is what tells a script the answer is partial.
         if incomplete and not getattr(params, "allow_incomplete", False):
-            print(
-                Fore.RED
-                + "The API reported this answer incomplete; pass --allow-incomplete "
-                + "to accept it."
-                + Fore.RESET,
-                file=sys.stderr,
+            console.stderr().failure(
+                "The API reported this answer incomplete; pass --allow-incomplete "
+                "to accept it."
             )
             sys.exit(INCOMPLETE_EXIT)
         return
@@ -722,7 +737,9 @@ def _run() -> None:
             try:
                 binary = get_drawio_binary_path()
             except BinaryNotFound as exc:
-                print(Fore.RED + "\n".join(exc.args) + Fore.RESET + "\n")
+                out = console.stdout()
+                out.line("\n".join(exc.args), "red")
+                out.line()
                 sys.exit(1)
         else:
             binary = params.bin

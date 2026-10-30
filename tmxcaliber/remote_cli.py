@@ -26,8 +26,7 @@ from argparse import ArgumentParser, Namespace, _SubParsersAction
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from colorama import Fore
-
+from . import console
 from .lib.remote.client import TocClient
 from .lib.remote.config import (
     SECTION,
@@ -44,14 +43,18 @@ from .lib.remote.contract import (
     Option,
     Route,
     listing_route,
+    page_maximum,
     python_name,
+    route_for_path,
     routes,
     values_field,
     values_route,
 )
-from .lib.remote.errors import ConfigurationError, RemoteError
+from .lib.remote.errors import ConfigurationError, NotFound, RemoteError
 from .lib.remote.operations import call_route, incompleteness_fields
+from .lib.remote.ref import is_remote_ref
 from .lib.remote.resolve import resolve_source
+from .lib.remote.suggest import alternative_names, did_you_mean, suggest
 
 #: The namespace key each nesting level of the command tree parks its word in.
 #:
@@ -120,8 +123,9 @@ def _filter_help(route: Route, option: Option) -> str:
         option: The parameter.
 
     Returns:
-        The help text, naming the command that lists the accepted values when
-        the API publishes one.
+        The contract's description of the parameter, then the command that
+        lists the accepted values when the API publishes one, then the
+        default when the contract declares one.
     """
     words = _option(option.name)[2:].replace("-", " ")
     if option.description:
@@ -136,6 +140,8 @@ def _filter_help(route: Route, option: Option) -> str:
             f" Takes a {values_field(option.name)} as "
             f"`tmxcaliber {' '.join(lookup.command)}` reports it."
         )
+    if option.default is not None:
+        text += f" Defaults to {option.default}."
     return _escaped(text)
 
 
@@ -231,7 +237,14 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
     parser.add_argument(
         "--output",
         default="",
-        help="file to write the result to. Prints to stdout when omitted.",
+        # A zip printed to a terminal is noise at best, so a binary route
+        # refuses to run without a file.
+        required=route.binary,
+        help=(
+            "file to write the archive to."
+            if route.binary
+            else "file to write the result to. Prints to stdout when omitted."
+        ),
     )
     parser.set_defaults(api_route=route)
 
@@ -337,10 +350,7 @@ def _report_envelope(envelope: Mapping[str, Any]) -> None:
     for name, value in envelope.items():
         if value in (None, "", [], {}):
             continue
-        print(
-            Fore.YELLOW + f"{name}: {json.dumps(value)}" + Fore.RESET,
-            file=sys.stderr,
-        )
+        console.stderr().line(f"{name}: {json.dumps(value)}", "yellow")
 
 
 #: Stored-endpoint notes this process has already written. A process is one
@@ -367,7 +377,7 @@ def _note_stored_endpoint(settings: Settings) -> None:
     if said in _noted:
         return
     _noted.add(said)
-    print(Fore.YELLOW + settings.stored_endpoint_note + Fore.RESET, file=sys.stderr)
+    console.stderr().line(settings.stored_endpoint_note, "yellow")
 
 
 def connect(env: Mapping[str, str] | None = None) -> TocClient:
@@ -408,6 +418,90 @@ def resolve_command_source(source: str) -> str:
     return resolve_source(source, connect=connect)
 
 
+#: For a positional that names something the API lists, the row field holding
+#: each name and the row field holding its title when there is one, by the
+#: path of the collection that lists it. That collection is the route's path
+#: up to its first parameter, so `ccr packs get` and `ccr packs archive` both
+#: look in `ccr packs list`, and every `threatmodels` command looks in
+#: `threatmodels list`. Both lists name their rows by `tmId`, and both kinds of
+#: route call their positional `tm_id`, so the positional alone cannot say
+#: which list to read.
+NAME_LISTS: Mapping[str, tuple[str, str | None]] = {
+    "/v1/ccr/packs": ("tmId", None),
+    "/v1/threatmodels": ("tmId", "title"),
+}
+
+
+def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
+    """Say which listed name a positional the API does not know probably meant.
+
+    The command line asks only after a ``NotFound``, so a name typed right
+    costs no extra call, and `Client`'s route methods never ask, so a library
+    caller makes exactly the calls it wrote. Only what this key can list is
+    suggested, so a ThreatModel or pack outside its subscription is never
+    named.
+
+    Args:
+        client: The client the command used.
+        route: The route that answered ``NotFound``.
+        typed: The positional as typed, with any ``@release``.
+
+    Returns:
+        The ``Did you mean ...?`` sentence, with each ThreatModel's title
+        after its id. A ThreatModel's own title and the short form in its
+        brackets both lead to it, as the list publishes them, so its official
+        name typed back is never a stranger to the suggestion. Empty when the
+        route names nothing the API lists, when no name was typed, when
+        nothing listed is close, when the name is itself listed (as when only
+        its release is unknown), or when the list cannot be read, in which
+        case the API's own error is the one worth reporting.
+    """
+    collection = route.path.partition("{")[0].rstrip("/")
+    lookup = NAME_LISTS.get(collection) if route.positional else None
+    if lookup is None:
+        return ""
+    # A release pins a version of the name, and is no part of the name itself.
+    wanted = typed.partition("@")[0]
+    if not wanted:
+        return ""
+    name_field, title_field = lookup
+    listing = route_for_path(collection)
+    assert listing is not None, f"{collection} is not bound"
+    try:
+        # Walked at the largest page the contract allows, as every collection
+        # is, because each call of the walk spends the same hourly budget as
+        # the command that failed.
+        rows = call_route(
+            client, listing, "", {}, limit=page_maximum(listing.path) or 0
+        ).result
+    except RemoteError:
+        return ""
+    names = [str(row.get(name_field) or "") for row in rows]
+    labels = (
+        {
+            str(row.get(name_field) or ""): str(row.get(title_field) or "")
+            for row in rows
+        }
+        if title_field
+        else None
+    )
+    # A ThreatModel is also known by the title it was published under, so the
+    # row's own words lead back to it. Only fields the contract declares are
+    # read, because the API strips any other before answering.
+    published = (
+        {
+            str(row.get(name_field) or ""): alternative_names(
+                str(row.get(title_field) or "")
+            )
+            for row in rows
+        }
+        if title_field
+        else None
+    )
+    found = suggest(wanted, [name for name in names if name], extra_aliases=published)
+    return did_you_mean(found, labels)
+
+
 def run_api_command(
     params: Namespace,
     *,
@@ -424,29 +518,67 @@ def run_api_command(
             the result.
 
     Returns:
-        The result and the result type `output_result` expects.
+        The result and the result type `output_result` expects: "bytes" for a
+        binary route, "json" otherwise.
 
     Raises:
-        RemoteError: On any credential, transport or server failure.
-        ValueError: If a ThreatModel reference cannot be parsed.
+        NotFound: If the API does not know the ThreatModel or pack named.
+            When one this key can list is close to the name typed, its
+            ``did_you_mean`` holds the ``Did you mean ...?`` sentence, which
+            ``str()`` puts after the message, and the code, status and request
+            id stay the API's. A ThreatModel typed in a shape no
+            reference has, such as ``Amazon EC2``, is refused before the API
+            is asked, and raises this too, with no status or request id, when
+            a listed one is close to it.
+        RemoteError: On any other credential, transport or server failure.
+        ValueError: If a ThreatModel reference cannot be parsed, and none the
+            key can list is close to it, or is pinned for a route that takes
+            no release.
     """
     route = selected_route(params)
     assert route is not None, "run_api_command called for a non-API command"
-    answer = call_route(
-        client or connect(),
-        route,
-        str(getattr(params, route.positional, "") or "") if route.positional else "",
-        {
-            name: _wire(getattr(params, python_name(name), None))
-            for name in route.filters
-        },
-        limit=int(getattr(params, "limit", 0) or 0),
-    )
+    api = client or connect()
+    typed = str(getattr(params, route.positional, "") or "") if route.positional else ""
+    # The API spells a filter in camelCase and argparse keeps it in snake_case.
+    filters = {
+        name: _wire(getattr(params, python_name(name), None)) for name in route.filters
+    }
+    limit = int(getattr(params, "limit", 0) or 0)
+    try:
+        answer = call_route(api, route, typed, filters, limit=limit)
+    except NotFound as exc:
+        sentence = _did_you_mean(api, route, typed)
+        if not sentence:
+            raise
+        raise NotFound(
+            Exception.__str__(exc),
+            code=exc.code,
+            request_id=exc.request_id,
+            status=exc.status,
+            did_you_mean=sentence,
+        ) from exc
+    except ValueError as exc:
+        # A ThreatModel typed as "Amazon EC2" is refused by the reference
+        # grammar before any request is made, so no 404 follows and the name
+        # would never reach the suggestion. The refusal stays as it was when
+        # nothing listed is close, and when the reference is well formed and
+        # only its release is wrong. A pack's routes send their ThreatModel id
+        # as one encoded path segment and parse no reference, so only a route
+        # with {provider} in its path is refused this way.
+        sentence = (
+            _did_you_mean(api, route, typed)
+            if "{provider}" in route.path and not is_remote_ref(typed)
+            else ""
+        )
+        if not sentence:
+            raise
+        # The API never saw the name, so there is no status or request id.
+        raise NotFound(str(exc), code="not_found", did_you_mean=sentence) from exc
     if route.paged:
         _report_envelope(answer.envelope)
     if incomplete is not None:
         incomplete.extend(answer.missing)
-    return answer.result, "json"
+    return answer.result, "bytes" if route.binary else "json"
 
 
 def add_init_parser(subparsers: _SubParsersAction[ArgumentParser]) -> None:
@@ -593,10 +725,11 @@ def run_init(
     if environ.get("TOC_API_KEY", "").strip():
         # It silently wins over the file, so someone who just ran this and
         # still sees the old tenant would have no way to find out why.
-        print(
-            Fore.YELLOW + "Note: TOC_API_KEY is set, and it takes precedence over "
-            "this file. The check below is of the key just stored; commands will "
-            "use the environment one until you unset it." + Fore.RESET
+        console.stdout().line(
+            "Note: TOC_API_KEY is set, and it takes precedence over this file. "
+            "The check below is of the key just stored; commands will use the "
+            "environment one until you unset it.",
+            "yellow",
         )
 
     return _verify(settings, client)
@@ -628,7 +761,7 @@ def _verify(settings: Settings, client: TocClient | None) -> int:
         api = client or TocClient(settings)
         who = api.get("/v1/me")
     except RemoteError as exc:
-        print(Fore.YELLOW + f"Stored, but the key did not work: {exc}" + Fore.RESET)
+        console.stdout().line(f"Stored, but the key did not work: {exc}", "yellow")
         print(
             "If this says not found, the API may not be enabled for your "
             "organization yet, or your address may not be on its allow list."

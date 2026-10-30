@@ -25,6 +25,7 @@ from .errors import (
     NotFound,
     PermissionDenied,
     RateLimited,
+    ReleaseSuperseded,
     RemoteError,
     ServiceUnavailable,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "NotFound",
     "PermissionDenied",
     "RateLimited",
+    "ReleaseSuperseded",
     "RemoteError",
     "Route",
     "ServiceUnavailable",

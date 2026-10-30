@@ -26,7 +26,7 @@ import urllib.request
 import zlib
 from collections.abc import Callable, Iterator, Mapping
 from importlib import metadata
-from typing import Any, Final
+from typing import Any, Final, TypeVar
 
 from .config import Settings
 from .contract import paging_fields
@@ -39,6 +39,8 @@ from .errors import (
     RemoteError,
     ServiceUnavailable,
 )
+
+_T = TypeVar("_T")
 
 #: How many times a retryable failure is attempted in total.
 MAX_ATTEMPTS: Final[int] = 3
@@ -105,6 +107,48 @@ def _retry_after(headers: Mapping[str, str]) -> float | None:
         if when is None:
             return None
         return max(0.0, when.timestamp() - time.time())
+
+
+def _header(headers: Mapping[str, str], name: str) -> str | None:
+    """Look a response header up whatever case it arrived in.
+
+    The caller holds a plain dict copy of the headers, which has lost the
+    case-insensitivity of the response object, and a distribution in front of
+    the origin may lowercase every name.
+
+    Args:
+        headers: The response headers.
+        name: The header name.
+
+    Returns:
+        The value, or None when the header is absent.
+    """
+    wanted = name.lower()
+    for key, value in headers.items():
+        if key.lower() == wanted:
+            return value
+    return None
+
+
+def _media_type(headers: Mapping[str, str]) -> str | None:
+    """Read the media type a response declared, without its parameters.
+
+    Args:
+        headers: The response headers.
+
+    Returns:
+        The lowercased type, such as ``application/zip``, or None when the
+        response declared none.
+    """
+    declared = _header(headers, "Content-Type")
+    if declared is None:
+        return None
+    return declared.split(";", 1)[0].strip().lower() or None
+
+
+#: How a zip archive begins: with a local file header, or, when it holds no
+#: entries, with its end of central directory record.
+ZIP_SIGNATURES: Final[tuple[bytes, ...]] = (b"PK\x03\x04", b"PK\x05\x06")
 
 
 #: What a gzip body that cannot be undone raises: a bad header is
@@ -313,18 +357,21 @@ class TocClient:
         """
         return self._settings.credentials.key_id
 
-    def _request(self, path: str, params: Mapping[str, str]) -> dict[str, Any]:
-        """Perform one GET and parse the answer.
+    def _send(
+        self, path: str, params: Mapping[str, str], accept: str
+    ) -> tuple[bytes, dict[str, str]]:
+        """Perform one GET and return its answer as received.
 
         Args:
             path: The path, beginning with a slash.
             params: Query parameters, empty values omitted.
+            accept: The media type to ask for.
 
         Returns:
-            The decoded JSON object.
+            The raw body and the response headers.
 
         Raises:
-            RemoteError: On any failure, including a body that is not JSON.
+            RemoteError: On any failure.
         """
         query = urllib.parse.urlencode({k: v for k, v in params.items() if v})
         url = f"{self._settings.base_url}{path}" + (f"?{query}" if query else "")
@@ -333,7 +380,7 @@ class TocClient:
             method="GET",
             headers={
                 "Authorization": f"Bearer {self._settings.credentials.api_key}",
-                "Accept": "application/json",
+                "Accept": accept,
                 # Negotiated, so a server that does not compress answers as
                 # before. gzip only: it is the one encoding the standard
                 # library can undo, and a page of controls shrinks several
@@ -374,7 +421,22 @@ class TocClient:
                 f"reading the response: {type(exc).__name__}.",
                 code="connection_lost",
             ) from None
+        return body, headers
 
+    def _request(self, path: str, params: Mapping[str, str]) -> dict[str, Any]:
+        """Perform one GET and parse the answer.
+
+        Args:
+            path: The path, beginning with a slash.
+            params: Query parameters, empty values omitted.
+
+        Returns:
+            The decoded JSON object.
+
+        Raises:
+            RemoteError: On any failure, including a body that is not JSON.
+        """
+        body, headers = self._send(path, params, "application/json")
         try:
             # Outside the transport `try` above on purpose: a body that will
             # not decompress arrived whole, so it is a bad answer rather than
@@ -397,6 +459,111 @@ class TocClient:
             )
         return parsed
 
+    def _request_bytes(
+        self, path: str, params: Mapping[str, str], media_type: str
+    ) -> bytes:
+        """Perform one GET and return the body once it proves to be what it claims.
+
+        The JSON path refuses a wrong 200 because it fails to parse. Nothing
+        parses bytes, so a proxy's notice page, a sibling route's JSON or an
+        empty answer would otherwise be written out as the file asked for, and
+        found wrong only when someone opened it. Every check here fails as a
+        ``bad_body`` contract violation, which is not retried, because each of
+        these bodies arrived whole.
+
+        Args:
+            path: The path, beginning with a slash.
+            params: Query parameters, empty values omitted.
+            media_type: The type the contract publishes for the route's 200.
+
+        Returns:
+            The body, with any gzip encoding undone.
+
+        Raises:
+            RemoteError: On any failure, including an answer that declares no
+                type or another type, an empty body, and, for a zip, a body
+                that does not begin as a zip archive does.
+        """
+        body, headers = self._send(path, params, media_type)
+        request_id = _header(headers, "X-Request-Id")
+        served = _media_type(headers)
+        if served is None:
+            # Nothing then vouches for the body, and whatever stripped the
+            # header could as easily have replaced what came with it.
+            raise ContractViolation(
+                f"{path} answered without a Content-Type where the contract "
+                f"publishes {media_type}.",
+                code="bad_body",
+                request_id=request_id,
+            )
+        if served != media_type:
+            raise ContractViolation(
+                f"{path} answered with {served} where the contract publishes "
+                f"{media_type}.",
+                code="bad_body",
+                request_id=request_id,
+            )
+        try:
+            # Every request asks for gzip, so an archive can arrive compressed
+            # on top of being a zip. Undone here, as the JSON path does, or the
+            # file written would be the gzip around the zip and match neither
+            # the zip's format nor the digest its manifest publishes.
+            decoded = _decoded(body, headers)
+        except UNDECODABLE:
+            raise ContractViolation(
+                f"{path} answered with a compressed archive that will not decompress.",
+                code="bad_body",
+                request_id=request_id,
+            ) from None
+        # Checked once decoded, because a gzip of nothing is a few bytes long.
+        if not decoded:
+            raise ContractViolation(
+                f"{path} answered with an empty body where the contract publishes "
+                f"{media_type}.",
+                code="bad_body",
+                request_id=request_id,
+            )
+        if media_type == "application/zip" and not decoded.startswith(ZIP_SIGNATURES):
+            # A proxy can label its own page with the type the client asked
+            # for, so the header alone does not make a body an archive.
+            raise ContractViolation(
+                f"{path} answered with a body that does not begin as a zip "
+                "archive does.",
+                code="bad_body",
+                request_id=request_id,
+            )
+        return decoded
+
+    def _retrying(self, call: Callable[[], _T]) -> _T:
+        """Run one request, retrying the failures worth retrying.
+
+        Args:
+            call: The request.
+
+        Returns:
+            What the request returned.
+
+        Raises:
+            RemoteError: On a failure that is not worth retrying, or when the
+                attempts are exhausted.
+        """
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                return call()
+            except (RateLimited, ServiceUnavailable) as exc:
+                if attempt >= MAX_ATTEMPTS:
+                    raise
+                wait = getattr(exc, "retry_after", None)
+                if wait is not None and wait > MAX_RETRY_AFTER:
+                    # Reporting beats sleeping. The server named a window, not
+                    # a remaining time, and the caller can act on the number.
+                    raise
+                if wait is None:
+                    wait = min(MAX_RETRY_AFTER, 2 ** (attempt - 1))
+                self._sleep(wait * (0.5 + random.random() / 2))
+
     def get(self, path: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
         """Fetch one resource, retrying the failures worth retrying.
 
@@ -411,22 +578,40 @@ class TocClient:
             RemoteError: On a failure that is not worth retrying, or when the
                 attempts are exhausted.
         """
-        attempt = 0
-        while True:
-            attempt += 1
-            try:
-                return self._request(path, params or {})
-            except (RateLimited, ServiceUnavailable) as exc:
-                if attempt >= MAX_ATTEMPTS:
-                    raise
-                wait = getattr(exc, "retry_after", None)
-                if wait is not None and wait > MAX_RETRY_AFTER:
-                    # Reporting beats sleeping. The server named a window, not
-                    # a remaining time, and the caller can act on the number.
-                    raise
-                if wait is None:
-                    wait = min(MAX_RETRY_AFTER, 2 ** (attempt - 1))
-                self._sleep(wait * (0.5 + random.random() / 2))
+        return self._retrying(lambda: self._request(path, params or {}))
+
+    def get_bytes(
+        self,
+        path: str,
+        params: Mapping[str, str] | None = None,
+        *,
+        media_type: str = "application/zip",
+    ) -> bytes:
+        """Fetch one resource as the bytes the API served, retrying as `get` does.
+
+        For a route whose 200 is not JSON, such as a CCR pack archive. Only a
+        gzip encoding is undone; the body is never decoded as text, which would
+        corrupt a zip.
+
+        Args:
+            path: The path, beginning with a slash.
+            params: Query parameters.
+            media_type: The type the contract publishes for the route's 200,
+                which is asked for and held to. `call_route` reads it from the
+                contract; the default is the CCR pack archive's.
+
+        Returns:
+            The body.
+
+        Raises:
+            RemoteError: On a failure that is not worth retrying, when the
+                attempts are exhausted, or when a 200 declares no media type
+                or another one, is empty, or, for a zip, does not begin as a
+                zip archive does.
+        """
+        return self._retrying(
+            lambda: self._request_bytes(path, params or {}, media_type)
+        )
 
     def paginate(
         self,

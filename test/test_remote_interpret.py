@@ -503,21 +503,36 @@ def test_references_and_path_level_parameters_are_read(
     assert route.filters == ("colour",)
 
 
-def test_an_unbound_path_is_skipped(use_contract: UseContract) -> None:
-    (unbound,) = contract.UNBOUND
+def test_a_non_json_answer_becomes_a_command_that_writes_a_file(
+    use_contract: UseContract,
+) -> None:
+    # Arrange
     use_contract(
         document(
             {
-                unbound: {
+                "/v1/widgets/{widgetId}/archive": {
                     "get": operation(
-                        path_parameter("tmId"), content_type="application/zip"
+                        path_parameter("widgetId"),
+                        query("kind", enum=["source", "deploy"], default="source"),
+                        content_type="application/zip",
                     )
                 }
             }
         )
     )
+    parser, _ = api_parser()
 
-    assert contract.routes() == ()
+    # Act
+    (route,) = contract.routes()
+    params = parser.parse_args(["widgets", "archive", "w-1", "--output", "w.zip"])
+
+    # Assert
+    assert route.binary is True
+    assert route.command == ("widgets", "archive")
+    assert route.options[0].default == "source"
+    assert params.kind is None
+    with pytest.raises(SystemExit):
+        parser.parse_args(["widgets", "archive", "w-1"])
 
 
 @pytest.mark.parametrize(
@@ -546,9 +561,28 @@ def test_an_unbound_path_is_skipped(use_contract: UseContract) -> None:
             id="header parameter",
         ),
         pytest.param(
-            {"/v1/widgets": {"get": operation(content_type="text/csv")}},
-            "not JSON",
-            id="non-JSON response",
+            {"/v1/widgets": {"get": {**operation(), "responses": {"200": {}}}}},
+            "no content",
+            id="no 200 content",
+        ),
+        pytest.param(
+            {
+                "/v1/widgets": {
+                    "get": {
+                        **operation(),
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {"schema": {"type": "object"}},
+                                    "text/csv": {},
+                                }
+                            }
+                        },
+                    }
+                }
+            },
+            "exactly one media type",
+            id="two media types",
         ),
         pytest.param(
             {"/v1/widgets": {"get": operation(summary=" ")}},

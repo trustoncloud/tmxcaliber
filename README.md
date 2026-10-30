@@ -192,8 +192,31 @@ tmxcaliber subscriptions list
 tmxcaliber compliance frameworks list
 tmxcaliber compliance mappings list --framework-id nist-800-53-r5
 tmxcaliber ccr packs list
-tmxcaliber ccr packs list --provider aws
+tmxcaliber ccr packs list --provider aws --service s3
+tmxcaliber ccr packs get aws-s3
+tmxcaliber ccr packs archive aws-s3 --output aws-s3-source.zip
+tmxcaliber ccr packs archive aws-s3 --kind deploy --output aws-s3.zip
 ```
+
+`ccr packs list` shows the Wiz Cloud Configuration Rule packs your key can
+read, narrowed by `--provider` and `--service` when you give them, and
+`ccr packs get` prints one pack's manifest: its rules and the release it was
+built from. `ccr packs archive` downloads a whole pack as a zip.
+`--kind source`, the default, is the rule tree, and `--kind deploy` is the
+Terraform package. `--release` pins the download to the release that
+`ccr packs get` reported, and the API refuses a release it no longer
+publishes, so the archive matches the manifest you read. `--output` names the
+file and is required; the command says on stderr how many bytes it wrote and
+where. Each option's help, and the values it accepts, come from the API's
+contract. Selecting individual rules from a pack is planned through the API,
+and these commands will gain it from the API's contract.
+
+A mistyped or renamed name gets a "Did you mean ...?" suggestion, drawn only
+from what your key can list: `ccr packs get aws-ec3` ends with
+`Did you mean aws-ec2?`, and `ccr packs get "Gemini Agent Platform"` suggests
+`gcp-vertex`. The `threatmodels` commands do the same, and also match a
+ThreatModel's title. Errors and suggestions go to stderr, in color only on a
+terminal; set `NO_COLOR` to turn the color off there too.
 
 Collections are read in full; paging is handled for you. When the API reports
 that an answer is incomplete (for example, compliance mappings for
@@ -222,16 +245,18 @@ api = Client()
 api.me()
 api.threatmodels.list(provider="aws")
 api.threatmodels.threats("aws-s3", feature_class_id="S3.FC1")
+api.ccr.packs.archive("aws-s3", kind="deploy")  # the zip, as bytes
 api.compliance.mappings.list(framework_id="nist-800-53-r5")
 ```
 
 `Client()` finds the key and endpoint exactly as the CLI does. To use a key
 kept somewhere else, pass it: `Client(api_key=..., api_url=...)`. A collection
-comes back as a list of every row. An incomplete answer raises
-`IncompleteAnswer`, which carries the rows that did arrive, unless you pass
-`allow_incomplete=True`. Every failure is a `RemoteError` subclass, such as
-`AuthenticationError` or `NotFound`, importable from `tmxcaliber`.
-`api.get(path)` and `api.paginate(path)` remain available for a raw path.
+comes back as a list of every row, and an archive as its bytes. An incomplete
+answer raises `IncompleteAnswer`, which carries the rows that did arrive,
+unless you pass `allow_incomplete=True`. Every failure is a `RemoteError`
+subclass, such as `AuthenticationError`, `NotFound` or `ReleaseSuperseded`,
+importable from `tmxcaliber`. `api.get(path)` and `api.paginate(path)` remain
+available for a raw path.
 
 ## Command Overview
 

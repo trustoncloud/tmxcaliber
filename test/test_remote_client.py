@@ -7,9 +7,12 @@ reached a real socket would fail rather than quietly go to the network.
 from __future__ import annotations
 
 import gzip
+import http.client
+import io
 import json
 import urllib.error
 import urllib.request
+import zipfile
 from typing import Any
 
 import pytest
@@ -71,6 +74,20 @@ class FakeResponse:
         return None
 
 
+class FakeBytesResponse(FakeResponse):
+    """A response whose body is raw bytes, such as a pack archive.
+
+    It declares a zip unless given other headers, as the archive route does,
+    so a test that means a response without a Content-Type passes ``{}``.
+    """
+
+    def __init__(self, body: bytes, headers: dict[str, str] | None = None) -> None:
+        super().__init__(None, headers)
+        self._body = body
+        if headers is None:
+            self.headers = {"Content-Type": "application/zip"}
+
+
 class FakeOpener(urllib.request.OpenerDirector):
     """An opener that replays queued answers and records the requests."""
 
@@ -100,6 +117,38 @@ class FakeOpener(urllib.request.OpenerDirector):
         return answer
 
 
+class StrictOpener(FakeOpener):
+    """A `FakeOpener` that refuses a request the real transport would refuse.
+
+    ``http.client`` raises ``InvalidURL`` before it sends anything when the
+    path holds a space or a control character, and a fake that accepts any URL
+    hides every request that is never made. The client reports that failure as
+    a lost connection and retries it, so a name that cannot be sent must be
+    caught here to be seen.
+    """
+
+    def open(self, fullurl: Any, data: Any = None, timeout: Any = None) -> Any:
+        """Check the request line as the transport does, then answer as queued.
+
+        Args:
+            fullurl: The request.
+            data: Unused.
+            timeout: Unused.
+
+        Returns:
+            The next queued response.
+
+        Raises:
+            http.client.InvalidURL: When the transport would not send the path.
+        """
+        # `putrequest` validates the request line and only buffers it, so no
+        # connection is made.
+        http.client.HTTPConnection("api.example.test").putrequest(
+            "GET", fullurl.selector
+        )
+        return super().open(fullurl, data, timeout)
+
+
 def http_error(
     status: int, body: Any, headers: dict[str, str] | None = None
 ) -> urllib.error.HTTPError:
@@ -113,8 +162,6 @@ def http_error(
     Returns:
         The error.
     """
-    import io
-
     return urllib.error.HTTPError(
         "https://api.example.test/v1/me",
         status,
@@ -152,6 +199,7 @@ def test_the_user_agent_names_no_caller() -> None:
         ("ip_not_allowed", 403, errors.AddressNotAllowed),
         ("forbidden", 403, errors.PermissionDenied),
         ("not_found", 404, errors.NotFound),
+        ("release_superseded", 410, errors.ReleaseSuperseded),
         ("invalid_request", 400, errors.InvalidRequest),
         ("invalid_cursor", 400, errors.InvalidCursor),
         ("unavailable", 503, errors.ServiceUnavailable),
@@ -517,6 +565,256 @@ def test_an_incomplete_read_is_reported_rather_than_raised_raw() -> None:
         client.get("/v1/me")
 
 
+#: Deliberately invalid UTF-8, so a client that decoded it would fail.
+ZIP = b"PK\x03\x04\xff\xfe\x00"
+
+
+def test_bytes_come_back_exactly_as_served() -> None:
+    opener = FakeOpener([FakeBytesResponse(ZIP)])
+    client = TocClient(settings(), opener=opener)
+
+    assert client.get_bytes("/v1/ccr/packs/aws-s3/archive") == ZIP
+
+
+def test_a_bytes_request_asks_for_a_zip() -> None:
+    opener = FakeOpener([FakeBytesResponse(ZIP)])
+    client = TocClient(settings(), opener=opener)
+
+    client.get_bytes("/v1/ccr/packs/aws-s3/archive", {"kind": "source", "release": ""})
+
+    request = opener.requests[0]
+    assert request.get_header("Accept") == "application/zip"
+    assert request.full_url.endswith("/v1/ccr/packs/aws-s3/archive?kind=source")
+
+
+def test_a_bytes_request_is_retried_like_any_other() -> None:
+    opener = FakeOpener(
+        [
+            http_error(
+                503,
+                {"error": {"code": "unavailable", "message": "x", "requestId": "r"}},
+            ),
+            FakeBytesResponse(ZIP),
+        ]
+    )
+    client = TocClient(settings(), opener=opener, sleep=lambda _: None)
+
+    assert client.get_bytes("/v1/ccr/packs/aws-s3/archive") == ZIP
+
+
+def test_a_bytes_request_maps_errors_like_any_other() -> None:
+    opener = FakeOpener(
+        [
+            http_error(
+                410,
+                {
+                    "error": {
+                        "code": "release_superseded",
+                        "message": "x",
+                        "requestId": "r",
+                    }
+                },
+            )
+        ]
+    )
+    client = TocClient(settings(), opener=opener)
+
+    with pytest.raises(errors.ReleaseSuperseded):
+        client.get_bytes("/v1/ccr/packs/aws-s3/archive", {"release": "d07d6aee"})
+
+
+@pytest.mark.parametrize(
+    "served",
+    [
+        "text/html",
+        "text/html; charset=utf-8",
+        "application/json",
+        "Application/JSON; charset=utf-8",
+    ],
+)
+def test_a_bytes_request_refuses_a_body_of_another_media_type(served: str) -> None:
+    # A proxy notice page, a CDN error mapping, or a request line that landed on
+    # a sibling JSON route all answer 200 with a body that is not an archive.
+    opener = FakeOpener(
+        [FakeBytesResponse(b"<html>blocked</html>", {"content-type": served})]
+    )
+    client = TocClient(settings(), opener=opener)
+
+    with pytest.raises(
+        errors.ContractViolation, match="where the contract publishes application/zip"
+    ) as raised:
+        client.get_bytes("/v1/ccr/packs/aws-s3/archive")
+
+    assert raised.value.code == "bad_body"
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Content-Type": "application/json", "X-Request-Id": "req-9"},
+        {"content-type": "application/json", "x-request-id": "req-9"},
+    ],
+)
+def test_a_refused_media_type_names_what_was_served_and_the_request(
+    headers: dict[str, str],
+) -> None:
+    # The request id is what support asks for, so it must survive a distribution
+    # in front of the origin that lowercases every header name.
+    opener = FakeOpener([FakeBytesResponse(b"{}", headers)])
+    client = TocClient(settings(), opener=opener)
+
+    with pytest.raises(errors.ContractViolation) as raised:
+        client.get_bytes("/v1/ccr/packs/aws-s3/archive")
+
+    assert "application/json" in str(raised.value)
+    assert raised.value.request_id == "req-9"
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        {"Content-Type": "application/zip"},
+        {"content-type": "application/zip"},
+        {"CONTENT-TYPE": "Application/Zip; charset=binary"},
+    ],
+)
+def test_a_bytes_request_accepts_a_zip_however_the_header_is_spelled(
+    header: dict[str, str],
+) -> None:
+    # A distribution in front of the origin may lowercase header names.
+    opener = FakeOpener([FakeBytesResponse(ZIP, header)])
+    client = TocClient(settings(), opener=opener)
+
+    assert client.get_bytes("/v1/ccr/packs/aws-s3/archive") == ZIP
+
+
+def test_a_bytes_request_refuses_an_answer_without_a_content_type() -> None:
+    # Nothing then says the body is the archive the contract publishes, and a
+    # proxy that strips the header can as easily have replaced the body.
+    opener = FakeOpener([FakeBytesResponse(ZIP, {"X-Request-Id": "req-3"})])
+    client = TocClient(settings(), opener=opener)
+
+    with pytest.raises(
+        errors.ContractViolation, match="without a Content-Type"
+    ) as raised:
+        client.get_bytes("/v1/ccr/packs/aws-s3/archive")
+
+    assert raised.value.code == "bad_body"
+    assert raised.value.request_id == "req-3"
+
+
+@pytest.mark.parametrize(
+    ("raw", "encoding"),
+    [(b"", {}), (gzip.compress(b""), {"Content-Encoding": "gzip"})],
+    ids=["empty", "gzip of nothing"],
+)
+def test_a_bytes_request_refuses_an_empty_body(
+    raw: bytes, encoding: dict[str, str]
+) -> None:
+    # Written out, an empty body is a file that looks like a download and holds
+    # nothing, whatever the encoding it arrived in.
+    headers = {"Content-Type": "application/zip", "X-Request-Id": "req-4", **encoding}
+    opener = FakeOpener([RawResponse(raw, headers)])
+    client = TocClient(settings(), opener=opener)
+
+    with pytest.raises(errors.ContractViolation, match="empty body") as raised:
+        client.get_bytes("/v1/ccr/packs/aws-s3/archive")
+
+    assert raised.value.code == "bad_body"
+    assert raised.value.request_id == "req-4"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"<html>blocked</html>", b'{"rules": []}', b"PK", b"PK\x01\x02 central only"],
+    ids=["html", "json", "two bytes", "no local header"],
+)
+def test_a_zip_request_refuses_a_body_that_does_not_begin_as_a_zip(body: bytes) -> None:
+    # A proxy can label its own page as the type the client asked for, and the
+    # file written from it would only fail when someone tried to unpack it.
+    opener = FakeOpener(
+        [
+            FakeBytesResponse(
+                body, {"Content-Type": "application/zip", "X-Request-Id": "r"}
+            )
+        ]
+    )
+    client = TocClient(settings(), opener=opener)
+
+    with pytest.raises(
+        errors.ContractViolation, match="does not begin as a zip"
+    ) as raised:
+        client.get_bytes("/v1/ccr/packs/aws-s3/archive")
+
+    assert raised.value.code == "bad_body"
+    assert raised.value.request_id == "r"
+
+
+def _zip_of(*names: str) -> bytes:
+    """Build a real zip archive holding empty files.
+
+    Args:
+        *names: The entries, none for an archive with no entries.
+
+    Returns:
+        The archive's bytes.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name in names:
+            archive.writestr(name, b"")
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize(
+    "archive",
+    [_zip_of("aws-s3/S3.C20/metadata.json"), _zip_of()],
+    ids=["with entries", "with no entries"],
+)
+def test_a_real_zip_passes_every_check(archive: bytes) -> None:
+    # An archive with no entries is only its end of central directory record,
+    # which begins with its own signature.
+    opener = FakeOpener([FakeBytesResponse(archive)])
+    client = TocClient(settings(), opener=opener)
+
+    assert client.get_bytes("/v1/ccr/packs/aws-s3/archive") == archive
+
+
+def test_a_body_of_another_published_type_is_held_to_that_type_alone() -> None:
+    # Only a zip has to begin with a zip signature. A route the contract
+    # publishes as another type is asked for that type and held to it alone.
+    opener = FakeOpener(
+        [FakeBytesResponse(b"%PDF-1.7", {"Content-Type": "application/pdf"})]
+    )
+    client = TocClient(settings(), opener=opener)
+
+    got = client.get_bytes("/v1/reports/r-1", media_type="application/pdf")
+
+    assert got == b"%PDF-1.7"
+    assert opener.requests[0].get_header("Accept") == "application/pdf"
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        FakeBytesResponse(b"<html>", {"content-type": "text/html"}),
+        FakeBytesResponse(ZIP, {}),
+        FakeBytesResponse(b""),
+        FakeBytesResponse(b"<html>"),
+    ],
+    ids=["another type", "no type", "empty", "no zip signature"],
+)
+def test_a_refused_body_is_not_retried(answer: FakeBytesResponse) -> None:
+    # Each arrived whole, so asking again would only fetch the same wrong answer.
+    opener = FakeOpener([answer, FakeBytesResponse(ZIP)])
+    client = TocClient(settings(), opener=opener, sleep=lambda _: None)
+
+    with pytest.raises(errors.ContractViolation):
+        client.get_bytes("/v1/ccr/packs/aws-s3/archive")
+
+    assert len(opener.requests) == 1
+
+
 class RawResponse(FakeResponse):
     """A response whose body is given as the bytes the server sent."""
 
@@ -579,3 +877,59 @@ def test_a_gzip_error_envelope_still_maps_to_its_code() -> None:
     with pytest.raises(errors.PermissionDenied) as caught:
         TocClient(settings(), opener=opener).get("/v1/me")
     assert "r-9" in str(caught.value)
+
+
+def test_an_archive_request_asks_for_gzip_too() -> None:
+    opener = FakeOpener([FakeBytesResponse(ZIP, {"Content-Type": "application/zip"})])
+    TocClient(settings(), opener=opener).get_bytes("/v1/ccr/packs/aws-s3/archive")
+
+    assert opener.requests[0].get_header("Accept-encoding") == "gzip"
+
+
+@pytest.mark.parametrize("name", ["Content-Encoding", "content-encoding"])
+def test_a_gzip_archive_is_decoded_to_the_zip_it_carries(name: str) -> None:
+    # Left compressed, the bytes would fail the manifest's digest check, so the
+    # archive path undoes the encoding exactly as the JSON path does.
+    opener = FakeOpener(
+        [
+            RawResponse(
+                gzip.compress(ZIP), {"Content-Type": "application/zip", name: "gzip"}
+            )
+        ]
+    )
+
+    got = TocClient(settings(), opener=opener).get_bytes("/v1/ccr/packs/aws-s3/archive")
+
+    assert got == ZIP
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"plainly not gzip",
+        b"\x1f\x8b\x08\x00 then nonsense",
+        gzip.compress(ZIP)[:-8],
+    ],
+)
+def test_a_gzip_archive_that_will_not_decode_is_a_bad_body(raw: bytes) -> None:
+    # It arrived whole, so it is a wrong answer rather than a lost connection,
+    # and it is refused once rather than retried.
+    opener = FakeOpener(
+        [
+            RawResponse(
+                raw,
+                {
+                    "Content-Type": "application/zip",
+                    "Content-Encoding": "gzip",
+                    "X-Request-Id": "req-7",
+                },
+            )
+        ]
+    )
+    client = TocClient(settings(), opener=opener, sleep=lambda _: None)
+
+    with pytest.raises(errors.ContractViolation, match="will not decompress") as caught:
+        client.get_bytes("/v1/ccr/packs/aws-s3/archive")
+    assert caught.value.code == "bad_body"
+    assert caught.value.request_id == "req-7"
+    assert len(opener.requests) == 1

@@ -1,0 +1,1196 @@
+"""Telling someone which pack or ThreatModel a mistyped name probably meant."""
+
+from __future__ import annotations
+
+import re
+from typing import NamedTuple
+
+import pytest
+
+from tmxcaliber.lib.remote.suggest import (
+    ALIASES,
+    alternative_names,
+    did_you_mean,
+    normalize,
+    suggest,
+)
+
+#: Every CCR pack ccr_factory publishes, as its ``services.json`` names them.
+KEYS: tuple[str, ...] = (
+    "aws-s3",
+    "azure-storage",
+    "gcp-bigquery",
+    "aws-transfer",
+    "azure-keyvault",
+    "gcp-pubsub",
+    "aws-ec2",
+    "aws-autoscaling",
+    "azure-sql",
+    "aws-eks",
+    "aws-bedrock",
+    "gcp-gke",
+    "gcp-vertex",
+    "gcp-notebooks",
+    "aws-secretsmanager",
+    "gcp-cloudsql",
+    "aws-bedrockagentcore",
+    "gcp-cloudkms",
+    "gcp-iam",
+    "gcp-compute",
+)
+
+
+class ThreatModelRow(NamedTuple):
+    """One row of ``threatmodels list``, as far as a suggestion reads it."""
+
+    tm_id: str
+    title: str
+
+
+#: ThreatModels as ``threatmodels list`` names them, which is what the
+#: ``threatmodels`` commands suggest from, taken from the public list at
+#: https://trustoncloud.com/coverage/. A ThreatModel list is far more crowded
+#: than the packs, and the same name can exist under several providers, so it
+#: shows what the short pack list cannot. The rows are the ThreatModels the
+#: tests below name, with the ones whose ids or titles come close enough to
+#: compete with them, and each query below answers among them exactly as it
+#: did among the whole list when they were chosen. They are written here
+#: because the specification keeps every test fixture in code.
+THREATMODELS: tuple[ThreatModelRow, ...] = tuple(
+    ThreatModelRow(tm_id, title)
+    for tm_id, title in (
+        ("aws-acm", "AWS Certificate Manager (ACM)"),
+        ("aws-acmpca", "AWS Private CA"),
+        ("aws-apigatewayv2", "Amazon API Gateway (HTTP APIs and WebSockets)"),
+        ("aws-ce", "AWS Cost Explorer"),
+        ("aws-cloudhsm", "AWS CloudHSM"),
+        ("aws-connect", "Amazon Connect"),
+        ("aws-costoptimizationhub", "AWS Cost Optimization Hub"),
+        ("aws-databrew", "AWS Glue DataBrew"),
+        ("aws-directconnect", "AWS Direct Connect"),
+        ("aws-dms", "AWS Database Migration Service"),
+        ("aws-ds", "AWS Directory Service"),
+        ("aws-ec2", "Amazon Elastic Compute Cloud (Amazon EC2)"),
+        ("aws-ecs", "Amazon Elastic Container Service (Amazon ECS)"),
+        ("aws-eks", "Amazon Elastic Kubernetes Service (Amazon EKS)"),
+        ("aws-events", "Amazon EventBridge"),
+        ("aws-firehose", "Amazon Data Firehose"),
+        ("aws-fms", "AWS Firewall Manager"),
+        ("aws-iam", "AWS Identity and Access Management (IAM)"),
+        ("aws-iotevents", "AWS IoT Events"),
+        ("aws-kafka", "Amazon Managed Streaming for Apache Kafka (Amazon MSK)"),
+        ("aws-kms", "AWS Key Management Service (AWS KMS)"),
+        ("aws-mq", "Amazon MQ"),
+        ("aws-networkfirewall", "AWS Network Firewall"),
+        ("aws-networkmanager", "AWS Network Manager"),
+        ("aws-qbusiness", "Amazon Q Business"),
+        ("aws-qconnect", "Amazon Q in Connect"),
+        ("aws-qdeveloper", "Amazon Q developer"),
+        ("aws-rds", "Amazon Relational Database Service (Amazon RDS)"),
+        ("aws-redshift", "Amazon Redshift"),
+        ("aws-secretsmanager", "AWS Secrets Manager"),
+        ("aws-ses", "Amazon SES"),
+        ("aws-sqs", "Amazon Simple Queue Service (Amazon SQS)"),
+        ("aws-ssm", "AWS Systems Manager"),
+        ("aws-stepfunctions", "AWS Step Functions"),
+        ("aws-transfer", "AWS Transfer Family"),
+        ("aws-transform", "AWS Transform"),
+        ("aws-wafv2", "AWS WAF"),
+        ("azure-aks", "Azure Kubernetes Service"),
+        ("azure-applicationgateway", "Azure Application Gateway"),
+        ("azure-botservice", "Azure AI Bot Service"),
+        ("azure-cognitiveservices", "Azure AI Services"),
+        ("azure-compute", "Azure Compute"),
+        ("azure-eventhubs", "Azure Event Hubs"),
+        ("azure-management", "Azure Management"),
+        ("azure-monitor", "Azure Monitor"),
+        ("azure-network", "Azure Virtual Network"),
+        ("azure-resourcemanager", "Azure Resource Manager"),
+        ("azure-search", "Azure AI Search"),
+        ("azure-sql", "Azure SQL"),
+        ("azure-storage", "Azure Storage"),
+        ("azure-web", "Azure Functions"),
+        ("gcp-apigateway", "API Gateway"),
+        ("gcp-bigquery", "BigQuery"),
+        ("gcp-certificatemanager", "Certificate Manager"),
+        ("gcp-cloudasset", "Cloud Asset Inventory"),
+        ("gcp-cloudkms", "Cloud Key Management Service (KMS)"),
+        ("gcp-cloudquotas", "Cloud Quotas"),
+        ("gcp-cloudsql", "Cloud SQL"),
+        ("gcp-cloudtasks", "Cloud Tasks"),
+        ("gcp-cloudtrace", "Cloud Trace"),
+        ("gcp-compute", "Compute Engine"),
+        ("gcp-dataflow", "Dataflow"),
+        ("gcp-dataform", "Dataform"),
+        ("gcp-dataproc", "Managed Service for Apache Spark"),
+        ("gcp-discoveryengine", "Gemini Enterprise"),
+        ("gcp-dns", "Cloud DNS"),
+        ("gcp-filestore", "Filestore"),
+        ("gcp-firebase", "Firebase"),
+        ("gcp-firestore", "Cloud Firestore"),
+        ("gcp-gke", "Google Kubernetes Engine (GKE)"),
+        ("gcp-iam", "Google Identity and Access Management (IAM)"),
+        ("gcp-metastore", "Dataproc Metastore"),
+        ("gcp-monitoring", "Cloud Monitoring"),
+        ("gcp-networkconnectivity", "Network Connectivity Center"),
+        ("gcp-networksecurity", "Network Security"),
+        ("gcp-notebooks", "Vertex AI Workbench"),
+        ("gcp-oracledatabase", "Oracle Database@Google Cloud"),
+        ("gcp-privateca", "Certificate Authority Service"),
+        ("gcp-redis", "Memorystore for Redis"),
+        ("gcp-secretmanager", "Secret Manager"),
+        ("gcp-storage", "Cloud Storage"),
+        ("gcp-vertex", "Vertex AI"),
+    )
+)
+
+THREATMODEL_IDS: tuple[str, ...] = tuple(row.tm_id for row in THREATMODELS)
+
+#: The names each ThreatModel is also written as, from the title it was
+#: published under, as the command line reads them from the same list rows.
+THREATMODEL_TITLES: dict[str, tuple[str, ...]] = {
+    row.tm_id: alternative_names(row.title) for row in THREATMODELS
+}
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("Amazon EC2", "ec2"),
+        ("  Google_Cloud  SQL ", "cloud-sql"),
+        ("pub/sub", "pub-sub"),
+        ("Gemini Agent Platform", "gemini-agent-platform"),
+        ("aws-ec2", "ec2"),
+        ("Microsoft Azure Key Vault", "key-vault"),
+        ("vertex--ai", "vertex-ai"),
+        # A vendor word alone is the whole name, so it is kept.
+        ("aws", "aws"),
+        ("Google", "google"),
+    ],
+)
+def test_a_name_is_normalized(name: str, expected: str) -> None:
+    assert normalize(name) == expected
+
+
+def test_every_alias_is_stored_normalized_and_names_a_tm_id() -> None:
+    tm_id = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)+")
+    for name, keys in ALIASES.items():
+        assert normalize(name) == name
+        assert keys
+        assert all(tm_id.fullmatch(key) for key in keys)
+
+
+def test_every_published_pack_has_an_alias() -> None:
+    named = {key for keys in ALIASES.values() for key in keys}
+
+    assert named >= set(KEYS)
+
+
+def test_the_renamed_vertex_ai_is_an_alias() -> None:
+    # Google renamed Vertex AI, and the ThreatModel and the pack keep the key
+    # gcp-vertex, so the new name has to lead there.
+    assert ALIASES["gemini-agent-platform"] == ("gcp-vertex",)
+    assert ALIASES["vertex-ai"] == ("gcp-vertex",)
+
+
+@pytest.mark.parametrize(
+    ("query", "first"),
+    [
+        ("ec3", "aws-ec2"),
+        ("aws-ec3", "aws-ec2"),
+        ("bigqeury", "gcp-bigquery"),
+        ("keyvalt", "azure-keyvault"),
+        ("vertexai", "gcp-vertex"),
+        ("s4", "aws-s3"),
+        ("Gemini Agent Platform", "gcp-vertex"),
+        ("gemini-agent-platform", "gcp-vertex"),
+        ("Amazon EC2", "aws-ec2"),
+        ("pub/sub", "gcp-pubsub"),
+    ],
+)
+def test_a_near_name_suggests_its_key_first(query: str, first: str) -> None:
+    assert suggest(query, KEYS)[0] == first
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("bigqeury", ["gcp-bigquery"]),
+        ("keyvalt", ["azure-keyvault"]),
+        ("vertexai", ["gcp-vertex"]),
+        ("s4", ["aws-s3"]),
+        ("Gemini Agent Platform", ["gcp-vertex"]),
+        ("Amazon EC2", ["aws-ec2"]),
+        ("pub/sub", ["gcp-pubsub"]),
+        # Every AWS pack begins with "aws-", so that part of the query says
+        # which provider was meant and nothing about which service, and the
+        # AWS packs that share only it are left out.
+        ("aws-ec3", ["aws-ec2"]),
+    ],
+)
+def test_a_near_name_suggests_only_what_is_close(
+    query: str, expected: list[str]
+) -> None:
+    assert suggest(query, KEYS) == expected
+
+
+@pytest.mark.parametrize("query", ["aws-sns", "aws-xyz", "azure-xyz", "aws-dms"])
+def test_a_query_that_shares_only_its_provider_with_a_key_suggests_nothing(
+    query: str,
+) -> None:
+    # Each of these is a ThreatModel's id or a made-up one, typed as a pack. The
+    # 20 packs share the prefix with it and nothing else, which is no reason to
+    # offer any of them.
+    assert suggest(query, KEYS) == []
+
+
+def test_a_provider_typed_before_a_service_only_narrows_or_orders() -> None:
+    # The provider prefix is shared by every key of that provider, so it may
+    # decide which provider's keys are kept and in what order, and it may never
+    # bring in a key that the service typed alone would not. Every service of
+    # the packs and of the ThreatModels above is tried under each provider.
+    services = sorted({key.partition("-")[2] for key in (*KEYS, *THREATMODEL_IDS)})
+    added: dict[str, list[str]] = {}
+    for service in services:
+        alone = set(suggest(service, KEYS, limit=len(KEYS)))
+        for provider in ("aws", "azure", "gcp"):
+            query = f"{provider}-{service}"
+            typed = set(suggest(query, KEYS, limit=len(KEYS)))
+            if typed - alone:
+                added[query] = sorted(typed - alone)
+
+    assert added == {}
+
+
+@pytest.mark.parametrize(
+    ("query", "first"),
+    [
+        ("asw-ec3", "aws-ec2"),
+        ("amazn ec3", "aws-ec2"),
+        ("gpc-iamm", "gcp-iam"),
+        ("awsec3", "aws-ec2"),
+        ("awss3", "aws-s3"),
+        ("gcpbigqeury", "gcp-bigquery"),
+    ],
+)
+def test_a_slipped_or_run_in_provider_is_read_past_to_the_service(
+    query: str, first: str
+) -> None:
+    # A provider typed with a slip, or run into the service, is no part of the
+    # service either, so the service is compared without it.
+    assert suggest(query, KEYS)[0] == first
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [("Azrue Functions", "azure-web"), ("AS Private CA", "aws-acmpca")],
+)
+def test_a_vendor_typed_with_a_slip_still_names_its_provider(
+    query: str, expected: str
+) -> None:
+    # Azure Functions is the title of azure-web, and AWS Private CA the title of
+    # aws-acmpca. The services left once the vendor is read past are spelled
+    # like aws-stepfunctions and gcp-privateca, and the vendor, slip and all,
+    # says which provider was meant.
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert found[0] == expected
+    assert {key.partition("-")[0] for key in found} == {expected.partition("-")[0]}
+
+
+def test_a_word_that_names_a_service_is_never_read_as_a_vendor() -> None:
+    # "aks" is one edit from "aws", and it is the service of azure-aks, so it
+    # stays a word of the query and names no provider.
+    assert "aws-servicecatalog" not in suggest(
+        "AKS Service", ["azure-aks", "aws-servicecatalog"]
+    )
+
+
+def test_two_letters_swapped_count_as_one_slip() -> None:
+    # difflib scores "kfaka" 0.4 against "kafka", below any cutoff, although
+    # it is one slip, as "kafkx" is, which scores 0.8.
+    assert suggest("aws-kfaka", THREATMODEL_IDS)[0] == "aws-kafka"
+
+
+@pytest.mark.parametrize(
+    ("query", "offered", "own"),
+    [
+        # "aks" is Azure's, and aws-eks is spelled a letter away.
+        ("aws-aks", "azure-aks", "aws-eks"),
+        # "kms" is AWS's, and Google's Cloud KMS is what the alias names.
+        ("gcp-kms", "aws-kms", "gcp-cloudkms"),
+        # "network" is Azure's, and AWS has titles that begin with it.
+        ("aws-network", "azure-network", "aws-networkmanager"),
+        ("gcp-sqs", "aws-sqs", None),
+        ("azure-bigquery", "gcp-bigquery", None),
+    ],
+)
+def test_a_service_another_provider_has_exactly_is_offered_beside_the_typed_ones(
+    query: str, offered: str, own: str | None
+) -> None:
+    # The service typed is exactly that provider's, so the typed provider may
+    # be the slip, and its own close matches may be what was meant as well.
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert offered in found
+    if own is not None:
+        assert own in found
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("aws-secretmanager", ["aws-secretsmanager", "gcp-secretmanager"]),
+        ("gcp-ds", ["gcp-dns", "aws-ds"]),
+    ],
+)
+def test_the_typed_providers_near_match_leads_the_exact_service_of_another(
+    query: str, expected: list[str]
+) -> None:
+    # Each is a slip of the typed provider's own key, and the other provider's
+    # service happens to be spelled exactly as the slip. Both are offered, and
+    # the typed provider's, as near as an alias has to be, comes first.
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert found[: len(expected)] == expected
+
+
+def _exact_elsewhere(candidates: tuple[str, ...]) -> list[tuple[str, str]]:
+    """Type each candidate's service under each other provider.
+
+    Args:
+        candidates: Release keys or ThreatModel ids.
+
+    Returns:
+        Each query and the candidate whose service it spells exactly, leaving
+        out a query that is itself a candidate.
+    """
+    pairs = []
+    for key in candidates:
+        provider, _, service = key.partition("-")
+        for other in ("aws", "azure", "gcp"):
+            query = f"{other}-{service}"
+            if other != provider and query not in candidates:
+                pairs.append((query, key))
+    return pairs
+
+
+def test_every_service_typed_under_another_provider_offers_its_pack() -> None:
+    # Whatever the typed provider has that looks alike, the pack whose service
+    # is exactly what was typed is among the suggestions.
+    missed = {
+        query: found
+        for query, key in _exact_elsewhere(KEYS)
+        if key not in (found := suggest(query, KEYS))
+    }
+
+    assert missed == {}
+
+
+def test_a_tie_puts_the_typed_providers_key_first() -> None:
+    # "kms" names Google's Cloud KMS, and aws-eks and azure-eks are spelled
+    # alike against it, so the provider typed decides between them.
+    assert suggest("azure-kms", ["gcp-cloudkms", "aws-eks", "azure-eks"]) == [
+        "gcp-cloudkms",
+        "azure-eks",
+        "aws-eks",
+    ]
+
+
+def test_an_alias_whose_pack_is_not_a_candidate_suggests_nothing() -> None:
+    readable = [key for key in KEYS if key != "gcp-vertex"]
+
+    assert suggest("Gemini Agent Platform", readable) == []
+    assert suggest("Gemini Agent Platform", ["aws-s3", "aws-ec2"]) == []
+
+
+@pytest.mark.parametrize("query", ["kubernetesx-zzz", "lambda", ""])
+def test_an_unrelated_word_suggests_nothing(query: str) -> None:
+    assert suggest(query, KEYS) == []
+
+
+@pytest.mark.parametrize("query", ["aws-ec2", "gcp-vertex"])
+def test_a_name_that_is_a_candidate_suggests_nothing(query: str) -> None:
+    assert suggest(query, KEYS) == []
+
+
+@pytest.mark.parametrize("query", ["AWS-EC2", "aws_ec2", " aws ec2 "])
+def test_a_key_typed_another_way_suggests_that_key_alone(query: str) -> None:
+    # Spelled the way keys are spelled, it is that key, so the keys that merely
+    # share its provider would only be noise beside it.
+    assert suggest(query, KEYS) == ["aws-ec2"]
+
+
+@pytest.mark.parametrize("query", ["aws", "Azure", "gcp", "Amazon AWS"])
+def test_a_vendor_alone_suggests_nothing(query: str) -> None:
+    # A vendor names no service, and the keys closest to it in spelling are
+    # just its shortest ones, which would read as a guess.
+    assert suggest(query, KEYS) == []
+
+
+def test_the_threatmodels_spelling_and_googles_are_both_aliases() -> None:
+    # The gcp-vertex ThreatModel spells the product "Collab Enterprise", and
+    # Google spells it "Colab Enterprise". Each is an exact alias, so neither
+    # depends on a near miss to reach the pack.
+    assert ALIASES["collab-enterprise"] == ("gcp-vertex",)
+    assert ALIASES["colab-enterprise"] == ("gcp-vertex",)
+
+
+@pytest.mark.parametrize("query", ["Collab Enterprise", "Colab Enterprise"])
+def test_either_spelling_of_colab_enterprise_reaches_vertex(query: str) -> None:
+    assert suggest(query, KEYS) == ["gcp-vertex"]
+
+
+@pytest.mark.parametrize(
+    ("query", "first"),
+    [
+        # Google's Vertex AI name changes: Workbench went with the rename, and
+        # without its own names it would be read as a near miss of gcp-vertex.
+        ("Agent Platform Workbench", "gcp-notebooks"),
+        ("Gemini Enterprise Agent Platform", "gcp-vertex"),
+        ("Agent Platform", "gcp-vertex"),
+        ("Colab Enterprise", "gcp-vertex"),
+        # Services a ThreatModel says it also covers.
+        ("Azure Blobs", "azure-storage"),
+        ("Cloud Armor", "gcp-compute"),
+        ("Amazon S3 Glacier", "aws-s3"),
+    ],
+)
+def test_an_official_or_covered_name_leads_to_its_pack_first(
+    query: str, first: str
+) -> None:
+    assert suggest(query, KEYS)[0] == first
+
+
+def test_a_slip_in_colab_enterprise_still_reaches_vertex() -> None:
+    # A near miss of the alias, which no longer carries either spelling alone.
+    assert suggest("Colaab Enterprise", KEYS) == ["gcp-vertex"]
+
+
+@pytest.mark.parametrize(
+    ("query", "first"),
+    [
+        # The names people shorten a service to, which no spelling rule reaches.
+        ("kms", "gcp-cloudkms"),
+        ("Key Management Service", "gcp-cloudkms"),
+        ("gemini", "gcp-vertex"),
+        ("gcp-gemini", "gcp-vertex"),
+        ("Gemini Enterprise", "gcp-vertex"),
+        # The first words of a longer name, which is how a name is cut short.
+        ("gemini agent", "gcp-vertex"),
+        ("gemini-agent", "gcp-vertex"),
+        ("Gemini Enterprise Agent", "gcp-vertex"),
+        ("elastic kubernetes", "aws-eks"),
+        ("agent", "aws-bedrockagentcore"),
+    ],
+)
+def test_a_shortened_name_suggests_its_pack_first(query: str, first: str) -> None:
+    assert suggest(query, KEYS)[0] == first
+
+
+@pytest.mark.parametrize("name", ["gemini", "gemini-enterprise"])
+def test_a_name_cut_to_its_first_words_needs_no_alias_of_its_own(name: str) -> None:
+    # The words begin the alias "gemini enterprise agent platform", which the
+    # word-prefix rule reaches, so an entry of their own would be one more name
+    # to keep and would change nothing.
+    assert name not in ALIASES
+    assert suggest(name, KEYS) == ["gcp-vertex"]
+
+
+@pytest.mark.parametrize(
+    ("query", "first"),
+    [
+        ("kms", "gcp-cloudkms"),
+        ("gcp-gemini", "gcp-vertex"),
+        ("gemini agent", "gcp-vertex"),
+    ],
+)
+def test_a_shortened_name_is_led_to_its_threatmodel_among_many_threatmodels(
+    query: str, first: str
+) -> None:
+    assert suggest(query, THREATMODEL_IDS)[0] == first
+
+
+def test_a_shortened_name_names_every_provider_that_has_one() -> None:
+    # aws-kms is the KMS of AWS and gcp-cloudkms is Google's, and both are the
+    # ThreatModels of a service called KMS.
+    assert {"aws-kms", "gcp-cloudkms"} <= set(suggest("kms", THREATMODEL_IDS))
+
+
+@pytest.mark.parametrize("query", ["agen", "kubernet"])
+def test_a_piece_of_a_word_does_not_begin_an_alias(query: str) -> None:
+    # The words of an alias are compared whole: "agen" is the start of "agent
+    # core" letter for letter, and still names none of its words.
+    assert suggest(query, KEYS) == []
+
+
+def test_a_name_that_is_an_alias_is_not_taken_for_the_start_of_a_longer_one() -> None:
+    # "ec2" begins the alias "ec2 auto scaling" and is an alias itself, so it
+    # means EC2 alone.
+    assert suggest("Amazon EC2", KEYS) == ["aws-ec2"]
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [("aws-iamm", "aws-iam"), ("gcp-iamm", "gcp-iam"), ("Amazon IAMM", "aws-iam")],
+)
+def test_the_provider_typed_wins_over_another_providers_alias(
+    query: str, expected: str
+) -> None:
+    # Both providers have an IAM, and the alias for "iam" leads to Google's.
+    readable = ["aws-iam", "gcp-iam", "aws-acm"]
+
+    found = suggest(query, readable)
+
+    assert found[0] == expected
+    assert {key.partition("-")[0] for key in found} == {expected.partition("-")[0]}
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("gcp-storge", "gcp-storage"),
+        ("gcp-cloudstorage", "gcp-storage"),
+        ("Google Cloud Storage", "gcp-storage"),
+        ("azure-storge", "azure-storage"),
+    ],
+)
+def test_a_provider_and_a_service_of_two_providers_keeps_the_provider(
+    query: str, expected: str
+) -> None:
+    # "storage" is an alias of azure-storage, and gcp-storage is the pack of
+    # Google's. Naming Google must not lead to Azure's.
+    readable = ["azure-storage", "gcp-storage", "aws-s3"]
+
+    assert suggest(query, readable) == [expected]
+
+
+@pytest.mark.parametrize(
+    ("query", "first"),
+    [
+        ("aws-iamm", "aws-iam"),
+        ("gcp-storge", "gcp-storage"),
+        ("gcp-kms", "gcp-cloudkms"),
+        ("gcp-gemini", "gcp-vertex"),
+        ("azure-storge", "azure-storage"),
+        ("amazon kms", "aws-kms"),
+    ],
+)
+def test_a_provider_typed_keeps_the_suggestions_to_it_among_many_threatmodels(
+    query: str, first: str
+) -> None:
+    found = suggest(query, THREATMODEL_IDS)
+
+    assert found[0] == first
+    # Another provider's key stays only when its service is exactly the one
+    # typed, as aws-kms is for gcp-kms.
+    provider = first.partition("-")[0]
+    typed = normalize(query)
+    others = [key for key in found if key.partition("-")[2] != typed]
+    assert {key.partition("-")[0] for key in others} <= {provider}
+
+
+def test_a_cloud_prefixed_service_still_reaches_its_threatmodel() -> None:
+    # "cloud" begins a dozen Google services, so gcp-storage need not rank
+    # first. It has to be among the suggestions, with no other provider's
+    # beside it.
+    found = suggest("gcp-cloudstorage", THREATMODEL_IDS)
+
+    assert "gcp-storage" in found
+    assert {key.partition("-")[0] for key in found} == {"gcp"}
+
+
+def test_a_service_of_another_provider_is_kept_when_the_typed_one_has_none() -> None:
+    # Nothing of AWS is close to "bigquery", so the typed provider is a slip
+    # and the service is the better clue.
+    assert suggest("aws-bigquery", KEYS)[0] == "gcp-bigquery"
+    assert suggest("aws-bigquery", THREATMODEL_IDS)[0] == "gcp-bigquery"
+    assert suggest("gcp-storage", KEYS)[0] == "azure-storage"
+
+
+def test_a_provider_with_only_a_look_alike_does_not_hide_the_service() -> None:
+    # Every key of a provider shares its prefix with the query, so a key that is
+    # alike only by that prefix says nothing about what was meant.
+    readable = ["aws-bedrock", "gcp-bigquery"]
+
+    assert suggest("aws-bigquery", readable)[0] == "gcp-bigquery"
+
+
+@pytest.mark.parametrize(
+    ("query", "first"),
+    [
+        ("aws-kms", "gcp-cloudkms"),
+        ("AWS KMS", "gcp-cloudkms"),
+        ("aws kms", "gcp-cloudkms"),
+        ("Amazon KMS", "gcp-cloudkms"),
+    ],
+)
+def test_a_weak_look_alike_of_the_typed_provider_does_not_hide_an_exact_alias(
+    query: str, first: str
+) -> None:
+    # No pack of AWS is a KMS, and aws-eks is only spelled a little like "kms"
+    # (0.67), so it names nothing. Google's Cloud KMS is the one pack that the
+    # alias "kms" names, and dropping it would leave only wrong suggestions.
+    found = suggest(query, KEYS)
+
+    assert found[0] == first
+    assert "aws-eks" not in found[:1]
+
+
+@pytest.mark.parametrize(
+    ("query", "named"),
+    [
+        ("azure-ebs", "aws-ec2"),
+        ("aws-cloud-sql", "gcp-cloudsql"),
+        ("azure-secrets-manager", "aws-secretsmanager"),
+        ("aws-sql-database", "azure-sql"),
+    ],
+)
+def test_an_exact_alias_of_another_provider_survives_among_many_threatmodels(
+    query: str, named: str
+) -> None:
+    # The same slip with many ThreatModels to look in: many keys of the typed
+    # provider are a little like the service, and none of them is the service.
+    assert suggest(query, THREATMODEL_IDS)[0] == named
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        # A service of the typed provider spelled as close as an alias has to
+        # be is a real match, and the typed provider stays with it.
+        ("amazon kms", "aws"),
+        ("aws-iamm", "aws"),
+        ("gcp-storge", "gcp"),
+    ],
+)
+def test_a_close_service_of_the_typed_provider_still_keeps_the_provider(
+    query: str, expected: str
+) -> None:
+    found = suggest(query, THREATMODEL_IDS)
+
+    assert {key.partition("-")[0] for key in found} == {expected}
+
+
+@pytest.mark.parametrize(
+    ("titles", "expected"),
+    [
+        (
+            ("AWS Key Management Service (AWS KMS)",),
+            (
+                "AWS Key Management Service (AWS KMS)",
+                "AWS Key Management Service",
+                "AWS KMS",
+            ),
+        ),
+        (("Azure Kubernetes Service",), ("Azure Kubernetes Service",)),
+        (
+            ("Amazon Keyspaces (for Apache Cassandra)",),
+            (
+                "Amazon Keyspaces (for Apache Cassandra)",
+                "Amazon Keyspaces",
+                "for Apache Cassandra",
+            ),
+        ),
+        (
+            ("Amazon EC2", "Amazon Elastic Block Store (Amazon EBS)"),
+            (
+                "Amazon EC2",
+                "Amazon Elastic Block Store (Amazon EBS)",
+                "Amazon Elastic Block Store",
+                "Amazon EBS",
+            ),
+        ),
+        (("  ", "Same", "Same"), ("Same",)),
+        ((), ()),
+    ],
+)
+def test_a_title_is_also_written_without_its_brackets_and_by_what_they_hold(
+    titles: tuple[str, ...], expected: tuple[str, ...]
+) -> None:
+    assert alternative_names(*titles) == expected
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("Azure Kubernetes Service", "azure-aks"),
+        ("AWS Key Management Service", "aws-kms"),
+        ("AWS Key Management Service (AWS KMS)", "aws-kms"),
+        ("aws-keymanagementservice", "aws-kms"),
+        ("AWS Certificate Manager (ACM)", "aws-acm"),
+        ("AWS Certificate Manager", "aws-acm"),
+        ("AWS ACM", "aws-acm"),
+        ("AWS Identity and Access Management (IAM)", "aws-iam"),
+        ("Amazon Elastic Kubernetes Service", "aws-eks"),
+        ("Google Kubernetes Engine (GKE)", "gcp-gke"),
+        # The short form in brackets, which no spelling of the service reaches.
+        ("Amazon MSK", "aws-kafka"),
+        ("Amazon Managed Streaming for Apache Kafka", "aws-kafka"),
+    ],
+)
+def test_a_name_the_list_publishes_leads_to_its_threatmodel_first(
+    query: str, expected: str
+) -> None:
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert found[0] == expected
+    # The typed AWS is a clue too, so no other provider's ThreatModel follows
+    # unless its service is exactly the name typed.
+    provider = query.split()[0].lower()
+    typed = normalize(query)
+    others = [key for key in found if key.partition("-")[2] != typed]
+    if provider in ("aws", "azure"):
+        assert {key.partition("-")[0] for key in others} <= {provider}
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("Azure Kubernetes Service", ["azure-aks"]),
+        ("AWS Key Management Service (AWS KMS)", ["aws-kms"]),
+        # Typed the way the list publishes it, so there is no slip to correct
+        # and the look-alikes that would follow are left out.
+        ("Gemini Enterprise", ["gcp-discoveryengine"]),
+    ],
+)
+def test_a_name_the_list_publishes_exactly_is_not_followed_by_look_alikes(
+    query: str, expected: list[str]
+) -> None:
+    assert suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES) == expected
+
+
+def test_a_title_two_providers_share_leads_to_both() -> None:
+    # "API Gateway" is Google's own title and the title of AWS's with its
+    # bracket cut, and only the typed provider can tell them apart.
+    found = suggest("API Gateway", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert found == ["gcp-apigateway", "aws-apigatewayv2"]
+    assert suggest(
+        "Amazon API Gateway", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES
+    ) == ["aws-apigatewayv2"]
+
+
+def test_an_official_name_beats_an_alias_that_leads_to_another_provider() -> None:
+    # The alias "key management service" names Google's, and AWS's official name
+    # for its own service is the same words with AWS in front.
+    plain = suggest("AWS Key Management Service", THREATMODEL_IDS)
+    named = suggest(
+        "AWS Key Management Service", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES
+    )
+
+    assert plain[0] == "gcp-cloudkms"
+    assert named == ["aws-kms"]
+
+
+def test_names_are_only_ever_taken_for_candidates() -> None:
+    # A name from a row the caller did not list leads nowhere, as an alias to
+    # a pack outside the list does not.
+    readable = [key for key in THREATMODEL_IDS if key != "aws-kms"]
+
+    found = suggest(
+        "AWS Key Management Service", readable, extra_aliases=THREATMODEL_TITLES
+    )
+
+    assert "aws-kms" not in found
+    assert set(found) <= set(readable)
+
+
+def test_names_given_for_the_call_are_added_to_the_aliases_and_replace_none() -> None:
+    # "kms" is an alias of gcp-cloudkms and a name of aws-kms, and both are
+    # right until the typed provider says which.
+    found = suggest("KMS", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert {"gcp-cloudkms", "aws-kms"} <= set(found[:2])
+    assert suggest("Gemini Agent Platform", THREATMODEL_IDS, extra_aliases={}) == [
+        "gcp-vertex"
+    ]
+
+
+def test_a_slip_of_a_key_is_not_outranked_by_a_near_miss_title() -> None:
+    # "firestor" is a slip of Firestore, and a near miss (0.82) of the other
+    # ThreatModel's title, Filestore. The key is the closer of the two (0.95), so
+    # the published title is weighed beside the key, and the key leads.
+    readable = ["gcp-filestore", "gcp-firestore", "gcp-firebase"]
+    names = {
+        "gcp-filestore": ("Filestore",),
+        "gcp-firestore": ("Cloud Firestore",),
+        "gcp-firebase": ("Firebase",),
+    }
+
+    assert suggest("gcp-firestor", readable, extra_aliases=names)[0] == "gcp-firestore"
+    assert suggest("gcp-firestor", readable)[0] == "gcp-firestore"
+
+
+def test_a_service_typed_exactly_is_not_outranked_by_a_close_title() -> None:
+    readable = ["gcp-filestore", "gcp-firestore", "gcp-firebase"]
+    names = {
+        "gcp-filestore": ("Filestore",),
+        "gcp-firestore": ("Cloud Firestore",),
+        "gcp-firebase": ("Firebase",),
+    }
+
+    assert suggest("Firestore", readable, extra_aliases=names)[0] == "gcp-firestore"
+
+
+def test_a_service_typed_exactly_is_kept_beside_a_title_of_the_same_word() -> None:
+    # Azure's title is exactly "Compute" once its vendor is cut, and Google's
+    # service is exactly "compute". Each is an exact match, and the one that
+    # is named by the title must not push out the one named by the key.
+    readable = ["azure-compute", "gcp-compute", "gcp-composer"]
+    names = {"azure-compute": ("Azure Compute",), "gcp-compute": ("Compute Engine",)}
+
+    assert suggest("Compute", readable, extra_aliases=names) == [
+        "azure-compute",
+        "gcp-compute",
+    ]
+
+
+def test_titles_that_begin_with_the_typed_word_do_not_outrank_the_service() -> None:
+    # Three titles begin with "network", and together they would fill the
+    # limit before the one ThreatModel whose service is "network".
+    readable = [
+        "aws-networkmanager",
+        "aws-networkfirewall",
+        "gcp-networksecurity",
+        "azure-network",
+    ]
+    names = {
+        "aws-networkmanager": ("AWS Network Manager",),
+        "aws-networkfirewall": ("AWS Network Firewall",),
+        "gcp-networksecurity": ("Network Security",),
+        "azure-network": ("Azure Virtual Network",),
+    }
+
+    assert suggest("Network", readable, extra_aliases=names)[0] == "azure-network"
+
+
+def test_a_close_near_miss_title_outranks_a_loosely_close_key() -> None:
+    # The title is a near miss of the query at 0.96, and the other key's service
+    # only at 0.77. A title counts at the ratio it scores, so it is the nearer
+    # of the two and leads. At a flat 0.75 it would come second.
+    readable = ["gcp-ocelot", "gcp-zebra-crosxyz"]
+    names = {"gcp-ocelot": ("Zebra Crossing",)}
+
+    assert suggest("Zebra Crossin", readable, extra_aliases=names)[0] == "gcp-ocelot"
+    assert suggest("Zebra Crossin", readable) == ["gcp-zebra-crosxyz"]
+
+
+def test_a_title_that_begins_with_the_typed_words_still_leads_to_its_key() -> None:
+    readable = ["aws-kafka", "aws-eks"]
+    names = {"aws-kafka": ("Amazon Managed Streaming for Apache Kafka",)}
+
+    assert suggest("Managed Streaming", readable) == []
+    assert suggest("Managed Streaming", readable, extra_aliases=names) == ["aws-kafka"]
+
+
+def test_a_service_typed_exactly_is_not_hidden_by_a_provider_look_alike() -> None:
+    # "aws-compute" names no AWS ThreatModel. aws-computeoptimizer is spelled a
+    # little like it (0.61), which says nothing about what was meant, while two
+    # other providers have a service called exactly "compute".
+    readable = ["aws-computeoptimizer", "azure-compute", "gcp-compute"]
+
+    assert suggest("aws-compute", readable)[:2] == ["azure-compute", "gcp-compute"]
+
+
+def test_a_service_typed_exactly_is_followed_by_the_titles_that_begin_with_it() -> None:
+    # Dataproc is not a title, so no name is exact and what begins with the word
+    # still follows the one ThreatModel whose service it is.
+    found = suggest("Dataproc", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert found[:2] == ["gcp-dataproc", "gcp-metastore"]
+
+
+def test_a_name_that_is_an_alias_is_not_cut_short_by_a_title() -> None:
+    # "vertex" is an alias of gcp-vertex and the first word of Vertex AI
+    # Workbench's title. Typed as the alias it names the one pack, as "ec2" does
+    # not also lead to "ec2 auto scaling".
+    assert suggest("vertex", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES) == [
+        "gcp-vertex"
+    ]
+
+
+@pytest.mark.parametrize("provider", ["aws", "gcp"])
+def test_a_typed_provider_whose_titles_begin_with_a_service_keeps_the_provider(
+    provider: str,
+) -> None:
+    # Azure's service is exactly "network", and a title of each other provider
+    # begins with that word. Typing either of them names the provider as well,
+    # so its own titles stay, and Azure's exact service is offered beside them.
+    found = suggest(
+        f"{provider}-network", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES
+    )
+
+    assert "azure-network" in found
+    assert {key.partition("-")[0] for key in found} == {provider, "azure"}
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        # The first words of a title, which no spelling of the key reaches.
+        ("Managed Streaming", "aws-kafka"),
+        ("Azure Kubernetes", "azure-aks"),
+        # A title typed with a slip.
+        ("Amazon Managed Streaming for Apache Kafk", "aws-kafka"),
+        ("Azure Kubernetes Servce", "azure-aks"),
+    ],
+)
+def test_a_title_cut_short_or_slipped_still_leads_to_its_threatmodel(
+    query: str, expected: str
+) -> None:
+    assert (
+        suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)[0] == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("gcp-firestor", "gcp-firestore"),
+        ("gcp-firesore", "gcp-firestore"),
+        ("aws-qconnet", "aws-qconnect"),
+        ("aws-qconect", "aws-qconnect"),
+        ("gcp-dataporc", "gcp-dataproc"),
+        ("aws-acmpc", "aws-acmpca"),
+        ("gcp-cloudasst", "gcp-cloudasset"),
+    ],
+)
+def test_a_slip_of_a_threatmodels_id_still_leads_to_it_among_the_titles(
+    query: str, expected: str
+) -> None:
+    # Another ThreatModel's title is a near miss of each of these slips
+    # (Filestore, Connect, Dataform, ACM), and none may lead the real one.
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert found[0] == expected
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("Firestore", "gcp-firestore"),
+        ("Dataproc", "gcp-dataproc"),
+        ("Redis", "gcp-redis"),
+        ("Events", "aws-events"),
+        ("Monitoring", "gcp-monitoring"),
+        ("Network", "azure-network"),
+    ],
+)
+def test_a_service_typed_exactly_leads_to_its_threatmodel_among_the_titles(
+    query: str, expected: str
+) -> None:
+    # Each is a ThreatModel's own service. Among the rows, other titles hold the
+    # same word, or one a letter away, and none of them is what was typed.
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert found[0] == expected
+
+
+def test_a_service_two_providers_share_leads_to_both_among_the_titles() -> None:
+    # Azure and Google both have a Compute, and the title that is exactly
+    # "Compute" is Azure's. Google's must not be dropped for it.
+    found = suggest("Compute", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert found == ["azure-compute", "gcp-compute"]
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        # A slip of a ThreatModel's own title, where a curated alias nearly
+        # names another ThreatModel: "secrets manager" is AWS's, "storage" is
+        # Azure's, "gemini enterprise agent platform" is Vertex AI's.
+        ("Secret Manger", "gcp-secretmanager"),
+        ("Clod Storage", "gcp-storage"),
+        ("Gemini Enterprse", "gcp-discoveryengine"),
+        ("AWS Sytems Manager", "aws-ssm"),
+        ("Azur Kubernetes Service", "azure-aks"),
+        ("AWS Tranform", "aws-transform"),
+        ("Cloud Taks", "gcp-cloudtasks"),
+        # The first words of a title, where a curated alias begins with a word
+        # a letter away.
+        ("AWS Systems", "aws-ssm"),
+    ],
+)
+def test_a_slip_of_a_published_title_leads_to_its_own_threatmodel(
+    query: str, expected: str
+) -> None:
+    # The list says what each ThreatModel is called, and a curated alias is only
+    # a guess at what a pack is called, so the title typed with a slip leads.
+    assert (
+        suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)[0] == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("Azure AI", {"azure-botservice", "azure-cognitiveservices", "azure-search"}),
+        ("AWS Cost", {"aws-ce", "aws-costoptimizationhub"}),
+    ],
+)
+def test_the_first_words_of_several_titles_lead_to_each_of_them(
+    query: str, expected: set[str]
+) -> None:
+    # Each title begins with the words typed, and a ThreatModel whose service is
+    # only spelled a little like the last word must not come before them.
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert set(found[: len(expected)]) == expected
+
+
+def test_a_near_miss_of_a_title_waits_behind_a_key_spelled_nearer() -> None:
+    # "Secrets Manger" is a near miss of the curated "secrets manager" (0.97),
+    # of a key's service (0.96) and of the title Secret Manager (0.93). A title
+    # competes with the curated names only when no key it does not lead to is
+    # spelled nearer, so that key keeps its place ahead of the title.
+    readable = ["aws-secretsmanager", "gcp-secretmanager", "gcp-secretsmanger"]
+    names = {"gcp-secretmanager": ("Secret Manager",)}
+
+    assert suggest("Secrets Manger", readable, extra_aliases=names) == [
+        "aws-secretsmanager",
+        "gcp-secretsmanger",
+        "gcp-secretmanager",
+    ]
+    # Typed nearer the title than anything else, the title leads.
+    assert (
+        suggest("Secret Manger", readable, extra_aliases=names)[0]
+        == "gcp-secretmanager"
+    )
+
+
+def test_a_published_name_comes_before_a_curated_one_as_long() -> None:
+    # "key" begins the curated alias "key vault" and the published title "Key
+    # Store", both nine letters. The list says what its ThreatModel is called,
+    # and the curated table only guesses, so the title leads.
+    readable = ["azure-keyvault", "gcp-keystore"]
+    names = {"gcp-keystore": ("Key Store",)}
+
+    assert suggest("key", readable, extra_aliases=names) == [
+        "gcp-keystore",
+        "azure-keyvault",
+    ]
+
+
+def test_a_short_query_one_edit_from_a_service_is_not_led_away_by_a_title() -> None:
+    # "q" begins the titles of several Amazon Q ThreatModels, and "mq" is one
+    # edit from it. A query this short is as likely a slip of a service as the
+    # start of a title, so the service keeps its place and the titles follow.
+    found = suggest("aws-q", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert found[0] == "aws-mq"
+    assert set(found[1:]) <= {"aws-qbusiness", "aws-qconnect", "aws-qdeveloper"}
+    assert len(found) == 3
+
+
+def test_a_short_query_one_edit_from_a_published_name_reaches_it() -> None:
+    # "awf" is the "waf" of AWS WAF with two letters swapped. Its service,
+    # wafv2, is further off, so the published name is what reaches it.
+    assert suggest("AWS AWF", THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES) == [
+        "aws-wafv2"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        # "API Gateway" is Google's title, and the title of AWS's once its
+        # bracket is cut.
+        ("API Gatewy", ["gcp-apigateway", "aws-apigatewayv2"]),
+        # "Certificate Manager" is Google's title, and AWS's once cut.
+        ("Certificate Manger", ["gcp-certificatemanager", "aws-acm"]),
+    ],
+)
+def test_a_slip_of_a_name_two_threatmodels_publish_leads_to_its_own_title_first(
+    query: str, expected: list[str]
+) -> None:
+    # The name is one ThreatModel's whole title and only a cut form of the
+    # other's, so the whole title comes first, as it does when typed exactly.
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert found[: len(expected)] == expected
+
+
+def _place(found: list[str], tm_id: str) -> int:
+    """Say where a suggestion list puts a ThreatModel, with a miss last.
+
+    Args:
+        found: The suggestions, best first.
+        tm_id: The ThreatModel looked for.
+
+    Returns:
+        Its position, or the length of the list when it is not there.
+    """
+    return found.index(tm_id) if tm_id in found else len(found)
+
+
+@pytest.mark.parametrize(
+    ("query", "tm_id"),
+    [("aws-ms", "aws-dms"), ("aws-ms", "aws-fms"), ("aws-es", "aws-eks")],
+)
+def test_a_near_miss_title_does_not_jump_ahead_of_a_key_spelled_as_near(
+    query: str, tm_id: str
+) -> None:
+    # Two letters are as near to a short title, such as the "MSK" of Amazon
+    # MSK, or a short curated name, such as "kms", as to several services. A
+    # title answers a curated near miss only when it is nearer than every key
+    # it does not lead to, so here it waits with the keys, and the ThreatModel
+    # is placed no later than with no titles at all.
+    found = suggest(query, THREATMODEL_IDS, extra_aliases=THREATMODEL_TITLES)
+
+    assert _place(found, tm_id) <= _place(suggest(query, THREATMODEL_IDS), tm_id)
+
+
+@pytest.mark.parametrize("limit", [1, 2, 3, 5])
+@pytest.mark.parametrize(
+    "query",
+    ["ec3", "aws-ec3", "aws-iam", "s", "sq", "storage", "vertex", "Gemini", "gke"],
+)
+def test_suggestions_stay_within_the_limit_unique_and_among_the_candidates(
+    query: str, limit: int
+) -> None:
+    found = suggest(query, KEYS, limit=limit)
+
+    assert len(found) <= limit
+    assert len(found) == len(set(found))
+    assert set(found) <= set(KEYS)
+
+
+def test_only_candidates_are_ever_suggested() -> None:
+    # Two packs the caller can read: whatever an alias or a near spelling says,
+    # nothing else may be named.
+    readable = ["aws-s3", "gcp-bigquery"]
+
+    for query in ["ec3", "vertex ai", "aws-ec3", "s4", "keyvault", "big query"]:
+        assert set(suggest(query, readable)) <= set(readable)
+
+
+@pytest.mark.parametrize(
+    ("suggestions", "expected"),
+    [
+        ([], ""),
+        (["aws-ec2"], "Did you mean aws-ec2?"),
+        (["aws-ec2", "aws-s3"], "Did you mean aws-ec2 or aws-s3?"),
+        (
+            ["aws-ec2", "aws-s3", "aws-eks"],
+            "Did you mean aws-ec2, aws-s3 or aws-eks?",
+        ),
+    ],
+)
+def test_suggestions_read_as_one_sentence(
+    suggestions: list[str], expected: str
+) -> None:
+    assert did_you_mean(suggestions) == expected
+
+
+def test_a_known_title_follows_its_key() -> None:
+    labels = {"gcp-vertex": "Vertex AI", "aws-s3": ""}
+
+    assert (
+        did_you_mean(["gcp-vertex"], labels) == "Did you mean gcp-vertex (Vertex AI)?"
+    )
+    # A key without a title, or with an empty one, is named alone.
+    assert did_you_mean(["aws-ec2", "aws-s3", "gcp-vertex"], labels) == (
+        "Did you mean aws-ec2, aws-s3 or gcp-vertex (Vertex AI)?"
+    )
