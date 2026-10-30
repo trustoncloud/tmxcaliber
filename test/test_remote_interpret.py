@@ -397,6 +397,39 @@ def test_a_reference_route_without_release_cannot_be_pinned(
     assert "@release" not in leaf.format_help()
 
 
+@pytest.mark.parametrize(
+    ("positional", "message"),
+    [
+        pytest.param("aws-s3@1611187200", "takes no release", id="pin without release"),
+        pytest.param("not-a@ref@", "release", id="malformed reference"),
+    ],
+)
+def test_an_unusable_positional_exits_with_its_message_not_a_trace(
+    use_contract: UseContract,
+    monkeypatch: pytest.MonkeyPatch,
+    positional: str,
+    message: str,
+) -> None:
+    use_contract(
+        document(
+            {
+                "/v1/widgets/{provider}/{service}": {
+                    "get": operation(
+                        path_parameter("provider"), path_parameter("service")
+                    )
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(sys, "argv", ["tmxcaliber", "widgets", "get", positional])
+
+    with pytest.raises(SystemExit) as caught:
+        cli_module.main()
+
+    assert isinstance(caught.value.code, ValueError)
+    assert message in str(caught.value.code)
+
+
 @pytest.mark.parametrize("name", ["operation", "output", "apiRoute", "api_level_1"])
 def test_an_option_that_would_overwrite_a_cli_argument_is_refused(
     use_contract: UseContract, name: str

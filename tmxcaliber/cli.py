@@ -579,7 +579,12 @@ def _run() -> None:
         sys.exit(run_init(params))
     if selected_route(params) is not None:
         incomplete: list[str] = []
-        result, result_type = run_api_command(params, incomplete=incomplete)
+        try:
+            result, result_type = run_api_command(params, incomplete=incomplete)
+        except ValueError as exc:
+            # The positional was unusable: a malformed reference, or a pin on
+            # a route that takes no release. Input to correct, not a crash.
+            raise SystemExit(exc) from exc
         output_result(params.output, result, result_type)
         # Written first, so what the API did answer is never lost; the exit
         # status is what tells a script the answer is partial.
