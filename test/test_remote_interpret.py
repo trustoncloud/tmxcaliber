@@ -358,6 +358,55 @@ def test_a_single_path_parameter_is_the_positional(use_contract: UseContract) ->
     assert path == "/v1/widgets/w-1"
 
 
+def test_a_positional_value_stays_one_path_segment(use_contract: UseContract) -> None:
+    use_contract(document(WIDGETS))
+    route = contract.route_for(("widgets", "get"))
+    assert route is not None
+
+    path, _ = request_for(route, "../admin?x=1", {})
+
+    assert path == "/v1/widgets/..%2Fadmin%3Fx%3D1"
+
+
+def test_a_reference_route_without_release_cannot_be_pinned(
+    use_contract: UseContract,
+) -> None:
+    # Arrange
+    use_contract(
+        document(
+            {
+                "/v1/widgets/{provider}/{service}": {
+                    "get": operation(
+                        path_parameter("provider"), path_parameter("service")
+                    )
+                }
+            }
+        )
+    )
+    (route,) = contract.routes()
+    _, subparsers = api_parser()
+    leaf = subparsers.choices["widgets"]._subparsers._group_actions[0].choices["get"]
+
+    # Act
+    unpinned, query_string = request_for(route, "aws-s3", {})
+
+    # Assert
+    assert (unpinned, query_string) == ("/v1/widgets/aws/s3", {})
+    with pytest.raises(ValueError, match="takes no release"):
+        request_for(route, "aws-s3@1611187200", {})
+    assert "@release" not in leaf.format_help()
+
+
+@pytest.mark.parametrize("name", ["operation", "output", "apiRoute", "api_level_1"])
+def test_an_option_that_would_overwrite_a_cli_argument_is_refused(
+    use_contract: UseContract, name: str
+) -> None:
+    use_contract(document({"/v1/widgets": {"get": operation(query(name), paged=True)}}))
+
+    with pytest.raises(ValueError, match="would overwrite the CLI's own arguments"):
+        api_parser()
+
+
 def test_a_positional_names_the_listing_that_reports_it(
     use_contract: UseContract,
 ) -> None:
@@ -538,6 +587,29 @@ def test_an_unbound_path_is_skipped(use_contract: UseContract) -> None:
             },
             "two arguments",
             id="option shadows the positional",
+        ),
+        pytest.param(
+            {
+                "/v1/widgets": {
+                    "get": {
+                        **operation(),
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {"schema": {"type": "array"}}
+                                }
+                            }
+                        },
+                    }
+                }
+            },
+            "not a JSON object",
+            id="array outside a page",
+        ),
+        pytest.param(
+            {"/v1/widgets": {"get": operation(query("allowIncomplete"), paged=True)}},
+            "the client adds itself",
+            id="reserved keyword",
         ),
     ],
 )

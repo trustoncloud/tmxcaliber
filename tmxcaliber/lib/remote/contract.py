@@ -48,6 +48,14 @@ REFERENCE_PARAMETERS: Final[tuple[str, str]] = ("provider", "service")
 #: The positional a ThreatModel reference arrives in.
 REFERENCE_POSITIONAL: Final[str] = "tm_id"
 
+#: The option an ``@release`` suffix on a ThreatModel reference stands for.
+RELEASE_OPTION: Final[str] = "release"
+
+#: Keywords both surfaces add beside a route's own arguments, so no route
+#: argument may take one: ``limit`` sizes a page walk, and
+#: ``allow_incomplete`` accepts a partial answer.
+RESERVED_ARGUMENTS: Final[frozenset[str]] = frozenset({"limit", "allow_incomplete"})
+
 #: The keys of an OpenAPI path item that name an HTTP operation.
 _METHODS: Final[frozenset[str]] = frozenset(
     {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
@@ -258,6 +266,11 @@ def _route(document: Mapping[str, Any], path: str, item: Mapping[str, Any]) -> R
     parameters = _parameters(document, path, item, operation)
     paged = _is_paged(operation)
     _check_paging(path, paged, parameters)
+    if not paged and not _answers_object(document, path, operation):
+        raise UnsupportedOperation(
+            f"{path}: its 200 response is not a JSON object, which is the only "
+            "answer the client reads outside a page."
+        )
     path_parameters = _path_parameters(path, parameters)
     route = Route(
         path=path,
@@ -287,6 +300,30 @@ def _success(operation: Mapping[str, Any]) -> Mapping[str, Any]:
     """
     response: Mapping[str, Any] = operation.get("responses", {}).get("200", {})
     return response
+
+
+def _answers_object(
+    document: Mapping[str, Any], path: str, operation: Mapping[str, Any]
+) -> bool:
+    """Tell whether an operation's JSON answer is declared an object.
+
+    The client refuses any other body as a contract violation, so a route
+    answering an array or a scalar outside a page would be a command that
+    could never succeed.
+
+    Args:
+        document: The whole contract, for a referenced schema.
+        path: The path template, for the message.
+        operation: The operation object.
+
+    Returns:
+        True when the 200 schema, references followed, is ``type: object``.
+    """
+    content = _success(operation).get("content", {})
+    schema = _resolve(
+        document, path, content.get("application/json", {}).get("schema", {})
+    )
+    return schema.get("type") == "object"
 
 
 def _is_paged(operation: Mapping[str, Any]) -> bool:
@@ -492,6 +529,10 @@ def _refuse_clashing_names(route: Route) -> None:
     for name in names:
         if not name.isidentifier() or keyword.iskeyword(name):
             raise UnsupportedOperation(f"{route.path}: {name!r} cannot be a keyword.")
+        if name in RESERVED_ARGUMENTS:
+            raise UnsupportedOperation(
+                f"{route.path}: {name!r} is an argument the client adds itself."
+            )
     if len(names) != len(set(names)):
         raise UnsupportedOperation(
             f"{route.path}: two arguments would share one Python name among {names}."

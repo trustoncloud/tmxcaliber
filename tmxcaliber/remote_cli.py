@@ -40,6 +40,7 @@ from .lib.remote.config import (
 )
 from .lib.remote.contract import (
     REFERENCE_PARAMETERS,
+    RELEASE_OPTION,
     Option,
     Route,
     listing_route,
@@ -65,6 +66,10 @@ POSITIONALS = {"tm_id": ("TMID", "the ThreatModel")}
 
 #: The one command with no route behind it; see `add_init_parser`.
 INIT_COMMAND = "init"
+
+#: Namespace keys the CLI sets itself, which a route's argument would overwrite:
+#: the top-level command, the selected route, and the leaf's own options.
+CLI_DESTS = frozenset({"operation", "api_route", "output", "help"})
 
 
 def _escaped(text: str) -> str:
@@ -151,7 +156,10 @@ def _positional_help(route: Route) -> tuple[str, str]:
     listing = listing_route(route)
     if listing is not None:
         text += f", as `{' '.join(listing.command)}` reports it"
-    if route.path_parameters == REFERENCE_PARAMETERS:
+    if (
+        route.path_parameters == REFERENCE_PARAMETERS
+        and RELEASE_OPTION in route.filters
+    ):
         text += ", optionally pinned with @release (for example aws-s3@1611187200)"
     return metavar, _escaped(f"{text}.")
 
@@ -242,6 +250,7 @@ def add_api_parsers(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         parent: _SubParsersAction[ArgumentParser] = subparsers
         if len(route.command) == 1 or route.command[:1] not in groups:
             _refuse_local_command(subparsers, route.command[0], route)
+        _refuse_cli_names(route)
         for depth, word in enumerate(route.command[:-1]):
             prefix = route.command[: depth + 1]
             if prefix not in groups:
@@ -274,6 +283,30 @@ def _refuse_local_command(
     if word in subparsers.choices or word == INIT_COMMAND:
         raise ValueError(
             f"{route.path}: the command word {word!r} is already a tmxcaliber command."
+        )
+
+
+def _refuse_cli_names(route: Route) -> None:
+    """Refuse a route argument that would overwrite one the CLI sets itself.
+
+    argparse merges every level's results into one namespace, so a filter
+    named ``operation`` would silently replace the command being dispatched.
+
+    Args:
+        route: The route.
+
+    Raises:
+        ValueError: If an option or the positional takes a name in
+            `CLI_DESTS` or a command-level key.
+    """
+    names = [python_name(option.name) for option in route.options]
+    if route.positional:
+        names.append(route.positional)
+    level_prefix = LEVEL_DEST.split("{", 1)[0]
+    taken = [n for n in names if n in CLI_DESTS or n.startswith(level_prefix)]
+    if taken:
+        raise ValueError(
+            f"{route.path}: {', '.join(taken)} would overwrite the CLI's own arguments."
         )
 
 

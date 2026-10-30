@@ -10,12 +10,18 @@ owner here is what keeps ``tmxcaliber threatmodels threats aws-s3`` and
 from __future__ import annotations
 
 import json
+import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
 
 from .client import TocClient
-from .contract import REFERENCE_PARAMETERS, Route, required_page_fields
+from .contract import (
+    REFERENCE_PARAMETERS,
+    RELEASE_OPTION,
+    Route,
+    required_page_fields,
+)
 from .ref import parse_ref
 
 #: Page fields that, when not empty, mean the rows are incomplete.
@@ -71,7 +77,8 @@ def request_for(
         The concrete path, and the query to send with it.
 
     Raises:
-        ValueError: If a ThreatModel reference cannot be parsed.
+        ValueError: If a ThreatModel reference cannot be parsed, or is pinned
+            for a route that takes no release.
     """
     path = route.path
     query = {name: filters.get(name, "") for name in route.filters}
@@ -81,12 +88,21 @@ def request_for(
             "{service}", ref.service
         )
         # `@release` is sugar for the query parameter, so a caller can pin
-        # either way and only one of them reaches the wire.
-        if ref.release and not query.get("release"):
-            query["release"] = ref.release
+        # either way and only one of them reaches the wire. The API refuses a
+        # parameter a route does not declare, so a route without the option
+        # cannot be pinned at all.
+        if ref.release and RELEASE_OPTION not in route.filters:
+            raise ValueError(
+                f"`{' '.join(route.command)}` takes no release, so "
+                f"{positional!r} cannot be pinned."
+            )
+        if ref.release and not query.get(RELEASE_OPTION):
+            query[RELEASE_OPTION] = ref.release
     elif route.path_parameters:
         (name,) = route.path_parameters
-        path = path.replace(f"{{{name}}}", positional)
+        # Escaped so a value holding `/` or `?` names one segment rather than
+        # reaching another route.
+        path = path.replace(f"{{{name}}}", urllib.parse.quote(positional, safe=""))
     return path, query
 
 
