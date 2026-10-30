@@ -11,7 +11,9 @@ from typing import Any
 import pytest
 
 import tmxcaliber
+import tmxcaliber.lib.remote as remote_package
 from tmxcaliber.lib.remote import api as api_module
+from tmxcaliber.lib.remote import errors as errors_module
 from tmxcaliber.lib.remote.api import Client, Group, Operation
 from tmxcaliber.lib.remote.config import DEFAULT_BASE_URL
 from tmxcaliber.lib.remote.contract import (
@@ -19,12 +21,24 @@ from tmxcaliber.lib.remote.contract import (
     Route,
     python_name,
     required_page_fields,
+    route_for,
     routes,
 )
-from tmxcaliber.lib.remote.errors import ConfigurationError, IncompleteAnswer
+from tmxcaliber.lib.remote.errors import (
+    ConfigurationError,
+    ContractViolation,
+    IncompleteAnswer,
+)
 from tmxcaliber.lib.remote.operations import incompleteness_fields, request_for
 
-from .test_remote_client import FakeOpener, FakeResponse
+from .test_remote_client import (
+    ZIP,
+    FakeBytesResponse,
+    FakeOpener,
+    FakeResponse,
+    StrictOpener,
+    http_error,
+)
 from .test_remote_config import HAZARD, KEY, OTHER, STORED_URL, write_config
 
 #: A value for each kind of positional the contract's routes use.
@@ -100,6 +114,90 @@ def test_the_client_is_importable_from_the_package() -> None:
     assert "Client" in tmxcaliber.__all__
 
 
+def test_a_superseded_release_is_importable_where_every_route_failure_is() -> None:
+    # The README promises every route failure from `tmxcaliber`, and a pinned
+    # archive request raises this one, so a caller has to be able to catch it.
+    from tmxcaliber import ReleaseSuperseded as from_top
+    from tmxcaliber.lib.remote import ReleaseSuperseded as from_remote
+
+    assert from_top is from_remote is errors_module.ReleaseSuperseded
+    assert "ReleaseSuperseded" in tmxcaliber.__all__
+    assert "ReleaseSuperseded" in remote_package.__all__
+
+
+@pytest.mark.parametrize(
+    "command",
+    [("threatmodels", "get"), ("ccr", "packs", "get")],
+    ids=lambda command: " ".join(command),
+)
+def test_a_route_method_raises_the_apis_not_found_with_no_other_call(
+    command: tuple[str, ...],
+) -> None:
+    # The command line reads a list to suggest a name; the library makes only
+    # the calls its caller wrote, so its route methods do not.
+    missing = {"error": {"code": "not_found", "message": "Not found."}}
+    opener = FakeOpener([http_error(404, missing)])
+    route = route_for(command)
+    assert route is not None
+
+    with pytest.raises(errors_module.NotFound) as caught:
+        operation_for(Client(opener=opener), route)("aws-ec3")
+
+    assert str(caught.value) == "Not found."
+    assert len(opener.requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("typed", "segment"),
+    [
+        ("aws-s3", "aws-s3"),
+        ("Gemini Agent Platform", "Gemini%20Agent%20Platform"),
+        ("pub/sub", "pub%2Fsub"),
+        ("what?x=1", "what%3Fx%3D1"),
+        ("a#b", "a%23b"),
+        ("line\nbreak", "line%0Abreak"),
+        ("café", "caf%C3%A9"),
+    ],
+)
+def test_a_pack_name_fills_one_path_segment_whatever_it_holds(
+    typed: str, segment: str
+) -> None:
+    # A name is typed by a person, so it may hold a space, a slash or a mark
+    # that would end the path, and none of those may reach the request line.
+    for command, suffix in (
+        (("ccr", "packs", "get"), ""),
+        (("ccr", "packs", "archive"), "/archive"),
+    ):
+        route = route_for(command)
+        assert route is not None
+
+        path, query = request_for(route, typed, {})
+
+        assert path == f"/v1/ccr/packs/{segment}{suffix}"
+        assert query == {name: "" for name in route.filters}
+
+
+@pytest.mark.parametrize(
+    "command", [("ccr", "packs", "get"), ("ccr", "packs", "archive")], ids=" ".join
+)
+def test_a_pack_name_with_spaces_gets_the_apis_not_found_not_a_lost_connection(
+    command: tuple[str, ...],
+) -> None:
+    # Without the encoding the transport refuses the path before sending it,
+    # and the client reports a lost connection after retrying three times.
+    missing = {"error": {"code": "not_found", "message": "Not found."}}
+    opener = StrictOpener([http_error(404, missing)])
+    route = route_for(command)
+    assert route is not None
+
+    with pytest.raises(errors_module.NotFound):
+        operation_for(Client(opener=opener), route)("Gemini Agent Platform")
+
+    [sent] = opener.requests
+    assert "Gemini%20Agent%20Platform" in sent.full_url
+    assert " " not in sent.full_url
+
+
 @pytest.mark.parametrize("route", routes(), ids=lambda route: " ".join(route.command))
 def test_every_route_sits_at_its_cli_command_path(route: Route) -> None:
     client = Client()
@@ -113,8 +211,12 @@ def test_every_route_sits_at_its_cli_command_path(route: Route) -> None:
 @pytest.mark.parametrize("route", routes(), ids=lambda route: " ".join(route.command))
 def test_every_route_calls_its_own_path_with_its_filters(route: Route) -> None:
     # Arrange
-    answer = page(route, []) if route.paged else {}
-    opener = FakeOpener([FakeResponse(answer)])
+    answer = (
+        FakeBytesResponse(ZIP)
+        if route.binary
+        else FakeResponse(page(route, []) if route.paged else {})
+    )
+    opener = FakeOpener([answer])
     client = Client(opener=opener)
     args, kwargs = call_arguments(route)
     wire = {name: kwargs[python_name(name)] for name in route.filters}
@@ -367,3 +469,20 @@ def test_a_group_lists_what_it_holds() -> None:
     assert isinstance(group, Group)
     assert repr(group).startswith("<threatmodels: ")
     assert "threats" in repr(group)
+
+
+def test_a_binary_route_returns_the_bytes() -> None:
+    body = b"PK\x03\x04\xff"
+    client = Client(opener=FakeOpener([FakeBytesResponse(body)]))
+
+    assert client.ccr.packs.archive("aws-s3", kind="deploy") == body
+
+
+def test_a_binary_route_refuses_the_json_a_sibling_route_would_answer() -> None:
+    # A path that lands on the manifest route answers 200 JSON. Handed back as
+    # the archive it would be written out as a zip that is not one.
+    served = FakeResponse({"rules": []}, {"Content-Type": "application/json"})
+    client = Client(opener=FakeOpener([served]))
+
+    with pytest.raises(ContractViolation, match="contract publishes application/zip"):
+        client.ccr.packs.archive("aws-s3")

@@ -93,6 +93,8 @@ class Option:
         kind: The type a value is parsed as.
         choices: The values the contract allows; empty when it allows any.
         description: The contract's own description, or empty.
+        default: What the API applies when the option is not sent, or None.
+            Never sent by the client; it is the API's to apply.
     """
 
     name: str
@@ -100,6 +102,7 @@ class Option:
     kind: type[str] | type[int]
     choices: tuple[str | int, ...]
     description: str
+    default: str | int | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +117,7 @@ class Route:
         path_parameters: The path template's parameters, in order.
         positional: What the command's positional argument holds, if any.
         summary: One line, for the command's help.
+        binary: Whether the response is bytes rather than JSON, such as a pack archive.
     """
 
     path: str
@@ -123,6 +127,7 @@ class Route:
     path_parameters: tuple[str, ...]
     positional: str | None
     summary: str
+    binary: bool = False
 
     @property
     def filters(self) -> tuple[str, ...]:
@@ -136,10 +141,10 @@ class Route:
 
 #: Routes the client deliberately does not bind.
 #:
-#: The archive is binary; this client only handles JSON responses. Naming the
-#: omission keeps every other non-JSON route a load failure rather than a
-#: command that silently never appears.
-UNBOUND: Final[frozenset[str]] = frozenset({"/v1/ccr/packs/{tmId}/archive"})
+#: Empty, and it should stay that way. An entry here is a published route a
+#: caller cannot reach through this tool, so each one needs a reason and the
+#: list may only ever shrink.
+UNBOUND: Final[frozenset[str]] = frozenset()
 
 
 @lru_cache(maxsize=1)
@@ -258,15 +263,19 @@ def _route(document: Mapping[str, Any], path: str, item: Mapping[str, Any]) -> R
         raise UnsupportedOperation(
             f"{path}: has no summary, which is its command's help."
         )
-    if "application/json" not in _success(operation).get("content", {}):
+    media_types = list(_success(operation).get("content", {}))
+    if len(media_types) != 1:
         raise UnsupportedOperation(
-            f"{path}: its 200 response is not JSON. Teach the client the response, "
-            "or name the path in UNBOUND with the reason."
+            f"{path}: its 200 response declares {media_types or 'no content'}; the "
+            "client reads exactly one media type."
         )
+    # Anything but JSON is bytes the command writes to a file, as a pack
+    # archive is; `call_route` holds the answer to the declared type.
+    binary = media_types != ["application/json"]
     parameters = _parameters(document, path, item, operation)
     paged = _is_paged(operation)
     _check_paging(path, paged, parameters)
-    if not paged and not _answers_object(document, path, operation):
+    if not paged and not binary and not _answers_object(document, path, operation):
         raise UnsupportedOperation(
             f"{path}: its 200 response is not a JSON object, which is the only "
             "answer the client reads outside a page."
@@ -284,6 +293,7 @@ def _route(document: Mapping[str, Any], path: str, item: Mapping[str, Any]) -> R
         path_parameters=path_parameters,
         positional=_positional(path, path_parameters),
         summary=summary,
+        binary=binary,
     )
     _refuse_clashing_names(route)
     return route
@@ -510,6 +520,7 @@ def _option(
         kind=kind,
         choices=tuple(kind(value) for value in schema.get("enum", ())),
         description=" ".join(str(parameter.get("description", "")).split()),
+        default=None if schema.get("default") is None else kind(schema["default"]),
     )
 
 
@@ -628,6 +639,29 @@ def page_maximum(path: str) -> int | None:
             maximum = parameter.get("schema", {}).get("maximum")
             return int(maximum) if maximum is not None else None
     return None
+
+
+def response_media_type(path: str) -> str | None:
+    """Name the media type a route's 200 is served as.
+
+    Read from the contract, because whether a route answers with JSON or with
+    bytes is the API's decision, and a client that guessed would decode a zip.
+
+    Args:
+        path: The OpenAPI path template.
+
+    Returns:
+        The media type, or None when the contract declares no 200 content.
+    """
+    content = (
+        contract()["paths"]
+        .get(path, {})
+        .get("get", {})
+        .get("responses", {})
+        .get("200", {})
+        .get("content", {})
+    )
+    return next(iter(content), None)
 
 
 def values_route(route: Route, filter_name: str) -> Route | None:
@@ -777,6 +811,30 @@ def required_page_fields(path: str) -> dict[str, tuple[type, ...]]:
                     accepted.append(python)
             fields[name] = tuple(accepted) or (object,)
     return fields
+
+
+def query_parameter(path: str, name: str) -> dict[str, Any]:
+    """Read one query parameter as the contract declares it.
+
+    What an option means, which values it takes and what it defaults to are
+    the API's to say, so the command line prints the parameter's own
+    description and offers its enum rather than restating either.
+
+    Args:
+        path: The OpenAPI path template.
+        name: The parameter, as the API spells it.
+
+    Returns:
+        The parameter object, with its ``description`` and ``schema``; empty
+        when the route declares no such query parameter.
+    """
+    for parameter in (
+        contract()["paths"].get(path, {}).get("get", {}).get("parameters", [])
+    ):
+        if parameter.get("in") == "query" and parameter.get("name") == name:
+            declared: dict[str, Any] = parameter
+            return declared
+    return {}
 
 
 def query_parameters(path: str) -> frozenset[str]:

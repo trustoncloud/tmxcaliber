@@ -21,6 +21,7 @@ from .contract import (
     RELEASE_OPTION,
     Route,
     required_page_fields,
+    response_media_type,
 )
 from .ref import parse_ref
 
@@ -36,7 +37,8 @@ class Answer:
     """What one route returned.
 
     Attributes:
-        result: Every row of a paged route, or the object of any other.
+        result: Every row of a paged route, the bytes of a binary one, or the
+            object of any other.
         envelope: A paged route's first-page fields other than the paging
             ones; empty for any other route.
         missing: One ``name: value`` line per incompleteness field the API
@@ -74,7 +76,8 @@ def request_for(
             filters are not sent.
 
     Returns:
-        The concrete path, and the query to send with it.
+        The concrete path, with a pack's ThreatModel id percent-encoded as
+        one path segment, and the query to send with it.
 
     Raises:
         ValueError: If a ThreatModel reference cannot be parsed, or is pinned
@@ -100,8 +103,13 @@ def request_for(
             query[RELEASE_OPTION] = ref.release
     elif route.path_parameters:
         (name,) = route.path_parameters
-        # Escaped so a value holding `/` or `?` names one segment rather than
-        # reaching another route.
+        # A pack's ThreatModel id is typed by a person, and what they type may
+        # be a product's name with spaces in it, or hold a slash or a question
+        # mark. Left as typed, the transport refuses the path before sending
+        # anything, which the client reports as a lost connection and retries,
+        # a name that was only wrong never reaches the API's own 404, and a
+        # slash could reach another route. One encoded segment is a name the
+        # API can answer for, however odd.
         path = path.replace(f"{{{name}}}", urllib.parse.quote(positional, safe=""))
     return path, query
 
@@ -128,9 +136,16 @@ def call_route(
 
     Raises:
         RemoteError: On any credential, transport or server failure.
-        ValueError: If a ThreatModel reference cannot be parsed.
+        ValueError: If a ThreatModel reference cannot be parsed, or is pinned
+            for a route that takes no release.
     """
     path, query = request_for(route, positional, filters)
+    if route.binary:
+        # Held to the type the contract publishes, so the transport can tell
+        # the archive asked for from a body that only carries its label.
+        media_type = response_media_type(route.path)
+        assert media_type is not None, f"{route.path} publishes no 200 content"
+        return Answer(result=client.get_bytes(path, query, media_type=media_type))
     if not route.paged:
         return Answer(result=client.get(path, query))
 
