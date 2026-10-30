@@ -1,70 +1,96 @@
-"""Hold the client's command table and the vendored contract in agreement.
+"""Hold the interpreted commands to the vendored contract and to what shipped.
 
-**This is the check the client cannot do on its own.** Every other test here
-mocks the transport, so they only ever compare the client against itself: a
-command naming a route the API does not serve stays green forever, and the
-caller discovers it as a 404.
-
-Both directions catch something real. A documented route with no command is
-a capability the API published and this tool silently does not expose. A
-command naming no documented route is a 404 waiting for whoever runs it.
+**These are the checks the client cannot do on its own.** Every other test
+here mocks the transport, so they only ever compare the client against
+itself. These read the vendored document: that every route it publishes is
+reachable, and that refreshing it has not taken away a command a caller
+already relies on.
 """
 
 from __future__ import annotations
+
+from typing import Any, Final
 
 import pytest
 
 from tmxcaliber.lib.remote import contract
 
-
-def test_every_command_names_a_documented_route() -> None:
-    """No command points at a route the contract does not publish."""
-    documented = contract.documented_paths()
-    unknown = sorted(r.path for r in contract.ROUTES if r.path not in documented)
-    assert unknown == [], f"commands name undocumented routes: {unknown}"
+#: Every command 0.7 shipped: its positional, and each option with whether it
+#: was required.
+#:
+#: A frozen record of a published surface rather than a copy of the contract,
+#: so it never needs editing when the API adds something. It fails only when a
+#: refreshed contract removes or renames a command, a positional or an option,
+#: or makes an option required: the breaks the API's v1 compatibility promise
+#: rules out, and the ones a caller would otherwise discover as a usage error.
+RELEASED: Final[dict[tuple[str, ...], tuple[str | None, dict[str, bool]]]] = {
+    ("apis", "list"): (None, {}),
+    ("apis", "openapi"): (None, {}),
+    ("me",): (None, {}),
+    ("threatmodels", "list"): (None, {"provider": False}),
+    ("threatmodels", "get"): ("tm_id", {"release": False}),
+    ("threatmodels", "threats"): (
+        "tm_id",
+        {"featureClassId": False, "release": False},
+    ),
+    ("threatmodels", "controls"): (
+        "tm_id",
+        {"featureClassId": False, "release": False},
+    ),
+    ("threatmodels", "actions"): (
+        "tm_id",
+        {"featureClassId": False, "release": False},
+    ),
+    ("threatmodels", "dfd"): ("tm_id", {"release": False}),
+    ("subscriptions", "list"): (None, {}),
+    ("compliance", "frameworks", "list"): (None, {}),
+    ("compliance", "mappings", "list"): (None, {"frameworkId": True, "tmId": False}),
+    ("ccr", "packs", "list"): (None, {}),
+    ("ccr", "packs", "get"): ("tm_id", {}),
+}
 
 
 def test_every_documented_route_has_a_command() -> None:
-    """No published route is unreachable through the CLI."""
-    bound = {r.path for r in contract.ROUTES} | contract.UNBOUND
-    missing = sorted(contract.documented_paths() - bound)
-    assert missing == [], f"documented routes with no command: {missing}"
+    """No published route is unreachable, apart from the named omissions."""
+    bound = {route.path for route in contract.routes()}
+
+    assert bound == contract.documented_paths() - contract.UNBOUND
 
 
-def test_the_unbound_list_has_no_stale_entries() -> None:
-    """Every deliberate omission still names a route that exists.
+@pytest.mark.parametrize(
+    ("command", "released"), RELEASED.items(), ids=lambda value: str(value)
+)
+def test_a_released_command_survives_the_contract(
+    command: tuple[str, ...], released: tuple[str | None, dict[str, bool]]
+) -> None:
+    """A refreshed contract keeps every command, positional and option 0.7 had."""
+    positional, options = released
 
-    An entry that has since gained a command, or names a route the API
-    dropped, is an excuse that outlived its reason.
-    """
-    documented = contract.documented_paths()
-    bound = {r.path for r in contract.ROUTES}
-    for path in contract.UNBOUND:
-        assert path in documented, f"{path} is not a documented route"
-        assert path not in bound, f"{path} is both bound and listed as unbound"
+    route = contract.route_for(command)
+
+    assert route is not None, f"`{' '.join(command)}` is gone"
+    assert route.positional == positional
+    required = {option.name: option.required for option in route.options}
+    for name, was_required in options.items():
+        assert name in required, f"`{' '.join(command)}` lost --{name}"
+        assert required[name] is was_required, f"--{name} changed requiredness"
+    added = [name for name in required if name not in options and required[name]]
+    assert added == [], f"`{' '.join(command)}` now requires {added}"
 
 
-def test_commands_are_unique() -> None:
-    """Two routes cannot answer to the same command."""
-    commands = [r.command for r in contract.ROUTES]
-    assert len(commands) == len(set(commands)), "two routes share a command"
-
-
-@pytest.mark.parametrize("route", contract.ROUTES, ids=lambda r: r.path)
+@pytest.mark.parametrize("route", contract.routes(), ids=lambda r: r.path)
 def test_declared_filters_match_the_contract(route: contract.Route) -> None:
     """A route's options are exactly its documented query parameters.
 
     `limit` and `cursor` are excluded because they are pagination mechanics
     the client owns: the caller asks for a collection and gets all of it.
     """
-    documented = contract.query_parameters(route.path) - {"limit", "cursor"}
-    assert set(route.filters) == documented, (
-        f"{route.path} declares {sorted(route.filters)} "
-        f"but the contract documents {sorted(documented)}"
-    )
+    documented = contract.query_parameters(route.path) - contract.PAGING_PARAMETERS
+
+    assert set(route.filters) == documented
 
 
-@pytest.mark.parametrize("route", contract.ROUTES, ids=lambda r: r.path)
+@pytest.mark.parametrize("route", contract.routes(), ids=lambda r: r.path)
 def test_every_filter_is_described_by_the_contract(route: contract.Route) -> None:
     """An option's help is its parameter's description, so each needs one."""
     for name in route.filters:
@@ -72,24 +98,10 @@ def test_every_filter_is_described_by_the_contract(route: contract.Route) -> Non
         assert described, f"{route.path} publishes no description for {name}"
 
 
-@pytest.mark.parametrize("route", contract.ROUTES, ids=lambda r: r.path)
+@pytest.mark.parametrize("route", contract.routes(), ids=lambda r: r.path)
 def test_paged_matches_the_contract(route: contract.Route) -> None:
     """A route is walked if, and only if, the contract pages it."""
-    assert route.paged is (contract.page_maximum(route.path) is not None), (
-        f"{route.path} is declared paged={route.paged}"
-    )
-
-
-@pytest.mark.parametrize("route", contract.ROUTES, ids=lambda r: r.path)
-def test_path_parameters_are_filled(route: contract.Route) -> None:
-    """Every path parameter is supplied by the command's positional."""
-    placeholders = route.path.count("{")
-    if placeholders == 0:
-        assert route.positional is None, f"{route.path} takes no path parameter"
-    else:
-        assert route.positional is not None, (
-            f"{route.path} has {placeholders} path parameters and no positional"
-        )
+    assert route.paged is (contract.page_maximum(route.path) is not None)
 
 
 def test_the_vendored_contract_is_the_published_one() -> None:
@@ -108,7 +120,7 @@ def _row_properties(path: str) -> set[str]:
     Returns:
         The property names of the row schema.
     """
-    document = contract.contract()
+    document: dict[str, Any] = contract.contract()
     response = document["paths"][path]["get"]["responses"]["200"]
     schema = response["content"]["application/json"]["schema"]
     items = next(part for part in schema["allOf"] if "properties" in part)
@@ -129,7 +141,7 @@ def test_the_framework_filter_names_the_frameworks_list() -> None:
     assert contract.values_field("frameworkId") == "frameworkId"
 
 
-@pytest.mark.parametrize("route", contract.ROUTES, ids=lambda r: r.path)
+@pytest.mark.parametrize("route", contract.routes(), ids=lambda r: r.path)
 def test_every_values_route_carries_the_field_it_is_cited_for(
     route: contract.Route,
 ) -> None:
@@ -163,7 +175,7 @@ def test_every_incompleteness_field_is_required_by_some_route() -> None:
 
     required = {
         name
-        for route in contract.ROUTES
+        for route in contract.routes()
         for name in contract.required_page_fields(route.path)
     }
     assert set(INCOMPLETENESS_FIELDS) <= required
@@ -174,7 +186,7 @@ def test_paging_fields_come_from_the_page_schema() -> None:
     assert contract.paging_fields() == {"items", "nextCursor", "pageSize"}
 
 
-@pytest.mark.parametrize("route", contract.ROUTES, ids=lambda r: r.path)
+@pytest.mark.parametrize("route", contract.routes(), ids=lambda r: r.path)
 def test_binary_matches_the_contract(route: contract.Route) -> None:
     """A route is binary exactly when the contract serves its 200 as a zip."""
     served = contract.response_media_type(route.path)
@@ -193,7 +205,7 @@ def test_the_pack_archive_is_a_binary_command() -> None:
 
 def test_the_pack_archive_is_bound_once_and_left_out_of_unbound() -> None:
     """The binary transport binds the archive, so no omission excuses it."""
-    archives = [r for r in contract.ROUTES if r.path.endswith("/archive")]
+    archives = [r for r in contract.routes() if r.path.endswith("/archive")]
 
     assert [r.path for r in archives] == ["/v1/ccr/packs/{tmId}/archive"]
     assert not contract.UNBOUND

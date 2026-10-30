@@ -1,6 +1,6 @@
 """How one route becomes one request, for the CLI and for `Client` alike.
 
-Both surfaces are built from `contract.ROUTES`, and both need the same three
+Both surfaces are built from `contract.routes()`, and both need the same three
 answers for a route: which concrete path a positional fills in, which query
 it sends, and whether the rows that came back are whole. Giving those one
 owner here is what keeps ``tmxcaliber threatmodels threats aws-s3`` and
@@ -16,7 +16,13 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 from .client import TocClient
-from .contract import Route, required_page_fields, response_media_type
+from .contract import (
+    REFERENCE_PARAMETERS,
+    RELEASE_OPTION,
+    Route,
+    required_page_fields,
+    response_media_type,
+)
 from .ref import parse_ref
 
 #: Page fields that, when not empty, mean the rows are incomplete.
@@ -74,27 +80,37 @@ def request_for(
         one path segment, and the query to send with it.
 
     Raises:
-        ValueError: If a ThreatModel reference cannot be parsed.
+        ValueError: If a ThreatModel reference cannot be parsed, or is pinned
+            for a route that takes no release.
     """
     path = route.path
     query = {name: filters.get(name, "") for name in route.filters}
-    if "{provider}" in path and "{service}" in path:
+    if route.path_parameters == REFERENCE_PARAMETERS:
         ref = parse_ref(positional)
         path = path.replace("{provider}", ref.provider).replace(
             "{service}", ref.service
         )
         # `@release` is sugar for the query parameter, so a caller can pin
-        # either way and only one of them reaches the wire.
-        if ref.release and not query.get("release"):
-            query["release"] = ref.release
-    elif "{tmId}" in path:
+        # either way and only one of them reaches the wire. The API refuses a
+        # parameter a route does not declare, so a route without the option
+        # cannot be pinned at all.
+        if ref.release and RELEASE_OPTION not in route.filters:
+            raise ValueError(
+                f"`{' '.join(route.command)}` takes no release, so "
+                f"{positional!r} cannot be pinned."
+            )
+        if ref.release and not query.get(RELEASE_OPTION):
+            query[RELEASE_OPTION] = ref.release
+    elif route.path_parameters:
+        (name,) = route.path_parameters
         # A pack's ThreatModel id is typed by a person, and what they type may
         # be a product's name with spaces in it, or hold a slash or a question
         # mark. Left as typed, the transport refuses the path before sending
         # anything, which the client reports as a lost connection and retries,
-        # and a name that was only wrong never reaches the API's own 404. One
-        # encoded segment is a name the API can answer for, however odd.
-        path = path.replace("{tmId}", urllib.parse.quote(positional, safe=""))
+        # a name that was only wrong never reaches the API's own 404, and a
+        # slash could reach another route. One encoded segment is a name the
+        # API can answer for, however odd.
+        path = path.replace(f"{{{name}}}", urllib.parse.quote(positional, safe=""))
     return path, query
 
 
@@ -120,7 +136,8 @@ def call_route(
 
     Raises:
         RemoteError: On any credential, transport or server failure.
-        ValueError: If a ThreatModel reference cannot be parsed.
+        ValueError: If a ThreatModel reference cannot be parsed, or is pinned
+            for a route that takes no release.
     """
     path, query = request_for(route, positional, filters)
     if route.binary:

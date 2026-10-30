@@ -1,9 +1,10 @@
 """The TrustOnCloud API as a Python object, shaped like the CLI.
 
 Every attribute path on a `Client` is a CLI command with the spaces turned
-into dots, built at construction from the same route table the CLI is built
-from (`contract.ROUTES`). Nothing here names a route, so a route the API adds
-is a method here and a command there, with no naming decision in between:
+into dots, built at construction from the same routes the CLI is built from
+(`contract.routes()`, interpreted from the vendored OpenAPI document). Nothing
+here names a route, so a route the API adds is a method here and a command
+there, with no naming decision in between:
 
     from tmxcaliber import Client
 
@@ -25,7 +26,7 @@ from typing import Any
 
 from .client import TocClient
 from .config import DEFAULT_TIMEOUT, load_settings
-from .contract import ROUTES, Route, python_name, required_parameters
+from .contract import Route, python_name, routes
 from .errors import IncompleteAnswer
 from .operations import call_route, incompleteness_fields
 
@@ -43,12 +44,13 @@ def _signature(route: Route) -> inspect.Signature:
         pages can report missing rows.
     """
     keyword = inspect.Parameter.KEYWORD_ONLY
-    required = required_parameters(route.path)
     parameters = [
-        inspect.Parameter(python_name(name), keyword, default=inspect.Parameter.empty)
-        if name in required
-        else inspect.Parameter(python_name(name), keyword, default=None)
-        for name in route.filters
+        inspect.Parameter(
+            python_name(option.name),
+            keyword,
+            default=inspect.Parameter.empty if option.required else None,
+        )
+        for option in route.options
     ]
     if route.positional:
         parameters.insert(
@@ -191,7 +193,7 @@ class Client(TocClient):
         if settings.sends_key_to_stored_endpoint:
             warnings.warn(settings.stored_endpoint_note, stacklevel=2)
         super().__init__(settings, opener=opener)
-        for route in ROUTES:
+        for route in routes():
             self._attach(route)
 
     def _attach(self, route: Route) -> None:
@@ -202,9 +204,9 @@ class Client(TocClient):
 
         Raises:
             ValueError: If a command word would hide a client attribute, or a
-                group and an operation would share a name. The route table
-                is checked by a test, so this fires in CI rather than for a
-                caller.
+                group and an operation would share a name. Every test builds
+                a client over the vendored contract, so this fires in CI
+                rather than for a caller.
         """
         holder: object = self
         for depth, word in enumerate(route.command[:-1]):

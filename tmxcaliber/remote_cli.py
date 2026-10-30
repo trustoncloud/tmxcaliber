@@ -1,9 +1,9 @@
 """The API commands, built from the contract rather than written out.
 
-Every group, command, positional and option below is derived from
-`lib/remote/contract.py`, which is itself held against the vendored OpenAPI
-document. Adding a route to the API therefore adds a command here with no
-naming decision to make and nothing to keep in step by hand.
+Every group, command, positional and option below is derived from the vendored
+OpenAPI document, as `lib/remote/contract.py` interprets it. A route the API
+adds therefore becomes a command here once the vendored copy is refreshed,
+with no naming decision to make and nothing to keep in step by hand.
 
 The shape mirrors the API:
 
@@ -38,13 +38,15 @@ from .lib.remote.config import (
     write_credentials,
 )
 from .lib.remote.contract import (
-    ROUTES,
+    REFERENCE_PARAMETERS,
+    RELEASE_OPTION,
+    Option,
     Route,
+    listing_route,
     page_maximum,
     python_name,
-    query_parameter,
-    required_parameters,
     route_for_path,
+    routes,
     values_field,
     values_route,
 )
@@ -62,14 +64,39 @@ LEVEL_DEST = "api_level_{depth}"
 #: The exit status of a command whose answer the API reported incomplete.
 INCOMPLETE_EXIT = 3
 
-#: What a positional holds, and how its help reads.
-POSITIONALS = {
-    "tm_id": (
-        "TMID",
-        "the ThreatModel, as `threatmodels list` reports it, "
-        "optionally pinned with @release (for example aws-s3@1611187200).",
-    ),
-}
+#: What a positional holds: its metavar, and the noun its help opens with.
+POSITIONALS = {"tm_id": ("TMID", "the ThreatModel")}
+
+#: The one command with no route behind it; see `add_init_parser`.
+INIT_COMMAND = "init"
+
+#: Namespace keys the CLI sets itself, which a route's argument would overwrite:
+#: the top-level command, the selected route, and the leaf's own options.
+CLI_DESTS = frozenset({"operation", "api_route", "output", "help"})
+
+
+def _escaped(text: str) -> str:
+    """Make text from the contract safe as argparse help.
+
+    Args:
+        text: The help text.
+
+    Returns:
+        The text with ``%`` doubled, since argparse formats help with it.
+    """
+    return text.replace("%", "%%")
+
+
+def _wire(value: object) -> str:
+    """Spell an option's parsed value as the query string carries it.
+
+    Args:
+        value: The parsed value; None or empty when the option was not given.
+
+    Returns:
+        The value as text, or empty for an option that was not given.
+    """
+    return "" if value is None or value == "" else str(value)
 
 
 def _option(filter_name: str) -> str:
@@ -84,30 +111,63 @@ def _option(filter_name: str) -> str:
     return f"--{python_name(filter_name).replace('_', '-')}"
 
 
-def _filter_help(route: Route, name: str) -> str:
+def _filter_help(route: Route, option: Option) -> str:
     """Describe one query parameter for a command's help.
+
+    The contract's own description wins when it has one: it is the API's
+    statement of what the filter matches, which no wording derived from the
+    parameter's name can be.
 
     Args:
         route: The route the command reaches.
-        name: The parameter, as the API spells it.
+        option: The parameter.
 
     Returns:
         The contract's description of the parameter, then the command that
         lists the accepted values when the API publishes one, then the
         default when the contract declares one.
     """
-    declared = query_parameter(route.path, name)
-    text = str(declared.get("description", ""))
-    lookup = values_route(route, name)
+    words = _option(option.name)[2:].replace("-", " ")
+    if option.description:
+        text = option.description
+    elif option.required:
+        text = f"the {words} to read."
+    else:
+        text = f"filter by {words}."
+    lookup = values_route(route, option.name)
     if lookup is not None:
         text += (
-            f" Takes a {values_field(name)} as "
+            f" Takes a {values_field(option.name)} as "
             f"`tmxcaliber {' '.join(lookup.command)}` reports it."
         )
-    default = declared.get("schema", {}).get("default")
-    if default is not None:
-        text += f" Defaults to {default}."
-    return text
+    if option.default is not None:
+        text += f" Defaults to {option.default}."
+    return _escaped(text)
+
+
+def _positional_help(route: Route) -> tuple[str, str]:
+    """Name and describe a command's positional.
+
+    Args:
+        route: The route the command reaches; it takes a positional.
+
+    Returns:
+        The metavar, and the help naming the command whose rows it takes.
+    """
+    positional = route.positional or ""
+    metavar, noun = POSITIONALS.get(
+        positional, (positional.upper(), f"the {positional.replace('_', ' ')}")
+    )
+    text = noun
+    listing = listing_route(route)
+    if listing is not None:
+        text += f", as `{' '.join(listing.command)}` reports it"
+    if (
+        route.path_parameters == REFERENCE_PARAMETERS
+        and RELEASE_OPTION in route.filters
+    ):
+        text += ", optionally pinned with @release (for example aws-s3@1611187200)"
+    return metavar, _escaped(f"{text}.")
 
 
 def _summary(route: Route) -> str:
@@ -122,10 +182,11 @@ def _summary(route: Route) -> str:
     Returns:
         The summary, with its required options appended.
     """
-    needed = sorted(required_parameters(route.path) & set(route.filters))
+    needed = sorted(option.name for option in route.options if option.required)
     if not needed:
-        return route.summary
-    return f"{route.summary} Requires {', '.join(_option(n) for n in needed)}."
+        return _escaped(route.summary)
+    required = ", ".join(_option(name) for name in needed)
+    return _escaped(f"{route.summary} Requires {required}.")
 
 
 def _leaf(parser: ArgumentParser, route: Route) -> None:
@@ -136,25 +197,21 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
         route: The route it reaches.
     """
     if route.positional:
-        metavar, help_text = POSITIONALS[route.positional]
-        if "{tmId}" in route.path:
-            help_text = "the ThreatModel id, as `ccr packs list` reports it."
+        metavar, help_text = _positional_help(route)
         parser.add_argument(route.positional, metavar=metavar, help=help_text)
-    required = required_parameters(route.path)
     # argparse files every option under "options" whether or not it is
     # required, which made a mandatory --framework-id read as an optional filter.
     required_group = parser.add_argument_group("required arguments")
-    for name in route.filters:
-        target = required_group if name in required else parser
+    for option in route.options:
+        target = required_group if option.required else parser
         target.add_argument(
-            _option(name),
-            dest=python_name(name),
-            default="",
-            required=name in required,
-            # The contract's own list, so a value the API would refuse is
-            # refused here before any call, and the help shows what it takes.
-            choices=query_parameter(route.path, name).get("schema", {}).get("enum"),
-            help=_filter_help(route, name),
+            _option(option.name),
+            dest=python_name(option.name),
+            type=option.kind,
+            choices=option.choices or None,
+            default=None,
+            required=option.required,
+            help=_filter_help(route, option),
         )
     if route.paged:
         parser.add_argument(
@@ -199,11 +256,14 @@ def add_api_parsers(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         subparsers: The top-level subparser action.
     """
     # One parser per group prefix, created on first use so the tree is built
-    # from the route table rather than spelled out.
+    # from the interpreted contract rather than spelled out.
     groups: dict[tuple[str, ...], _SubParsersAction[ArgumentParser]] = {}
 
-    for route in ROUTES:
+    for route in routes():
         parent: _SubParsersAction[ArgumentParser] = subparsers
+        if len(route.command) == 1 or route.command[:1] not in groups:
+            _refuse_local_command(subparsers, route.command[0], route)
+        _refuse_cli_names(route)
         for depth, word in enumerate(route.command[:-1]):
             prefix = route.command[: depth + 1]
             if prefix not in groups:
@@ -218,6 +278,49 @@ def add_api_parsers(subparsers: _SubParsersAction[ArgumentParser]) -> None:
             route.command[-1], help=_summary(route), description=_summary(route)
         )
         _leaf(leaf, route)
+
+
+def _refuse_local_command(
+    subparsers: _SubParsersAction[ArgumentParser], word: str, route: Route
+) -> None:
+    """Refuse a top-level API command word a local command already answers to.
+
+    Args:
+        subparsers: The top-level subparser action.
+        word: The API command's first word.
+        route: The route, for the message.
+
+    Raises:
+        ValueError: If ``word`` is a local command, or `init`.
+    """
+    if word in subparsers.choices or word == INIT_COMMAND:
+        raise ValueError(
+            f"{route.path}: the command word {word!r} is already a tmxcaliber command."
+        )
+
+
+def _refuse_cli_names(route: Route) -> None:
+    """Refuse a route argument that would overwrite one the CLI sets itself.
+
+    argparse merges every level's results into one namespace, so a filter
+    named ``operation`` would silently replace the command being dispatched.
+
+    Args:
+        route: The route.
+
+    Raises:
+        ValueError: If an option or the positional takes a name in
+            `CLI_DESTS` or a command-level key.
+    """
+    names = [python_name(option.name) for option in route.options]
+    if route.positional:
+        names.append(route.positional)
+    level_prefix = LEVEL_DEST.split("{", 1)[0]
+    taken = [n for n in names if n in CLI_DESTS or n.startswith(level_prefix)]
+    if taken:
+        raise ValueError(
+            f"{route.path}: {', '.join(taken)} would overwrite the CLI's own arguments."
+        )
 
 
 def selected_route(params: Namespace) -> Route | None:
@@ -429,7 +532,8 @@ def run_api_command(
             a listed one is close to it.
         RemoteError: On any other credential, transport or server failure.
         ValueError: If a ThreatModel reference cannot be parsed, and none the
-            key can list is close to it.
+            key can list is close to it, or is pinned for a route that takes
+            no release.
     """
     route = selected_route(params)
     assert route is not None, "run_api_command called for a non-API command"
@@ -437,8 +541,7 @@ def run_api_command(
     typed = str(getattr(params, route.positional, "") or "") if route.positional else ""
     # The API spells a filter in camelCase and argparse keeps it in snake_case.
     filters = {
-        name: str(getattr(params, python_name(name), "") or "")
-        for name in route.filters
+        name: _wire(getattr(params, python_name(name), None)) for name in route.filters
     }
     limit = int(getattr(params, "limit", 0) or 0)
     try:
@@ -481,7 +584,7 @@ def run_api_command(
 def add_init_parser(subparsers: _SubParsersAction[ArgumentParser]) -> None:
     """Add the `init` command.
 
-    **The one command not derived from the route contract**, and the reason
+    **The one command not derived from the API contract**, and the reason
     is categorical rather than a preference: it configures access to the API
     rather than calling it, so there is no route it could be derived from.
     Any future exception needs its own reason and may not cite this one.
@@ -490,7 +593,7 @@ def add_init_parser(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         subparsers: The top-level subparser action.
     """
     parser = subparsers.add_parser(
-        "init",
+        INIT_COMMAND,
         help="store a TrustOnCloud API key, and check that it works.",
     )
     parser.add_argument(

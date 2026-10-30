@@ -17,12 +17,12 @@ from tmxcaliber import remote_cli
 from tmxcaliber.lib.remote.client import TocClient
 from tmxcaliber.lib.remote.config import Settings
 from tmxcaliber.lib.remote.contract import (
-    ROUTES,
     page_maximum,
     query_parameter,
     response_media_type,
     route_for,
     route_for_path,
+    routes,
     row_properties,
 )
 from tmxcaliber.lib.remote.errors import AuthenticationError, NotFound
@@ -478,7 +478,7 @@ def test_every_positional_route_suggests_from_a_list_that_carries_its_name() -> 
     A row without the name field reads as an empty name, so a stale field
     would end every suggestion quietly.
     """
-    for route in ROUTES:
+    for route in routes():
         if route.positional:
             collection = route.path.partition("{")[0].rstrip("/")
             assert collection in remote_cli.NAME_LISTS, route.path
@@ -500,7 +500,7 @@ def test_an_optional_filter_is_not_listed_as_required(
 
 
 @pytest.mark.parametrize(
-    "route", [route for route in ROUTES if route.filters], ids=lambda r: r.path
+    "route", [route for route in routes() if route.filters], ids=lambda r: r.path
 )
 def test_every_option_s_help_is_the_contract_s_description(
     route: Any,
