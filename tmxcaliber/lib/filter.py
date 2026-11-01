@@ -3,12 +3,19 @@ import re
 IDS_INPUT_SEPARATOR = ","
 PERMISSIONS_INPUT_SEPARATOR = ","
 EVENTS_INPUT_SEPARATOR = ","
+MITRE_TACTICS_INPUT_SEPARATOR = ","
 IDS_FORMAT_REGEX = r"^\w+\.(fc|t|c|co)\d+$"
+MITRE_TACTICS_FORMAT_REGEX = r"^ta\d{4}$"
 
 
 class Filter:
     def __init__(
-        self, severity: str = "", events: str = "", permissions: str = "", ids: str = ""
+        self,
+        severity: str = "",
+        events: str = "",
+        permissions: str = "",
+        ids: str = "",
+        mitre_tactics: str = "",
     ):
         self.severity = severity.lower() if severity else ""
         self.events = [
@@ -21,6 +28,11 @@ class Filter:
         ]
         self.ids = [
             x.lower().strip() for x in (ids or "").split(IDS_INPUT_SEPARATOR) if x
+        ]
+        self.mitre_tactics = [
+            x.lower().strip()
+            for x in (mitre_tactics or "").split(MITRE_TACTICS_INPUT_SEPARATOR)
+            if x.strip()
         ]
 
         self.feature_classes: list[str] = []
@@ -47,3 +59,9 @@ class Filter:
                 self.controls.append(value)
             elif ".t" in value:
                 self.threats.append(value)
+        for value in self.mitre_tactics:
+            if re.match(MITRE_TACTICS_FORMAT_REGEX, value) is None:
+                raise ValueError(
+                    f"Invalid MITRE tactic format: {value}. Expected format is "
+                    "'TA' and 4 digits, such as 'TA0010'"
+                )

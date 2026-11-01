@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from .lib.filter import (
     EVENTS_INPUT_SEPARATOR,
     IDS_INPUT_SEPARATOR,
+    MITRE_TACTICS_INPUT_SEPARATOR,
     PERMISSIONS_INPUT_SEPARATOR,
 )
 from .lib.remote.ref import is_remote_ref
@@ -75,14 +76,7 @@ def add_filter_parser(subparsers: SubParsers) -> None:
             "Require --output."
         ),
     )
-    filter_parser.add_argument(
-        "--permissions",
-        type=str,
-        help=(
-            "filter data by IAM permission(s). "
-            f"Separate by `{PERMISSIONS_INPUT_SEPARATOR}`, if several.\n\n"
-        ),
-    )
+    add_permissions_filter_argument(filter_parser)
     filter_parser.add_argument(
         "--events",
         type=str,
@@ -94,6 +88,7 @@ def add_filter_parser(subparsers: SubParsers) -> None:
     add_output_argument(filter_parser)
     add_source_argument(filter_parser)
     add_severity_filter_argument(filter_parser)
+    add_mitre_tactics_filter_argument(filter_parser)
     add_ids_filter_argument(filter_parser)
     add_exclude_flag(filter_parser)
 
@@ -154,6 +149,8 @@ def add_list_parser(subparsers: SubParsers) -> None:
         add_output_argument(threat_list_parser)
         add_exclude_flag(threat_list_parser)
         add_severity_filter_argument(threat_list_parser)
+        add_permissions_filter_argument(threat_list_parser)
+        add_mitre_tactics_filter_argument(threat_list_parser)
         add_ids_filter_argument(threat_list_parser)
 
     def add_list_controls_parser(list_subparsers: SubParsers) -> None:
@@ -451,6 +448,19 @@ def add_metadata_argument(*parsers: ArgumentParser) -> None:
         )
 
 
+def add_mitre_tactics_filter_argument(*parsers: ArgumentParser) -> None:
+    for parser in parsers:
+        parser.add_argument(
+            "--mitre-tactics",
+            type=str,
+            help=(
+                "filter data by MITRE ATT&CK tactic code(s), such as TA0010, "
+                "matched on the tactic that leads each threat's `mitre_attack`. "
+                f"Separate by `{MITRE_TACTICS_INPUT_SEPARATOR}`, if several.\n\n"
+            ),
+        )
+
+
 def add_output_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
@@ -458,6 +468,19 @@ def add_output_argument(*parsers: ArgumentParser) -> None:
             type=str,
             help=(
                 "output file to write the results. If not provided, prints to stdout."
+            ),
+        )
+
+
+def add_permissions_filter_argument(*parsers: ArgumentParser) -> None:
+    for parser in parsers:
+        parser.add_argument(
+            "--permissions",
+            type=str,
+            help=(
+                "filter data by IAM permission(s), matched exactly and ignoring "
+                "case. Use `*` to match any run of characters, as in `s3:Get*`. "
+                f"Separate by `{PERMISSIONS_INPUT_SEPARATOR}`, if several.\n\n"
             ),
         )
 

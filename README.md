@@ -294,6 +294,26 @@ tmxcaliber filter path/to/threatmodel.json \
   --output-removed
 ```
 
+A permission matches exactly, ignoring case. Add `*` to match any run of
+characters, as in an IAM policy, and quote the pattern so the shell leaves the
+`*` alone:
+
+```sh
+tmxcaliber filter path/to/threatmodel.json \
+  --permissions 's3:Get*' \
+  --output filtered.json
+```
+
+Keep only threats under one or more MITRE ATT&CK tactics, by tactic code. Each
+threat's `mitre_attack` starts with its tactic (`TA0009,T1586`), and that tactic
+is what is matched:
+
+```sh
+tmxcaliber filter path/to/threatmodel.json \
+  --mitre-tactics TA0010,TA0040 \
+  --output filtered.json
+```
+
 Use `--exclude` to invert an ID-based filter:
 
 ```sh
@@ -316,6 +336,16 @@ List only high and very-high severity threats from a directory:
 ```sh
 tmxcaliber list threats path/to/threatmodels \
   --severity high \
+  --output threats.csv
+```
+
+`list threats` takes the same `--permissions` and `--mitre-tactics` filters as
+`filter`:
+
+```sh
+tmxcaliber list threats path/to/threatmodels \
+  --permissions 's3:Get*' \
+  --mitre-tactics TA0010 \
   --output threats.csv
 ```
 
