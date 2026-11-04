@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from .client import TocClient
+from .client import QueryValue, TocClient
 from .contract import (
     REFERENCE_PARAMETERS,
     RELEASE_OPTION,
@@ -63,17 +63,35 @@ def incompleteness_fields(route: Route) -> tuple[str, ...]:
     return tuple(name for name in INCOMPLETENESS_FIELDS if name in required)
 
 
+def wire(value: object, *, repeatable: bool = False) -> QueryValue:
+    """Spell one option's value as the query carries it, for either surface.
+
+    Args:
+        value: The value given; None or empty when the option was not given.
+            For a repeatable option, one value or a list or tuple of them.
+        repeatable: Whether the option takes several values.
+
+    Returns:
+        The value as text, or for a repeatable option a tuple of texts with
+        the empty ones dropped; empty when nothing was given.
+    """
+    if repeatable:
+        values = value if isinstance(value, (list, tuple)) else (value,)
+        return tuple(str(item) for item in values if item is not None and item != "")
+    return "" if value is None or value == "" else str(value)
+
+
 def request_for(
-    route: Route, positional: str, filters: Mapping[str, str]
-) -> tuple[str, dict[str, str]]:
+    route: Route, positional: str, filters: Mapping[str, QueryValue]
+) -> tuple[str, dict[str, QueryValue]]:
     """Fill a route's path and query from what the caller gave.
 
     Args:
         route: The route.
         positional: The value of the route's positional, or empty when it
             has none.
-        filters: Values for the route's filters, by name. Absent and empty
-            filters are not sent.
+        filters: Values for the route's filters, by name, with a tuple for
+            one that repeats. Absent and empty filters are not sent.
 
     Returns:
         The concrete path, with a pack's ThreatModel id percent-encoded as
@@ -84,7 +102,9 @@ def request_for(
             for a route that takes no release.
     """
     path = route.path
-    query = {name: filters.get(name, "") for name in route.filters}
+    query: dict[str, QueryValue] = {
+        name: filters.get(name, "") for name in route.filters
+    }
     if route.path_parameters == REFERENCE_PARAMETERS:
         ref = parse_ref(positional)
         path = path.replace("{provider}", ref.provider).replace(
@@ -118,7 +138,7 @@ def call_route(
     client: TocClient,
     route: Route,
     positional: str,
-    filters: Mapping[str, str],
+    filters: Mapping[str, QueryValue],
     limit: int = 0,
 ) -> Answer:
     """Call one route, walking every page of a paged one.

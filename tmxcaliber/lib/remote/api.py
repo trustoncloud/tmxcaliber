@@ -28,7 +28,7 @@ from .client import TocClient
 from .config import DEFAULT_TIMEOUT, load_settings
 from .contract import Route, python_name, routes
 from .errors import IncompleteAnswer
-from .operations import call_route, incompleteness_fields
+from .operations import call_route, incompleteness_fields, wire
 
 
 def _signature(route: Route) -> inspect.Signature:
@@ -117,10 +117,10 @@ class Operation:
             route,
             str(values[route.positional]) if route.positional else "",
             {
-                name: ""
-                if values[python_name(name)] is None
-                else str(values[python_name(name)])
-                for name in route.filters
+                option.name: wire(
+                    values[python_name(option.name)], repeatable=option.repeatable
+                )
+                for option in route.options
             },
             limit=int(values.get("limit", 0)),
         )
