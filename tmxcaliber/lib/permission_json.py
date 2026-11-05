@@ -32,6 +32,20 @@ GENERIC_SUBPERMISSIONS: tuple[str, ...] = (
 _GENERIC_SET = frozenset(GENERIC_SUBPERMISSIONS)
 _GENERIC = "|".join(GENERIC_SUBPERMISSIONS)
 
+#: Credential names an Azure ``ApiKey/<name>`` leaf may carry. ``key`` is the
+#: generic data-plane key, used when the threat holds whichever key the service
+#: issues; the others name a specific credential. The colon form
+#: (``ApiKey:<name>``) is not accepted, so each credential has one spelling.
+AZURE_API_KEY_NAMES: tuple[str, ...] = (
+    "adminKey",
+    "queryKey",
+    "secretKey",
+    "key",
+    "clientCertificate",
+)
+
+_AZURE_API_KEYS = "|".join(AZURE_API_KEY_NAMES)
+
 PERMISSION_REGEX = {
     "aws": re.compile(
         rf"^([a-zA-Z0-9\-]+:([\w\-]+|{_GENERIC})"
@@ -47,7 +61,7 @@ PERMISSION_REGEX = {
         rf"Role\:[a-zA-Z0-9 ]+$|"
         rf"VaultAccessPolicy\:[a-zA-Z0-9.]+$|"
         rf"API\:[a-zA-Z0-9_-]+\.?[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]+|"
-        rf"ApiKey/(?:adminKey|queryKey|secretKey|key)|BasicAuth|"
+        rf"ApiKey/(?:{_AZURE_API_KEYS})|BasicAuth|"
         rf"directory:[RWX]{{1,3}};file:[RWX]{{1,3}})$"
     ),
 }

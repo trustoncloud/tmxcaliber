@@ -12,7 +12,13 @@ from tmxcaliber.lib.permission_json import PERMISSION_REGEX
 
 @pytest.mark.parametrize(
     "perm",
-    ["ApiKey/adminKey", "ApiKey/queryKey", "ApiKey/secretKey", "ApiKey/key"],
+    [
+        "ApiKey/adminKey",
+        "ApiKey/queryKey",
+        "ApiKey/secretKey",
+        "ApiKey/key",
+        "ApiKey/clientCertificate",
+    ],
 )
 def test_a_known_azure_api_key_is_accepted(perm: str) -> None:
     # Arrange
@@ -25,7 +31,16 @@ def test_a_known_azure_api_key_is_accepted(perm: str) -> None:
     assert match is not None
 
 
-@pytest.mark.parametrize("perm", ["ApiKey/keys", "ApiKey/otherKey", "ApiKey/"])
+@pytest.mark.parametrize(
+    "perm",
+    [
+        "ApiKey/keys",
+        "ApiKey/otherKey",
+        "ApiKey/",
+        "ApiKey:clientCertificate",
+        "ApiKey/clientcertificate",
+    ],
+)
 def test_an_unknown_azure_api_key_is_rejected(perm: str) -> None:
     # Arrange
     pattern = PERMISSION_REGEX["azure"]
