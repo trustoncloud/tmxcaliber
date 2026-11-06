@@ -228,6 +228,9 @@ jobs:
         # while it is one commit on top of main, authored and committed by the
         # App; an amended commit keeps its author but names who amended it.
         remote_head="$(git ls-remote origin "refs/heads/${BRANCH}" | cut -f1)"
+        # What this check read is what the push is leased on, so a commit
+        # pushed after it is refused rather than overwritten.
+        echo "lease=${remote_head}" >> "${GITHUB_OUTPUT}"
         if [ -n "${remote_head}" ]; then
           who="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${remote_head}" \
             --jq '"\(.author.login // "")/\(.committer.login // "")"')"
@@ -257,6 +260,7 @@ jobs:
         GH_TOKEN: ${{ steps.app.outputs.token }}
         APP_SLUG: ${{ steps.app.outputs.app-slug }}
         VERSION: ${{ needs.prepare.outputs.version }}
+        LEASE: ${{ steps.guard.outputs.lease }}
       run: |
         set -euo pipefail
         # Authored as the App's own bot account. The protect-main ruleset holds
@@ -271,7 +275,11 @@ jobs:
         git apply --index "${RUNNER_TEMP}/patch/refresh.patch"
         title="chore: refresh the vendored API contract (${VERSION})"
         git commit --quiet --message "${title}"
-        git push --force origin "HEAD:refs/heads/${BRANCH}"
+        # Leased on the head the guard examined, or on the branch not existing
+        # when it found none (an empty expected value). Anything pushed since
+        # makes the push fail rather than disappear.
+        git push --force-with-lease="refs/heads/${BRANCH}:${LEASE}" \
+          origin "HEAD:refs/heads/${BRANCH}"
         echo "head=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
         body="The API's published definition differs from the copy tmxcaliber ships. This updates the vendored contract and bumps the version to ${VERSION}. Merging releases it.
