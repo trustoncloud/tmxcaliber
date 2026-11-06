@@ -1,7 +1,21 @@
+import re
+
 from .filter import Filter
 from .threatmodel_data import ThreatModelData, get_permissions
 
 SEVERITY_ORDER = ("very high", "high", "medium", "low", "very low")
+PERMISSION_WILDCARD = "*"
+
+
+def _get_permissions_pattern(permissions: list[str]) -> re.Pattern[str]:
+    # IAM-style: `*` matches any run of characters, everything else is literal,
+    # so a permission without `*` still matches only itself.
+    return re.compile(
+        "|".join(
+            re.escape(permission).replace(re.escape(PERMISSION_WILDCARD), ".*")
+            for permission in permissions
+        )
+    )
 
 
 class FilterApplier:
@@ -24,6 +38,8 @@ class FilterApplier:
             self.__filter_by_control_objectives(threatmodel_data=threatmodel_data)
         if self.filter.permissions:
             self.__filter_by_permissions(threatmodel_data=threatmodel_data)
+        if self.filter.mitre_tactics:
+            self.__filter_by_mitre_tactics(threatmodel_data=threatmodel_data)
 
     def __filter_by_severity(self, threatmodel_data: ThreatModelData) -> None:
         severity_index = SEVERITY_ORDER.index(self.filter.severity)
@@ -145,18 +161,39 @@ class FilterApplier:
                     )
 
     def __filter_by_permissions(self, threatmodel_data: ThreatModelData) -> None:
-        filter_permissions = {p.lower() for p in (self.filter.permissions or [])}
+        filter_pattern = _get_permissions_pattern(
+            [p.lower() for p in (self.filter.permissions or [])]
+        )
 
         for threat_id, threat in threatmodel_data.threats.copy().items():
             # Optional permissions should not drive filtering decisions by default.
-            permissions = set(get_permissions(threat.get("access"), add_optional=False))
-            has_access = bool(permissions.intersection(filter_permissions))
+            permissions = get_permissions(threat.get("access"), add_optional=False)
+            has_access = any(
+                filter_pattern.fullmatch(permission) for permission in permissions
+            )
 
             # Apply the exclusion or inclusion logic based on exclude_as_filter
             if self.exclude_as_filter:
                 if has_access:
                     threatmodel_data.threats.pop(threat_id)
             elif not has_access:
+                threatmodel_data.threats.pop(threat_id)
+
+        self.__filter_controls_by_current_threats(threatmodel_data)
+        self.__filter_control_objectives_by_current_controls(threatmodel_data)
+        self.__filter_actions_by_current_feature_classes(threatmodel_data)
+
+    def __filter_by_mitre_tactics(self, threatmodel_data: ThreatModelData) -> None:
+        for threat_id, threat in threatmodel_data.threats.copy().items():
+            # `mitre_attack` holds the tactic first, then any technique:
+            # "TA0009,T1586".
+            tactic = str(threat.get("mitre_attack") or "").split(",")[0].strip()
+            has_tactic = tactic.lower() in self.filter.mitre_tactics
+
+            if self.exclude_as_filter:
+                if has_tactic:
+                    threatmodel_data.threats.pop(threat_id)
+            elif not has_tactic:
                 threatmodel_data.threats.pop(threat_id)
 
         self.__filter_controls_by_current_threats(threatmodel_data)

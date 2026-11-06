@@ -191,6 +191,7 @@ def validate(parser: ArgumentParser) -> Namespace:
             events=getattr(args, "events", ""),
             permissions=getattr(args, "permissions", ""),
             ids=getattr(args, "ids", ""),
+            mitre_tactics=getattr(args, "mitre_tactics", ""),
         )
     elif args.operation == Operation.generate:
         # A reference names no file, so the suffix check cannot speak for it.
@@ -208,7 +209,12 @@ def validate(parser: ArgumentParser) -> Namespace:
             )
     elif args.operation == Operation.list:
         if args.list_type == ListOperation.threats:
-            args.filter_obj = Filter(severity=args.severity, ids=args.ids)
+            args.filter_obj = Filter(
+                severity=args.severity,
+                permissions=args.permissions,
+                ids=args.ids,
+                mitre_tactics=args.mitre_tactics,
+            )
         if args.list_type == ListOperation.controls:
             args.filter_obj = Filter(ids=args.ids)
     return args
