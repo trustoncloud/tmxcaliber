@@ -213,8 +213,46 @@ jobs:
         name: refresh-patch
         path: ${{ runner.temp }}/patch
 
+    # Two reasons to stand back, both warnings rather than failures, since each
+    # resolves itself or is already in a person's hands.
+    - name: Check the branch and main are still the refresh's to act on
+      id: guard
+      env:
+        GH_TOKEN: ${{ steps.app.outputs.token }}
+        APP_SLUG: ${{ steps.app.outputs.app-slug }}
+        BASE: ${{ needs.fetch.outputs.base }}
+      run: |
+        set -euo pipefail
+        # A person who pushed a fix to the refresh's PR has taken it over: a
+        # force-push would erase their work. The branch is the refresh's only
+        # while it is one commit on top of main, authored and committed by the
+        # App; an amended commit keeps its author but names who amended it.
+        remote_head="$(git ls-remote origin "refs/heads/${BRANCH}" | cut -f1)"
+        if [ -n "${remote_head}" ]; then
+          who="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${remote_head}" \
+            --jq '"\(.author.login // "")/\(.committer.login // "")"')"
+          ahead="$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${remote_head}" --jq .ahead_by)"
+          if [ "${who}" != "${APP_SLUG}[bot]/${APP_SLUG}[bot]" ] || [ "${ahead}" != "1" ]; then
+            echo "::warning::${BRANCH} carries work that is not the refresh's own, so it and its PR are left to a person."
+            echo "${BRANCH} has been taken over by a person; nothing was pushed or merged." >> "${GITHUB_STEP_SUMMARY}"
+            echo "proceed=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+        fi
+        # The patch and its version were built on BASE. If main has moved, the
+        # version may already be released, and merging would publish nothing.
+        main="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+        if [ "${main}" != "${BASE}" ]; then
+          echo "::warning::main moved since the fetch, so the patch is stale. The next run rebuilds on it."
+          echo "main moved since the fetch; nothing was pushed or merged." >> "${GITHUB_STEP_SUMMARY}"
+          echo "proceed=false" >> "${GITHUB_OUTPUT}"
+          exit 0
+        fi
+        echo "proceed=true" >> "${GITHUB_OUTPUT}"
+
     - name: Commit as the App and open the PR
       id: pr
+      if: steps.guard.outputs.proceed == 'true'
       env:
         GH_TOKEN: ${{ steps.app.outputs.token }}
         APP_SLUG: ${{ steps.app.outputs.app-slug }}
@@ -223,7 +261,8 @@ jobs:
         set -euo pipefail
         # Authored as the App's own bot account. The protect-main ruleset holds
         # a commit no GitHub account is attributed to for an approving review,
-        # which would stall the merge below.
+        # which would stall the merge below. It is also what the guard above
+        # reads to tell the refresh's branch from one a person has taken over.
         bot="${APP_SLUG}[bot]"
         bot_id="$(gh api "users/${bot}" --jq .id)"
         git config user.name "${bot}"
@@ -249,6 +288,7 @@ jobs:
         echo "Opened ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull/${pr} for ${VERSION}." >> "${GITHUB_STEP_SUMMARY}"
 
     - name: Wait for CI
+      if: steps.guard.outputs.proceed == 'true'
       env:
         GH_TOKEN: ${{ steps.app.outputs.token }}
         PR: ${{ steps.pr.outputs.number }}
@@ -282,15 +322,25 @@ jobs:
         done
 
     # Pinned to the commit CI just passed, so a push to the branch in between
-    # cannot be merged untested. The merge is a push to main by the App, which
-    # runs release.yml.
+    # cannot be merged untested. main is checked again because CI can take long
+    # enough for a person to release in the meantime; what remains is the
+    # seconds between that check and the merge. The merge is a push to main by
+    # the App, which runs release.yml.
     - name: Merge, which releases
+      if: steps.guard.outputs.proceed == 'true'
       env:
         GH_TOKEN: ${{ steps.app.outputs.token }}
         PR: ${{ steps.pr.outputs.number }}
         HEAD_SHA: ${{ steps.pr.outputs.head }}
+        BASE: ${{ needs.fetch.outputs.base }}
         VERSION: ${{ needs.prepare.outputs.version }}
       run: |
         set -euo pipefail
+        main="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+        if [ "${main}" != "${BASE}" ]; then
+          echo "::warning::main moved while CI ran, so #${PR} was not merged. The next run rebuilds on it."
+          echo "main moved while CI ran; #${PR} was left open." >> "${GITHUB_STEP_SUMMARY}"
+          exit 0
+        fi
         gh pr merge "${PR}" --squash --match-head-commit "${HEAD_SHA}"
         echo "Merged #${PR}; release.yml publishes ${VERSION}." >> "${GITHUB_STEP_SUMMARY}"
