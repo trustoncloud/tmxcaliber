@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tmxcaliber"
-version = "0.10.0"
+version = "0.10.1"
 description = "CLI utility to filter down one or more TrustOnCloud ThreatModels and get more refined information."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -64,9 +64,8 @@ include = ["tmxcaliber*"]
 exclude = ["test*"]
 
 [tool.setuptools.package-data]
-# The vendored API contract ships with the package: the live one sits
-# behind authentication and the tenant feature flag, so a client cannot
-# read the contract it is about to call.
+# The vendored API contract ships with the package. Why it is vendored, and
+# what keeps it current: CONTRACT_PACKAGE in tmxcaliber/lib/remote/contract.py.
 tmxcaliber = [
     "schema/*.json",
     "schema/*/*.json",
