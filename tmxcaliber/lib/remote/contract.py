@@ -25,7 +25,7 @@ import json
 import keyword
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from importlib import resources
 from typing import Any, Final
@@ -55,6 +55,15 @@ RELEASE_OPTION: Final[str] = "release"
 #: argument may take one: ``limit`` sizes a page walk, and
 #: ``allow_incomplete`` accepts a partial answer.
 RESERVED_ARGUMENTS: Final[frozenset[str]] = frozenset({"limit", "allow_incomplete"})
+
+#: The mark on an operation or parameter not every tenant has yet.
+#:
+#: The document is the same for every reader, so the API lists what it is
+#: releasing to tenants in turn and answers it only for those that have it.
+#: A marked route or option is interpreted, so a fault in it still fails the
+#: load, and then left out until the mark goes, rather than offered to every
+#: caller as a command that answers 404 for most of them.
+LIMITED_AVAILABILITY: Final[str] = "x-limited-availability"
 
 #: The keys of an OpenAPI path item that name an HTTP operation.
 _METHODS: Final[frozenset[str]] = frozenset(
@@ -95,6 +104,8 @@ class Option:
         description: The contract's own description, or empty.
         default: What the API applies when the option is not sent, or None.
             Never sent by the client; it is the API's to apply.
+        repeatable: Whether it takes several values, each sent as its own
+            ``name=value``; `kind` and `choices` then apply to each value.
     """
 
     name: str
@@ -103,6 +114,7 @@ class Option:
     choices: tuple[str | int, ...]
     description: str
     default: str | int | None = None
+    repeatable: bool = False
 
 
 @dataclass(frozen=True)
@@ -176,19 +188,36 @@ def interpret(document: Mapping[str, Any]) -> tuple[Route, ...]:
         document: A parsed OpenAPI document.
 
     Returns:
-        One route per path outside `UNBOUND`, in the document's order.
+        One route per path outside `UNBOUND` whose operation is not marked
+        `LIMITED_AVAILABILITY`, in the document's order.
 
     Raises:
         UnsupportedOperation: If an operation cannot be carried out
-            faithfully, or two operations would answer to one command.
+            faithfully, or two operations would answer to one command. A
+            marked operation is held to both, so it binds as it is once the
+            mark goes.
     """
-    bound = tuple(
-        _route(document, path, item)
+    items = [
+        (path, item)
         for path, item in document.get("paths", {}).items()
         if path not in UNBOUND
-    )
+    ]
+    bound = tuple(_route(document, path, item) for path, item in items)
     _refuse_collisions(bound)
-    return bound
+    limited = {path for path, item in items if _limited(item.get("get", {}))}
+    return tuple(route for route in bound if route.path not in limited)
+
+
+def _limited(obj: Mapping[str, Any]) -> bool:
+    """Tell whether an operation or parameter is marked `LIMITED_AVAILABILITY`.
+
+    Args:
+        obj: The operation or parameter object.
+
+    Returns:
+        True when the mark is present and true.
+    """
+    return obj.get(LIMITED_AVAILABILITY) is True
 
 
 def command_for(path: str, *, paged: bool) -> tuple[str, ...]:
@@ -281,22 +310,43 @@ def _route(document: Mapping[str, Any], path: str, item: Mapping[str, Any]) -> R
             "answer the client reads outside a page."
         )
     path_parameters = _path_parameters(path, parameters)
+    for parameter in parameters:
+        # Only an option the route answers without can wait for the mark to go.
+        if _limited(parameter) and (
+            parameter["in"] != "query"
+            or parameter.get("required") is True
+            or parameter["name"] in PAGING_PARAMETERS
+        ):
+            raise UnsupportedOperation(
+                f"{path}: the parameter {parameter['name']!r} is marked "
+                f"{LIMITED_AVAILABILITY}, but the route cannot be called without it."
+            )
+    queried = [
+        parameter
+        for parameter in parameters
+        if parameter["in"] == "query" and parameter["name"] not in PAGING_PARAMETERS
+    ]
     route = Route(
         path=path,
         command=command_for(path, paged=paged),
         paged=paged,
-        options=tuple(
-            _option(document, path, parameter)
-            for parameter in parameters
-            if parameter["in"] == "query" and parameter["name"] not in PAGING_PARAMETERS
-        ),
+        options=tuple(_option(document, path, parameter) for parameter in queried),
         path_parameters=path_parameters,
         positional=_positional(path, path_parameters),
         summary=summary,
         binary=binary,
     )
+    # Held to the naming rules with every option, marked or not, so a marked
+    # one binds as it is once the mark goes.
     _refuse_clashing_names(route)
-    return route
+    return replace(
+        route,
+        options=tuple(
+            option
+            for option, parameter in zip(route.options, queried, strict=True)
+            if not _limited(parameter)
+        ),
+    )
 
 
 def _success(operation: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -503,16 +553,40 @@ def _option(
         The option.
 
     Raises:
-        UnsupportedOperation: If its type is not one the command line parses.
+        UnsupportedOperation: If its type, or for an array each value's type,
+            is not one the command line parses, or an array is not sent once
+            per value.
     """
     name = str(parameter["name"])
     schema = _resolve(document, path, parameter.get("schema", {}))
+    repeatable = schema.get("type") == "array"
+    if repeatable:
+        # An array in a query is sent once per value unless the contract says
+        # otherwise (`style: form`, `explode: true` are OpenAPI's defaults),
+        # which is the only spelling the API reads as any of several values.
+        if (
+            parameter.get("style", "form") != "form"
+            or parameter.get("explode", True) is not True
+        ):
+            raise UnsupportedOperation(
+                f"{path}: the query parameter {name!r} is an array not sent once "
+                "per value; only `style: form` with `explode: true` is supported."
+            )
+        # A default would be stated in the help, and a list of them has no
+        # spelling there that a caller could not misread as one value.
+        if "default" in schema:
+            raise UnsupportedOperation(
+                f"{path}: the query parameter {name!r} is an array with a default, "
+                "which is not supported."
+            )
+        schema = _resolve(document, path, schema.get("items", {}))
     declared = schema.get("type", "string")
     kind = _OPTION_TYPES.get(declared) if isinstance(declared, str) else None
     if kind is None:
+        values = "values of " if repeatable else ""
         raise UnsupportedOperation(
-            f"{path}: the query parameter {name!r} has type {declared!r}; only "
-            f"{', '.join(_OPTION_TYPES)} are supported."
+            f"{path}: the query parameter {name!r} has {values}type {declared!r}; "
+            f"only {', '.join(_OPTION_TYPES)} are supported."
         )
     return Option(
         name=name,
@@ -521,6 +595,7 @@ def _option(
         choices=tuple(kind(value) for value in schema.get("enum", ())),
         description=" ".join(str(parameter.get("description", "")).split()),
         default=None if schema.get("default") is None else kind(schema["default"]),
+        repeatable=repeatable,
     )
 
 
