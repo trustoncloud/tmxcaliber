@@ -133,6 +133,157 @@
         ],
         "type": "object"
       },
+      "CcrPacksTmIdRulesRow": {
+        "properties": {
+          "controlId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-canonical-name": "id",
+            "x-defined-by": "ccr-manifest"
+          },
+          "coso": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-canonical-name": "coso",
+            "x-defined-by": "ccr-manifest"
+          },
+          "description": {
+            "description": "The control statement the rule checks, which may carry HTML links.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-canonical-name": "description",
+            "x-defined-by": "ccr-manifest"
+          },
+          "effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-canonical-name": "effort",
+            "x-defined-by": "ccr-manifest"
+          },
+          "files": {
+            "description": "Each file as `<controlId>/<path>`, its path inside the pack's source zip.",
+            "type": [
+              "array",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "matchers": {
+            "description": "One item per matcher the manifest lists, such as `cloud` or `terraform`, carrying its name, whether it is implemented, its files and the resource types it targets, and, when unimplemented, the author's note. A matcher's `files` are its file under each mode the rule ships, as `<controlId>/<path>` paths inside the pack's source zip, whatever the request's filters keep.",
+            "items": {
+              "properties": {
+                "files": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "x-defined-by": "this-api"
+                },
+                "implemented": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "x-canonical-name": "implemented",
+                  "x-defined-by": "ccr-manifest"
+                },
+                "matcher": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "x-defined-by": "this-api"
+                },
+                "note": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "x-canonical-name": "note",
+                  "x-defined-by": "ccr-manifest"
+                },
+                "targets": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "x-canonical-name": "targets",
+                  "x-defined-by": "ccr-manifest"
+                }
+              },
+              "type": "object"
+            },
+            "type": [
+              "array",
+              "null"
+            ],
+            "x-defined-by": "this-api"
+          },
+          "modes": {
+            "description": "The modes the rule ships, such as `allowlist`. ccr_factory owns the values.",
+            "type": [
+              "array",
+              "null"
+            ],
+            "x-canonical-name": "modes",
+            "x-defined-by": "ccr-manifest"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-canonical-name": "name",
+            "x-defined-by": "ccr-manifest"
+          },
+          "nistCsf": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-canonical-name": "nist_csf",
+            "x-defined-by": "ccr-manifest"
+          },
+          "objectiveId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-canonical-name": "objective",
+            "x-defined-by": "ccr-manifest"
+          },
+          "weightedPriority": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-canonical-name": "weighted_priority",
+            "x-defined-by": "ccr-manifest"
+          }
+        },
+        "required": [
+          "controlId",
+          "name",
+          "description",
+          "objectiveId",
+          "coso",
+          "nistCsf",
+          "effort",
+          "weightedPriority",
+          "modes",
+          "matchers",
+          "files"
+        ],
+        "type": "object"
+      },
       "ComplianceFrameworksRow": {
         "properties": {
           "frameworkId": {
@@ -870,7 +1021,7 @@
     }
   },
   "info": {
-    "description": "Read access to the ThreatModel data your credential is entitled to. Every route is read-only, authenticated with an API key, and additionally restricted to your tenant's allowed IP ranges.",
+    "description": "Read access to the ThreatModel data your credential is entitled to. Every route is read-only and authenticated with an API key. Every route except the API directory and this document is additionally restricted to your tenant's allowed IP ranges.",
     "title": "TrustOnCloud API",
     "version": "1.0.0"
   },
@@ -878,6 +1029,7 @@
   "paths": {
     "/v1/apis": {
       "get": {
+        "description": "Answers a valid key from any address, including one outside your tenant's allowed IP ranges. From outside them every other operation is refused, `/v1/apis` reports only these two as allowed, and the use is recorded in your audit trail.",
         "operationId": "apis",
         "parameters": [
           {
@@ -1004,6 +1156,7 @@
     },
     "/v1/apis/openapi.json": {
       "get": {
+        "description": "Answers a valid key from any address, including one outside your tenant's allowed IP ranges. From outside them every other operation is refused, `/v1/apis` reports only these two as allowed, and the use is recorded in your audit trail.",
         "operationId": "apisOpenapijson",
         "parameters": [],
         "responses": {
@@ -1369,6 +1522,66 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "Only rules whose control id matches this pattern, ignoring case, such as `S3.C100` or `S3.C1*`. `*` matches any run of characters and `?` exactly one; nothing else is special. Repeat it to match any of several values, up to 20, each at most 200 characters. Absent or empty applies no filter.",
+            "explode": true,
+            "in": "query",
+            "name": "control",
+            "required": false,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "style": "form",
+            "x-limited-availability": true
+          },
+          {
+            "description": "Only rules that ship this mode, ignoring case. The modes are the pack format's, such as `allowlist` and `universal` today. A file under another mode's folder is left out of the zip. Repeat it to match any of several values, up to 20, each at most 200 characters. Absent or empty applies no filter.",
+            "explode": true,
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "style": "form",
+            "x-limited-availability": true
+          },
+          {
+            "description": "Only rules that implement this matcher, ignoring case. The matchers are the pack format's, such as `cloud` and `terraform` today. A file under another matcher's folder, `<mode>/<matcher>/`, is left out of the zip, while the rest of a mode's files and the rule's root files are kept. Repeat it to match any of several values, up to 20, each at most 200 characters. Absent or empty applies no filter.",
+            "explode": true,
+            "in": "query",
+            "name": "matcher",
+            "required": false,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "style": "form",
+            "x-limited-availability": true
+          },
+          {
+            "description": "Only files whose path in the zip, `<controlId>/<path>`, matches this pattern, case-sensitively, such as `*/terraform/*.rego`. `*` matches any run of characters, `/` included, and `?` exactly one. Repeat it to match any of several values, up to 20, each at most 200 characters. Absent or empty applies no filter.",
+            "explode": true,
+            "in": "query",
+            "name": "file",
+            "required": false,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "style": "form",
+            "x-limited-availability": true
           }
         ],
         "responses": {
@@ -1381,7 +1594,21 @@
                 }
               }
             },
-            "description": "The archive, exactly as published."
+            "description": "Without a rule filter, the pack's archive as published, checked against its manifest's digest before it is served. With one, a zip of exactly the files `/v1/ccr/packs/{tmId}/rules` lists for the same filters, each entry copied unchanged from that checked source archive, so one selection of one release is always the same bytes.",
+            "headers": {
+              "Content-Digest": {
+                "description": "On a selection alone, the SHA-256 of the body as RFC 9530 spells it, `sha-256=:<base64>:`, since no manifest publishes a digest for a part of a pack. The whole archive's is the `sha256` its manifest publishes.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Disposition": {
+                "description": "`attachment`, with the name to save it under: `<tmId>_wiz-ccr-source_<release>.zip` for the source archive, `<release>` being the first 7 characters of its release id, and `<tmId>.zip` for the deploy package. A selection adds `_selection-` and the first 12 hex digits of its SHA-256 before `.zip`, so it is never saved under the whole pack's name, and two selections are named apart.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
@@ -1391,7 +1618,217 @@
                 }
               }
             },
-            "description": "A filter value outside its allowed set or a parameter this operation does not accept."
+            "description": "A filter value outside its allowed set, a filter given more values, or a longer value, than it accepts, or a parameter this operation does not accept. `control`, `mode`, `matcher`, and `file` are refused the same way until your tenant has them. A rule filter given with `kind=deploy` is refused, since the deploy package's folders are not mapped to rules."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists. A selection that keeps no file is answered with this, rather than an empty zip."
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The release named in `release` is no longer the one this resource publishes: it was replaced, or withdrawn by a rollback. Read the resource again without `release` to learn the current one."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it. Two refusals with this status are the exception, and retrying either will not help until the pack is republished: an archive that does not match the digest its manifest publishes, and a source archive a selection cannot copy entry by entry."
+          }
+        },
+        "summary": "One CCR pack's archive.",
+        "x-required-permission": "api.ccr.read"
+      }
+    },
+    "/v1/ccr/packs/{tmId}/rules": {
+      "get": {
+        "operationId": "ccrPacksTmIdRules",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tmId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only rules whose control id matches this pattern, ignoring case, such as `S3.C100` or `S3.C1*`. `*` matches any run of characters and `?` exactly one; nothing else is special. Repeat it to match any of several values, up to 20, each at most 200 characters. Absent or empty applies no filter.",
+            "explode": true,
+            "in": "query",
+            "name": "control",
+            "required": false,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only rules that ship this mode, ignoring case. The modes are the pack format's, such as `allowlist` and `universal` today, and a mode no rule ships answers an empty page. A file under another mode's folder is left out of `files`. Repeat it to match any of several values, up to 20, each at most 200 characters. Absent or empty applies no filter.",
+            "explode": true,
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only rules that implement this matcher, ignoring case. The matchers are the pack format's, such as `cloud` and `terraform` today, and one no rule implements answers an empty page. A file under another matcher's folder, `<mode>/<matcher>/`, is left out of `files`, while the rest of a mode's files and the rule's root files are kept. Repeat it to match any of several values, up to 20, each at most 200 characters. Absent or empty applies no filter.",
+            "explode": true,
+            "in": "query",
+            "name": "matcher",
+            "required": false,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Only files whose path, `<controlId>/<path>` as `files` lists it, matches this pattern, case-sensitively, such as `*/terraform/*.rego`. `*` matches any run of characters, `/` included, and `?` exactly one. A rule left with no file is not listed. Repeat it to match any of several values, up to 20, each at most 200 characters. Absent or empty applies no filter.",
+            "explode": true,
+            "in": "query",
+            "name": "file",
+            "required": false,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Pins the listing to this release id, the `release_id` the pack's manifest names, so it lists what a download pinned to it holds. A release that is no longer current answers 410 `release_superseded`. Absent lists the current release.",
+            "in": "query",
+            "name": "release",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Defaults to 100, capped at 200.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "An opaque cursor from a previous page's `nextCursor`. Bound to the tenant, the route, the filter arguments and the credential, so it is not valid on another collection or for another caller.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/CcrPacksTmIdRulesRow"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "One page. Ordered by controlId."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A malformed `limit`, a cursor not valid for this request, a filter given more values, or a longer value, than it accepts, or a parameter this operation does not accept."
           },
           "401": {
             "content": {
@@ -1464,7 +1901,8 @@
             "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
           }
         },
-        "summary": "One CCR pack's archive.",
+        "summary": "One CCR pack's rules, each listing the files the filters keep.",
+        "x-limited-availability": true,
         "x-required-permission": "api.ccr.read"
       }
     },
