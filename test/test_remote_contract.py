@@ -51,10 +51,10 @@ RELEASED: Final[dict[tuple[str, ...], tuple[str | None, dict[str, bool]]]] = {
 
 
 def test_every_documented_route_has_a_command() -> None:
-    """No published route is unreachable, apart from the named omissions."""
+    """No route offered to every tenant is unreachable, apart from `UNBOUND`."""
     bound = {route.path for route in contract.routes()}
 
-    assert bound == contract.documented_paths() - contract.UNBOUND
+    assert bound == contract.available_paths() - contract.UNBOUND
 
 
 @pytest.mark.parametrize(
@@ -80,14 +80,16 @@ def test_a_released_command_survives_the_contract(
 
 @pytest.mark.parametrize("route", contract.routes(), ids=lambda r: r.path)
 def test_declared_filters_match_the_contract(route: contract.Route) -> None:
-    """A route's options are exactly its documented query parameters.
+    """A route's options are exactly its query parameters offered to every tenant.
 
     `limit` and `cursor` are excluded because they are pagination mechanics
     the client owns: the caller asks for a collection and gets all of it.
     """
-    documented = contract.query_parameters(route.path) - contract.PAGING_PARAMETERS
+    offered = (
+        contract.available_query_parameters(route.path) - contract.PAGING_PARAMETERS
+    )
 
-    assert set(route.filters) == documented
+    assert set(route.filters) == offered
 
 
 @pytest.mark.parametrize("route", contract.routes(), ids=lambda r: r.path)
