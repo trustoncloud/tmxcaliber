@@ -295,13 +295,13 @@ tmxcaliber filter path/to/threatmodel.json \
 ```
 
 A permission matches exactly, ignoring case. Add `*` to match any run of
-characters, as in an IAM policy, and quote the pattern so the shell leaves the
-`*` alone:
+characters, as in an IAM policy. Put the pattern in double quotes: PowerShell,
+cmd, bash and zsh then all pass the `*` through unchanged. Single quotes reach
+tmxcaliber as part of the pattern under cmd, and an unquoted `*` is refused by
+zsh or replaced by a matching file name in bash:
 
 ```sh
-tmxcaliber filter path/to/threatmodel.json \
-  --permissions 's3:Get*' \
-  --output filtered.json
+tmxcaliber filter path/to/threatmodel.json --permissions "s3:Get*" --output filtered.json
 ```
 
 Keep only threats under one or more MITRE ATT&CK tactics, by tactic code. Each
@@ -309,9 +309,7 @@ threat's `mitre_attack` starts with its tactic (`TA0009,T1586`), and that tactic
 is what is matched:
 
 ```sh
-tmxcaliber filter path/to/threatmodel.json \
-  --mitre-tactics TA0010,TA0040 \
-  --output filtered.json
+tmxcaliber filter path/to/threatmodel.json --mitre-tactics TA0010,TA0040 --output filtered.json
 ```
 
 Use `--exclude` to invert an ID-based filter:
@@ -343,10 +341,7 @@ tmxcaliber list threats path/to/threatmodels \
 `filter`:
 
 ```sh
-tmxcaliber list threats path/to/threatmodels \
-  --permissions 's3:Get*' \
-  --mitre-tactics TA0010 \
-  --output threats.csv
+tmxcaliber list threats path/to/threatmodels --permissions "s3:Get*" --mitre-tactics TA0010 --output threats.csv
 ```
 
 List controls from a directory:
