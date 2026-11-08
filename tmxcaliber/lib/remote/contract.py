@@ -32,10 +32,11 @@ from typing import Any, Final
 
 #: Where the pinned copy of the contract lives inside the package.
 #:
-#: Vendored rather than fetched. ``/v1/apis/openapi.json`` sits behind
-#: authentication and the tenant's IP policy, so a client cannot read the
-#: contract it is about to call without already being configured for it, from
-#: an address that tenant admits.
+#: Vendored rather than fetched. ``/v1/apis/openapi.json`` requires an API key,
+#: so a client cannot read the contract it is about to call without already
+#: being configured for it. The copy is kept current by
+#: ``.github/workflows/refresh-api-contract.yml``, which releases a patch version
+#: whenever the published contract changes.
 CONTRACT_PACKAGE: Final[str] = "tmxcaliber.lib.remote.openapi"
 CONTRACT_FILE: Final[str] = "v1.json"
 
