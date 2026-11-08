@@ -51,7 +51,7 @@ from .lib.remote.contract import (
     values_route,
 )
 from .lib.remote.errors import ConfigurationError, NotFound, RemoteError
-from .lib.remote.operations import call_route, incompleteness_fields
+from .lib.remote.operations import call_route, incompleteness_fields, wire
 from .lib.remote.ref import is_remote_ref
 from .lib.remote.resolve import resolve_source
 from .lib.remote.suggest import alternative_names, did_you_mean, suggest
@@ -85,18 +85,6 @@ def _escaped(text: str) -> str:
         The text with ``%`` doubled, since argparse formats help with it.
     """
     return text.replace("%", "%%")
-
-
-def _wire(value: object) -> str:
-    """Spell an option's parsed value as the query string carries it.
-
-    Args:
-        value: The parsed value; None or empty when the option was not given.
-
-    Returns:
-        The value as text, or empty for an option that was not given.
-    """
-    return "" if value is None or value == "" else str(value)
 
 
 def _option(filter_name: str) -> str:
@@ -134,6 +122,9 @@ def _filter_help(route: Route, option: Option) -> str:
         text = f"the {words} to read."
     else:
         text = f"filter by {words}."
+    # The contract's description already says so where it has one.
+    if option.repeatable and not option.description:
+        text += " Repeat it to match any of several."
     lookup = values_route(route, option.name)
     if lookup is not None:
         text += (
@@ -209,6 +200,9 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
             dest=python_name(option.name),
             type=option.kind,
             choices=option.choices or None,
+            # Given once per value, as the API takes it; argparse checks each
+            # value against the choices.
+            action="append" if option.repeatable else "store",
             default=None,
             required=option.required,
             help=_filter_help(route, option),
@@ -541,7 +535,11 @@ def run_api_command(
     typed = str(getattr(params, route.positional, "") or "") if route.positional else ""
     # The API spells a filter in camelCase and argparse keeps it in snake_case.
     filters = {
-        name: _wire(getattr(params, python_name(name), None)) for name in route.filters
+        option.name: wire(
+            getattr(params, python_name(option.name), None),
+            repeatable=option.repeatable,
+        )
+        for option in route.options
     }
     limit = int(getattr(params, "limit", 0) or 0)
     try:

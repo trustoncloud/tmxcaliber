@@ -42,6 +42,10 @@ from .errors import (
 
 _T = TypeVar("_T")
 
+#: One query parameter's value: text, or one text per value for an option that
+#: repeats, each sent as its own ``name=value``.
+QueryValue = str | tuple[str, ...]
+
 #: How many times a retryable failure is attempted in total.
 MAX_ATTEMPTS: Final[int] = 3
 
@@ -358,7 +362,7 @@ class TocClient:
         return self._settings.credentials.key_id
 
     def _send(
-        self, path: str, params: Mapping[str, str], accept: str
+        self, path: str, params: Mapping[str, QueryValue], accept: str
     ) -> tuple[bytes, dict[str, str]]:
         """Perform one GET and return its answer as received.
 
@@ -373,7 +377,11 @@ class TocClient:
         Raises:
             RemoteError: On any failure.
         """
-        query = urllib.parse.urlencode({k: v for k, v in params.items() if v})
+        # A repeatable option's values are each sent as their own `name=value`,
+        # which is how the API reads any of several values.
+        query = urllib.parse.urlencode(
+            {k: v for k, v in params.items() if v}, doseq=True
+        )
         url = f"{self._settings.base_url}{path}" + (f"?{query}" if query else "")
         request = urllib.request.Request(
             url,
@@ -423,7 +431,7 @@ class TocClient:
             ) from None
         return body, headers
 
-    def _request(self, path: str, params: Mapping[str, str]) -> dict[str, Any]:
+    def _request(self, path: str, params: Mapping[str, QueryValue]) -> dict[str, Any]:
         """Perform one GET and parse the answer.
 
         Args:
@@ -460,7 +468,7 @@ class TocClient:
         return parsed
 
     def _request_bytes(
-        self, path: str, params: Mapping[str, str], media_type: str
+        self, path: str, params: Mapping[str, QueryValue], media_type: str
     ) -> bytes:
         """Perform one GET and return the body once it proves to be what it claims.
 
@@ -564,7 +572,9 @@ class TocClient:
                     wait = min(MAX_RETRY_AFTER, 2 ** (attempt - 1))
                 self._sleep(wait * (0.5 + random.random() / 2))
 
-    def get(self, path: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
+    def get(
+        self, path: str, params: Mapping[str, QueryValue] | None = None
+    ) -> dict[str, Any]:
         """Fetch one resource, retrying the failures worth retrying.
 
         Args:
@@ -583,7 +593,7 @@ class TocClient:
     def get_bytes(
         self,
         path: str,
-        params: Mapping[str, str] | None = None,
+        params: Mapping[str, QueryValue] | None = None,
         *,
         media_type: str = "application/zip",
     ) -> bytes:
@@ -616,7 +626,7 @@ class TocClient:
     def paginate(
         self,
         path: str,
-        params: Mapping[str, str] | None = None,
+        params: Mapping[str, QueryValue] | None = None,
         *,
         page_size: int = 0,
         envelope: dict[str, Any] | None = None,

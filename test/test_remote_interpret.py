@@ -144,6 +144,38 @@ def query(name: str, *, required: bool = False, **schema: Any) -> dict[str, Any]
     return parameter
 
 
+def repeated(name: str, **items: Any) -> dict[str, Any]:
+    """Build a query parameter sent once per value, as the API publishes one.
+
+    Args:
+        name: Its name.
+        **items: Schema keywords for each value.
+
+    Returns:
+        The parameter object.
+    """
+    return {
+        "in": "query",
+        "name": name,
+        "required": False,
+        "style": "form",
+        "explode": True,
+        "schema": {"type": "array", "items": {"type": "string", **items}},
+    }
+
+
+def limited(parameter_or_operation: dict[str, Any]) -> dict[str, Any]:
+    """Mark a parameter or an operation as not yet available to every tenant.
+
+    Args:
+        parameter_or_operation: The object to mark.
+
+    Returns:
+        A copy carrying the mark.
+    """
+    return {**parameter_or_operation, "x-limited-availability": True}
+
+
 def path_parameter(name: str) -> dict[str, Any]:
     """Build a path parameter.
 
@@ -303,6 +335,105 @@ def test_an_integer_zero_reaches_the_wire(use_contract: UseContract) -> None:
 
     sent = urllib.parse.urlsplit(opener.requests[0].full_url)
     assert dict(urllib.parse.parse_qsl(sent.query))["size"] == "0"
+
+
+def test_a_repeatable_option_sends_each_value_from_both_surfaces(
+    use_contract: UseContract,
+) -> None:
+    # Arrange
+    use_contract(
+        document(
+            {
+                "/v1/widgets": {
+                    "get": operation(
+                        repeated("colour"),
+                        repeated("shape", enum=["round", "square"]),
+                        paged=True,
+                    )
+                }
+            }
+        )
+    )
+    parser, _ = api_parser()
+    page = {"items": [], "nextCursor": None, "pageSize": 5}
+    cli_opener = FakeOpener([FakeResponse(page)])
+    api_opener = FakeOpener([FakeResponse(page), FakeResponse(page)])
+    client = Client(opener=api_opener)
+
+    # Act
+    remote_cli.run_api_command(
+        parser.parse_args(
+            [
+                "widgets",
+                "list",
+                "--colour",
+                "red",
+                "--colour",
+                "blue",
+                "--shape",
+                "round",
+            ]
+        ),
+        client=Client(opener=cli_opener),
+    )
+    client.widgets.list(colour=["red", "blue"], shape="round")  # type: ignore[attr-defined]
+    client.widgets.list(colour="red")  # type: ignore[attr-defined]
+
+    # Assert
+    sent = [
+        urllib.parse.parse_qsl(urllib.parse.urlsplit(request.full_url).query)
+        for request in (*cli_opener.requests, *api_opener.requests)
+    ]
+    both = [("colour", "red"), ("colour", "blue"), ("shape", "round")]
+    assert sent == [both, both, [("colour", "red")]]
+    with pytest.raises(SystemExit):
+        parser.parse_args(["widgets", "list", "--shape", "round", "--shape", "oval"])
+
+
+def test_a_repeatable_option_without_a_description_says_it_repeats(
+    use_contract: UseContract, capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_contract(document({"/v1/widgets": {"get": operation(repeated("colour"))}}))
+    parser, _ = api_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["widgets", "-h"])
+
+    assert "Repeat it to match any of several." in " ".join(
+        capsys.readouterr().out.split()
+    )
+
+
+def test_a_route_or_filter_not_yet_available_to_every_tenant_is_left_out(
+    use_contract: UseContract,
+) -> None:
+    # Arrange: the API lists both for every reader and marks what a tenant
+    # may not have yet.
+    use_contract(
+        document(
+            {
+                "/v1/widgets": {
+                    "get": operation(limited(repeated("colour")), query("size"))
+                },
+                "/v1/gadgets": {"get": limited(operation(repeated("colour")))},
+            }
+        )
+    )
+    parser, _ = api_parser()
+
+    # Act
+    commands = [route.command for route in contract.routes()]
+    widgets = contract.route_for_path("/v1/widgets")
+    client = Client(opener=FakeOpener([]))
+
+    # Assert
+    assert commands == [("widgets",)]
+    assert widgets is not None and widgets.filters == ("size",)
+    assert "colour" not in inspect.signature(client.widgets).parameters  # type: ignore[attr-defined]
+    assert not hasattr(client, "gadgets")
+    for argv in (["widgets", "--colour", "red"], ["gadgets"]):
+        with pytest.raises(SystemExit):
+            parser.parse_args(argv)
 
 
 def test_a_paged_operation_walks_every_page(use_contract: UseContract) -> None:
@@ -617,6 +748,70 @@ def test_a_non_json_answer_becomes_a_command_that_writes_a_file(
             {"/v1/widgets": {"get": operation(query("big", type="boolean"))}},
             "only string, integer",
             id="boolean option",
+        ),
+        pytest.param(
+            {"/v1/widgets": {"get": operation(repeated("big", type="boolean"))}},
+            "only string, integer",
+            id="array of booleans",
+        ),
+        pytest.param(
+            {
+                "/v1/widgets": {
+                    "get": operation({**repeated("colour"), "explode": False})
+                }
+            },
+            "sent once per value",
+            id="array sent as one value",
+        ),
+        pytest.param(
+            {
+                "/v1/widgets": {
+                    "get": operation({**repeated("colour"), "style": "pipeDelimited"})
+                }
+            },
+            "sent once per value",
+            id="array sent delimited",
+        ),
+        pytest.param(
+            {
+                "/v1/widgets": {
+                    "get": operation(
+                        {
+                            **repeated("colour"),
+                            "schema": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "default": ["red"],
+                            },
+                        }
+                    )
+                }
+            },
+            "default",
+            id="array with a default",
+        ),
+        pytest.param(
+            {
+                "/v1/widgets": {
+                    "get": operation(limited(query("colour", required=True)))
+                }
+            },
+            "cannot be called without it",
+            id="limited required option",
+        ),
+        pytest.param(
+            {
+                "/v1/widgets/{widgetId}": {
+                    "get": operation(limited(path_parameter("widgetId")))
+                }
+            },
+            "cannot be called without it",
+            id="limited path parameter",
+        ),
+        pytest.param(
+            {"/v1/widgets": {"get": limited(operation(query("big", type="boolean")))}},
+            "only string, integer",
+            id="limited route still checked",
         ),
         pytest.param(
             {"/v1/widgets": {"get": operation({"$ref": "other.json#/Colour"})}},
