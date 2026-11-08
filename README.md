@@ -294,6 +294,26 @@ tmxcaliber filter path/to/threatmodel.json \
   --output-removed
 ```
 
+A permission matches exactly, ignoring case. Add `*` to match any run of
+characters, as in an IAM policy. Put the pattern in double quotes: PowerShell,
+cmd, bash and zsh then all pass the `*` through unchanged. Single quotes reach
+tmxcaliber as part of the pattern under cmd, and an unquoted `*` is refused by
+zsh or replaced by a matching file name in bash. tmxcaliber refuses a
+`--permissions` value that names a file in the current folder, so that
+replacement stops with an error instead of quietly matching nothing:
+
+```sh
+tmxcaliber filter path/to/threatmodel.json --permissions "s3:Get*" --output filtered.json
+```
+
+Keep only threats under one or more MITRE ATT&CK tactics, by tactic code. Each
+threat's `mitre_attack` starts with its tactic (`TA0009,T1586`), and that tactic
+is what is matched:
+
+```sh
+tmxcaliber filter path/to/threatmodel.json --mitre-tactics TA0010,TA0040 --output filtered.json
+```
+
 Use `--exclude` to invert an ID-based filter:
 
 ```sh
@@ -317,6 +337,13 @@ List only high and very-high severity threats from a directory:
 tmxcaliber list threats path/to/threatmodels \
   --severity high \
   --output threats.csv
+```
+
+`list threats` takes the same `--permissions` and `--mitre-tactics` filters as
+`filter`:
+
+```sh
+tmxcaliber list threats path/to/threatmodels --permissions "s3:Get*" --mitre-tactics TA0010 --output threats.csv
 ```
 
 List controls from a directory:
