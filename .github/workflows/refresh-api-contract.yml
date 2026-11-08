@@ -160,9 +160,16 @@ jobs:
         version: "0.12.7"
         python-version: "3.11"
 
-    # The lockfile records the root package's own version, so the bump moves it.
-    - name: Move uv.lock with the version
-      run: uv lock
+    # The lockfile records the root package's own version, so the bump moves it,
+    # and that one line is all the relock may change. A newer lockfile revision
+    # or a dependency resolved again stops the run here instead of riding into
+    # a release; the pin above prevents the first, and this catches the rest.
+    - name: Move uv.lock with the version, and nothing else
+      run: |
+        set -euo pipefail
+        cp uv.lock "${RUNNER_TEMP}/uv.lock.before"
+        uv lock
+        python3 "${SCRIPT}" check-lock "${RUNNER_TEMP}/uv.lock.before"
 
     - name: Bundle the change
       run: |
