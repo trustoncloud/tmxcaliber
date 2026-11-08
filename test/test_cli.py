@@ -953,6 +953,150 @@ def test_main_list_feature_classes_json_e2e(tmp_path, monkeypatch, capsys):
     ]
 
 
+def test_main_list_threats_filters_by_permissions_e2e(tmp_path, monkeypatch, capsys):
+    from tmxcaliber import cli as cli_module
+    from tmxcaliber.lib.threatmodel_data import ThreatModelData
+
+    ThreatModelData.threatmodel_data_list = []
+
+    source = tmp_path / "service.json"
+    source.write_text(
+        json.dumps(
+            {
+                "metadata": {"release": "1710000000", "name": "TM"},
+                "feature_classes": {"Svc.FC1": {"class_relationship": []}},
+                "threats": {
+                    "Svc.T1": {
+                        "feature_class": "Svc.FC1",
+                        "name": "Read",
+                        "access": {"AND": ["s3:GetObject"]},
+                    },
+                    "Svc.T2": {
+                        "feature_class": "Svc.FC1",
+                        "name": "Write",
+                        "access": {"AND": ["s3:PutObject"]},
+                    },
+                },
+                "control_objectives": {},
+                "controls": {},
+                "actions": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["prog", "list", "threats", str(source), "--permissions", "s3:GetObject"],
+    )
+
+    cli_module.main()
+    rows = list(csv.reader(capsys.readouterr().out.strip().splitlines()))
+
+    assert [row[0] for row in rows] == ["id", "Svc.T1"]
+
+    ThreatModelData.threatmodel_data_list = []
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["prog", "list", "threats", str(source), "--permissions", "s3:*Object"],
+    )
+
+    cli_module.main()
+    rows = list(csv.reader(capsys.readouterr().out.strip().splitlines()))
+
+    assert [row[0] for row in rows] == ["id", "Svc.T1", "Svc.T2"]
+
+
+def test_main_list_threats_filters_by_mitre_tactics_e2e(tmp_path, monkeypatch, capsys):
+    from tmxcaliber import cli as cli_module
+    from tmxcaliber.lib.threatmodel_data import ThreatModelData
+
+    ThreatModelData.threatmodel_data_list = []
+
+    source = tmp_path / "service.json"
+    source.write_text(
+        json.dumps(
+            {
+                "metadata": {"release": "1710000000", "name": "TM"},
+                "feature_classes": {"Svc.FC1": {"class_relationship": []}},
+                "threats": {
+                    "Svc.T1": {
+                        "feature_class": "Svc.FC1",
+                        "access": {"AND": ["s3:GetObject"]},
+                        "mitre_attack": "TA0010",
+                    },
+                    "Svc.T2": {
+                        "feature_class": "Svc.FC1",
+                        "access": {"AND": ["s3:PutObject"]},
+                        "mitre_attack": "TA0040,T1486",
+                    },
+                },
+                "control_objectives": {},
+                "controls": {},
+                "actions": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["prog", "list", "threats", str(source), "--mitre-tactics", "TA0040"],
+    )
+
+    cli_module.main()
+    rows = list(csv.reader(capsys.readouterr().out.strip().splitlines()))
+
+    assert [row[0] for row in rows] == ["id", "Svc.T2"]
+
+
+def test_main_filter_by_mitre_tactics_e2e(tmp_path, monkeypatch):
+    from tmxcaliber import cli as cli_module
+    from tmxcaliber.lib.threatmodel_data import ThreatModelData
+
+    ThreatModelData.threatmodel_data_list = []
+
+    source = tmp_path / "source.json"
+    out = tmp_path / "out.json"
+    source.write_text(
+        json.dumps(
+            {
+                "metadata": {"release": "1710000000", "name": "TM"},
+                "feature_classes": {"Svc.FC1": {"class_relationship": []}},
+                "threats": {
+                    "Svc.T1": {"feature_class": "Svc.FC1", "mitre_attack": "TA0010"},
+                    "Svc.T2": {"feature_class": "Svc.FC1", "mitre_attack": "TA0040"},
+                },
+                "control_objectives": {},
+                "controls": {},
+                "actions": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prog",
+            "filter",
+            str(source),
+            "--mitre-tactics",
+            "TA0010",
+            "--output",
+            str(out),
+        ],
+    )
+
+    cli_module.main()
+
+    assert list(json.loads(out.read_text(encoding="utf-8"))["threats"]) == ["Svc.T1"]
+
+
 def test_main_filter_output_removed_writes_two_files(tmp_path, monkeypatch):
     from tmxcaliber import cli as cli_module
     from tmxcaliber.lib.threatmodel_data import ThreatModelData
@@ -1044,3 +1188,58 @@ def test_main_filter_output_removed_writes_two_files(tmp_path, monkeypatch):
     # At minimum, the removed output should include removed threats/controls.
     assert "threats" in removed_json
     assert "Svc.T2" in removed_json["threats"] or "Svc.T2" in str(removed_json)
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "message"),
+    [
+        ("--mitre-tactics", "exfiltration", "Invalid MITRE tactic format"),
+        ("--ids", "not-an-id", "Invalid ID format"),
+    ],
+)
+def test_main_reports_a_malformed_filter_value_as_a_usage_error(
+    tmp_path, monkeypatch, capsys, flag, value, message
+):
+    from tmxcaliber import cli as cli_module
+
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        sys, "argv", ["prog", "list", "threats", str(source), flag, value]
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_module.main()
+
+    assert exc_info.value.code == 2
+    assert message in capsys.readouterr().err
+
+
+def test_main_refuses_a_permission_the_shell_expanded_to_a_file(
+    tmp_path, monkeypatch, capsys
+):
+    # What bash passes for an unquoted `s3:Get*` when this file is present.
+    from tmxcaliber import cli as cli_module
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "s3:GetObject-notes.txt").touch()
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prog",
+            "list",
+            "threats",
+            str(source),
+            "--permissions",
+            "s3:GetObject-notes.txt",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_module.main()
+
+    assert exc_info.value.code == 2
+    assert "double quotes" in capsys.readouterr().err

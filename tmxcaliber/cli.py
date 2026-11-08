@@ -179,18 +179,40 @@ def validate_and_get_framework(
     return expanded_rows
 
 
+def _filter_or_exit(parser: ArgumentParser, **values: str) -> Filter:
+    """Build the filter, reporting a malformed value as a usage error.
+
+    A value `Filter` rejects, such as a tactic name where a code belongs, is
+    input to correct, so it exits 2 with the message as any argument argparse
+    rejects does, rather than surfacing as a traceback.
+
+    Args:
+        parser: The parser whose usage the error is reported against.
+        **values: The filter values, as `Filter` takes them.
+
+    Returns:
+        The validated filter.
+    """
+    try:
+        return Filter(**values)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+
 def validate(parser: ArgumentParser) -> Namespace:
     args = parser.parse_args()
     if args.operation == Operation.create_change_log:
-        args.filter_obj = Filter(ids=args.ids)
+        args.filter_obj = _filter_or_exit(parser, ids=args.ids)
     elif args.operation == Operation.filter:
         if args.output_removed and not args.output:
             parser.error(MISSING_OUTPUT_ERROR)
-        args.filter_obj = Filter(
+        args.filter_obj = _filter_or_exit(
+            parser,
             severity=getattr(args, "severity", ""),
             events=getattr(args, "events", ""),
             permissions=getattr(args, "permissions", ""),
             ids=getattr(args, "ids", ""),
+            mitre_tactics=getattr(args, "mitre_tactics", ""),
         )
     elif args.operation == Operation.generate:
         # A reference names no file, so the suffix check cannot speak for it.
@@ -208,9 +230,15 @@ def validate(parser: ArgumentParser) -> Namespace:
             )
     elif args.operation == Operation.list:
         if args.list_type == ListOperation.threats:
-            args.filter_obj = Filter(severity=args.severity, ids=args.ids)
+            args.filter_obj = _filter_or_exit(
+                parser,
+                severity=args.severity,
+                permissions=args.permissions,
+                ids=args.ids,
+                mitre_tactics=args.mitre_tactics,
+            )
         if args.list_type == ListOperation.controls:
-            args.filter_obj = Filter(ids=args.ids)
+            args.filter_obj = _filter_or_exit(parser, ids=args.ids)
     return args
 
 
