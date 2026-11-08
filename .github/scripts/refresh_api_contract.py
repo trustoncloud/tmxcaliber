@@ -9,6 +9,7 @@ Usage::
     python refresh_api_contract.py compare FETCHED   # prints true or false
     python refresh_api_contract.py apply FETCHED     # writes the vendored copy
     python refresh_api_contract.py bump              # bumps the patch version
+    python refresh_api_contract.py check-lock BEFORE # uv.lock moved one line only
 """
 
 from __future__ import annotations
@@ -27,12 +28,18 @@ CONTRACT_PATH = Path("tmxcaliber/lib/remote/openapi/v1.json")
 
 PYPROJECT_PATH = Path("pyproject.toml")
 
+LOCK_PATH = Path("uv.lock")
+
 _VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 _TABLE = re.compile(r"^\[[^\]]+\]\s*$", re.MULTILINE)
 
 
 class ContractError(ValueError):
     """The fetched document is not a contract this package could vendor."""
+
+
+class LockChurnError(ValueError):
+    """Relocking rewrote more of ``uv.lock`` than the root package's version."""
 
 
 def parse_contract(raw: bytes) -> dict[str, Any]:
@@ -128,6 +135,52 @@ def bump_patch(pyproject: str) -> tuple[str, str]:
     return result, new
 
 
+def check_lock(before: str, after: str, package: str, version: str) -> None:
+    """Hold a relock to the one line a version bump moves.
+
+    The lockfile records the root package's own version, so a patch bump moves
+    that line and nothing else. Anything more is uv rewriting the file, with a
+    newer lockfile revision or a dependency resolved again, and a release must
+    not carry either unnoticed. The workflow pins uv against the first; this
+    catches whatever the pin does not.
+
+    Args:
+        before: ``uv.lock`` as it was before relocking.
+        after: ``uv.lock`` as relocking left it.
+        package: ``[project].name``, whose entry holds the version line.
+        version: The new ``[project].version``.
+
+    Raises:
+        LockChurnError: When any line other than that package's version line
+            changed, lines were added or removed, or the version line does not
+            carry ``version``.
+
+    """
+    old, new = before.splitlines(), after.splitlines()
+    if len(old) != len(new):
+        raise LockChurnError(
+            f"uv.lock went from {len(old)} to {len(new)} lines; "
+            "only the version line may change"
+        )
+    changed = [
+        index for index, (a, b) in enumerate(zip(old, new, strict=True)) if a != b
+    ]
+    if len(changed) != 1:
+        raise LockChurnError(
+            f"uv.lock changed on {len(changed)} lines; only the version line may change"
+        )
+    (index,) = changed
+    if (
+        index == 0
+        or new[index - 1] != f'name = "{package}"'
+        or new[index] != f'version = "{version}"'
+    ):
+        raise LockChurnError(
+            f"uv.lock line {index + 1} changed, and it is not {package}'s version "
+            f"line carrying {version}"
+        )
+
+
 def main(argv: list[str]) -> int:
     """Run one subcommand from the repository root.
 
@@ -153,6 +206,15 @@ def main(argv: list[str]) -> int:
         text, version = bump_patch(PYPROJECT_PATH.read_text(encoding="utf-8"))
         PYPROJECT_PATH.write_text(text, encoding="utf-8")
         print(version)
+        return 0
+    if argv[:1] == ["check-lock"] and len(argv) == 2:
+        project = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]
+        check_lock(
+            Path(argv[1]).read_text(encoding="utf-8"),
+            LOCK_PATH.read_text(encoding="utf-8"),
+            str(project["name"]),
+            str(project["version"]),
+        )
         return 0
     print(__doc__, file=sys.stderr)
     return 2

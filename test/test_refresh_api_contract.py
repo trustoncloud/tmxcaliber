@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import tomllib
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -247,3 +248,100 @@ def test_bump_rewrites_pyproject_and_prints_the_version(
 
 def test_an_unknown_command_is_a_usage_error(repo: Path) -> None:
     assert refresh.main(["release"]) == 2
+
+
+# --- the lockfile --------------------------------------------------------------
+
+LOCK = """\
+version = 1
+revision = 3
+requires-python = ">=3.11"
+
+[[package]]
+name = "beautifulsoup4"
+version = "4.13.4"
+
+[[package]]
+name = "tmxcaliber"
+version = "0.10.0"
+source = { editable = "." }
+"""
+
+RELOCKED = LOCK.replace(
+    'name = "tmxcaliber"\nversion = "0.10.0"', 'name = "tmxcaliber"\nversion = "0.10.1"'
+)
+
+
+def test_a_relock_that_moves_only_the_version_line_passes() -> None:
+    refresh.check_lock(LOCK, RELOCKED, "tmxcaliber", "0.10.1")
+
+
+@pytest.mark.parametrize(
+    ("after", "reason"),
+    [
+        # What the unpinned uv did to the first refresh PR.
+        (RELOCKED.replace("revision = 3", "revision = 5"), "on 2 lines"),
+        (RELOCKED.replace('version = "4.13.4"', 'version = "4.14.0"'), "on 2 lines"),
+        (RELOCKED + '\n[[package]]\nname = "new"\n', "went from"),
+        (LOCK, "on 0 lines"),
+    ],
+    ids=[
+        "new lockfile revision",
+        "dependency resolved again",
+        "lines added",
+        "unchanged",
+    ],
+)
+def test_a_relock_that_rewrites_more_is_refused(after: str, reason: str) -> None:
+    with pytest.raises(refresh.LockChurnError, match=reason):
+        refresh.check_lock(LOCK, after, "tmxcaliber", "0.10.1")
+
+
+def test_another_packages_version_line_is_not_the_bump() -> None:
+    after = LOCK.replace('version = "4.13.4"', 'version = "4.14.0"')
+
+    with pytest.raises(refresh.LockChurnError, match="not tmxcaliber's version line"):
+        refresh.check_lock(LOCK, after, "tmxcaliber", "0.10.1")
+
+
+def test_the_version_line_must_carry_the_new_version() -> None:
+    after = LOCK.replace(
+        'name = "tmxcaliber"\nversion = "0.10.0"',
+        'name = "tmxcaliber"\nversion = "0.10.2"',
+    )
+
+    with pytest.raises(refresh.LockChurnError, match=r"carrying 0\.10\.1"):
+        refresh.check_lock(LOCK, after, "tmxcaliber", "0.10.1")
+
+
+def test_the_repository_lockfile_has_the_shape_the_check_reads() -> None:
+    """The root entry's version line follows its name line in the real file."""
+    pyproject = tomllib.loads((_REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    name, version = pyproject["project"]["name"], pyproject["project"]["version"]
+    before = (_REPO / "uv.lock").read_text(encoding="utf-8")
+    after = before.replace(
+        f'name = "{name}"\nversion = "{version}"', f'name = "{name}"\nversion = "9.9.9"'
+    )
+
+    refresh.check_lock(before, after, name, "9.9.9")
+
+
+def test_check_lock_reads_the_bumped_pyproject(repo: Path) -> None:
+    (repo / "uv.lock").write_text(RELOCKED, encoding="utf-8")
+    before = repo / "uv.lock.before"
+    before.write_text(LOCK, encoding="utf-8")
+    refresh.main(["bump"])
+
+    assert refresh.main(["check-lock", str(before)]) == 0
+
+
+def test_check_lock_stops_on_churn(repo: Path) -> None:
+    (repo / "uv.lock").write_text(
+        RELOCKED.replace("revision = 3", "revision = 5"), encoding="utf-8"
+    )
+    before = repo / "uv.lock.before"
+    before.write_text(LOCK, encoding="utf-8")
+    refresh.main(["bump"])
+
+    with pytest.raises(refresh.LockChurnError):
+        refresh.main(["check-lock", str(before)])
