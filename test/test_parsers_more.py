@@ -41,3 +41,19 @@ def test_is_file_or_dir_rejects_paths_that_are_neither_files_nor_directories(
         match=r"The path mystery-path is neither a file nor a directory\.",
     ):
         is_file_or_dir("mystery-path")
+
+
+@pytest.mark.parametrize("command", [["filter"], ["list", "threats"]])
+def test_permissions_help_shows_the_wildcard_in_double_quotes(command, capsys):
+    # Double quotes are the one form PowerShell, cmd, bash and zsh all pass
+    # through unchanged; cmd keeps single quotes as part of the value.
+    parser = parsers_module.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="operation")
+    parsers_module.add_filter_parser(subparsers)
+    parsers_module.add_list_parser(subparsers)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args([*command, "-h"])
+    rendered = " ".join(capsys.readouterr().out.split())
+
+    assert '--permissions "s3:Get*"' in rendered

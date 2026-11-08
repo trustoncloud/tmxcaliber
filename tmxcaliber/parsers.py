@@ -479,7 +479,9 @@ def add_permissions_filter_argument(*parsers: ArgumentParser) -> None:
             type=str,
             help=(
                 "filter data by IAM permission(s), matched exactly and ignoring "
-                "case. Use `*` to match any run of characters, as in `s3:Get*`. "
+                "case. Use `*` to match any run of characters, and put the "
+                "pattern in double quotes so every shell passes it unchanged: "
+                '`--permissions "s3:Get*"`. '
                 f"Separate by `{PERMISSIONS_INPUT_SEPARATOR}`, if several.\n\n"
             ),
         )
