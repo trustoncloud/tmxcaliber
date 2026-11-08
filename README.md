@@ -298,7 +298,9 @@ A permission matches exactly, ignoring case. Add `*` to match any run of
 characters, as in an IAM policy. Put the pattern in double quotes: PowerShell,
 cmd, bash and zsh then all pass the `*` through unchanged. Single quotes reach
 tmxcaliber as part of the pattern under cmd, and an unquoted `*` is refused by
-zsh or replaced by a matching file name in bash:
+zsh or replaced by a matching file name in bash. tmxcaliber refuses a
+`--permissions` value that names a file in the current folder, so that
+replacement stops with an error instead of quietly matching nothing:
 
 ```sh
 tmxcaliber filter path/to/threatmodel.json --permissions "s3:Get*" --output filtered.json

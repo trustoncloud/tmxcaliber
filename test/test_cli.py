@@ -1213,3 +1213,33 @@ def test_main_reports_a_malformed_filter_value_as_a_usage_error(
 
     assert exc_info.value.code == 2
     assert message in capsys.readouterr().err
+
+
+def test_main_refuses_a_permission_the_shell_expanded_to_a_file(
+    tmp_path, monkeypatch, capsys
+):
+    # What bash passes for an unquoted `s3:Get*` when this file is present.
+    from tmxcaliber import cli as cli_module
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "s3:GetObject-notes.txt").touch()
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prog",
+            "list",
+            "threats",
+            str(source),
+            "--permissions",
+            "s3:GetObject-notes.txt",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_module.main()
+
+    assert exc_info.value.code == 2
+    assert "double quotes" in capsys.readouterr().err

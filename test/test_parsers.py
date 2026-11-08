@@ -5,6 +5,7 @@ from tmxcaliber.parsers import (
     ArgumentTypeError,
     is_file,
     is_file_or_dir,
+    unexpanded_permissions,
     valid_csv_path,
 )
 
@@ -171,3 +172,21 @@ def test_permissions_help_shows_the_wildcard_in_double_quotes(command, capsys):
     rendered = " ".join(capsys.readouterr().out.split())
 
     assert '--permissions "s3:Get*"' in rendered
+
+
+def test_unexpanded_permissions_passes_a_pattern_through(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    assert unexpanded_permissions("s3:Get*") == "s3:Get*"
+
+
+@pytest.mark.parametrize("name", ["s3:GetObject-notes.txt", "GetObjectDir"])
+def test_unexpanded_permissions_refuses_a_file_name(tmp_path, monkeypatch, name):
+    monkeypatch.chdir(tmp_path)
+    if name.endswith(".txt"):
+        (tmp_path / name).touch()
+    else:
+        (tmp_path / name).mkdir()
+
+    with pytest.raises(ArgumentTypeError, match="double quotes"):
+        unexpanded_permissions(name)

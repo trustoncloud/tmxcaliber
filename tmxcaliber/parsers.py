@@ -472,11 +472,39 @@ def add_output_argument(*parsers: ArgumentParser) -> None:
         )
 
 
+def unexpanded_permissions(value: str) -> str:
+    """Refuse a `--permissions` value that a shell made out of a file name.
+
+    Unquoted, `s3:Get*` is a glob. Most shells refuse it or pass it on
+    unchanged when nothing matches, but when a file in the current folder
+    matches, bash passes that file's name instead, and the filter then
+    matches nothing without any error. A permission never names a file, so a
+    value that does is the shell's doing.
+
+    Args:
+        value: The value as the program received it.
+
+    Returns:
+        The value, unchanged.
+
+    Raises:
+        ArgumentTypeError: If the value names an existing file or directory.
+    """
+    if os.path.lexists(value):
+        raise ArgumentTypeError(
+            f"`{value}` is the name of a file in the current folder, so the "
+            "shell most likely replaced an unquoted `*` pattern with it. Put the "
+            'pattern in double quotes: --permissions "s3:Get*". If you meant '
+            "that permission literally, run the command from another folder."
+        )
+    return value
+
+
 def add_permissions_filter_argument(*parsers: ArgumentParser) -> None:
     for parser in parsers:
         parser.add_argument(
             "--permissions",
-            type=str,
+            type=unexpanded_permissions,
             help=(
                 "filter data by IAM permission(s), matched exactly and ignoring "
                 "case. Use `*` to match any run of characters, and put the "
