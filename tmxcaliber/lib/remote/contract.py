@@ -653,13 +653,20 @@ def _refuse_collisions(bound: tuple[Route, ...]) -> None:
                 )
 
 
-def documented_paths() -> frozenset[str]:
-    """List every path the vendored contract publishes.
+def available_paths() -> frozenset[str]:
+    """List the paths the vendored contract offers every tenant.
+
+    A path whose operation is marked `LIMITED_AVAILABILITY` is left out, as
+    `interpret` leaves it out of the commands.
 
     Returns:
         The path templates.
     """
-    return frozenset(contract()["paths"])
+    return frozenset(
+        path
+        for path, item in contract()["paths"].items()
+        if not _limited(item.get("get", {}))
+    )
 
 
 def row_properties(path: str) -> dict[str, Any]:
@@ -913,14 +920,17 @@ def query_parameter(path: str, name: str) -> dict[str, Any]:
     return {}
 
 
-def query_parameters(path: str) -> frozenset[str]:
-    """List a route's query parameters as the contract declares them.
+def available_query_parameters(path: str) -> frozenset[str]:
+    """List a route's query parameters that the contract offers every tenant.
+
+    A parameter marked `LIMITED_AVAILABILITY` is left out, as `interpret`
+    leaves it out of the route's options.
 
     Args:
         path: The OpenAPI path template.
 
     Returns:
-        Every query parameter name, including ``limit`` and ``cursor``.
+        Every unmarked query parameter name, including ``limit`` and ``cursor``.
     """
     names = {
         str(parameter["name"])
@@ -928,6 +938,6 @@ def query_parameters(path: str) -> frozenset[str]:
         .get(path, {})
         .get("get", {})
         .get("parameters", [])
-        if parameter.get("in") == "query"
+        if parameter.get("in") == "query" and not _limited(parameter)
     }
     return frozenset(names)
