@@ -1188,3 +1188,28 @@ def test_main_filter_output_removed_writes_two_files(tmp_path, monkeypatch):
     # At minimum, the removed output should include removed threats/controls.
     assert "threats" in removed_json
     assert "Svc.T2" in removed_json["threats"] or "Svc.T2" in str(removed_json)
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "message"),
+    [
+        ("--mitre-tactics", "exfiltration", "Invalid MITRE tactic format"),
+        ("--ids", "not-an-id", "Invalid ID format"),
+    ],
+)
+def test_main_reports_a_malformed_filter_value_as_a_usage_error(
+    tmp_path, monkeypatch, capsys, flag, value, message
+):
+    from tmxcaliber import cli as cli_module
+
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        sys, "argv", ["prog", "list", "threats", str(source), flag, value]
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_module.main()
+
+    assert exc_info.value.code == 2
+    assert message in capsys.readouterr().err
