@@ -150,9 +150,14 @@ jobs:
         version="$(python3 "${SCRIPT}" bump)"
         echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
+    # Pinned, because an unpinned uv is the newest release, and a newer uv
+    # rewrites the lockfile's own `revision` along with the version line. That
+    # puts a format change no person chose into a release, and churns the file
+    # for anyone locking with an older uv. Move it deliberately, by hand.
     - name: Install uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
       with:
+        version: "0.12.7"
         python-version: "3.11"
 
     # The lockfile records the root package's own version, so the bump moves it.
