@@ -32,10 +32,11 @@ from typing import Any, Final
 
 #: Where the pinned copy of the contract lives inside the package.
 #:
-#: Vendored rather than fetched. ``/v1/apis/openapi.json`` sits behind
-#: authentication and the tenant's IP policy, so a client cannot read the
-#: contract it is about to call without already being configured for it, from
-#: an address that tenant admits.
+#: Vendored rather than fetched. ``/v1/apis/openapi.json`` requires an API key,
+#: so a client cannot read the contract it is about to call without already
+#: being configured for it. The copy is kept current by
+#: ``.github/workflows/refresh-api-contract.yml``, which releases a patch version
+#: whenever the published contract changes.
 CONTRACT_PACKAGE: Final[str] = "tmxcaliber.lib.remote.openapi"
 CONTRACT_FILE: Final[str] = "v1.json"
 
@@ -652,13 +653,20 @@ def _refuse_collisions(bound: tuple[Route, ...]) -> None:
                 )
 
 
-def documented_paths() -> frozenset[str]:
-    """List every path the vendored contract publishes.
+def available_paths() -> frozenset[str]:
+    """List the paths the vendored contract offers every tenant.
+
+    A path whose operation is marked `LIMITED_AVAILABILITY` is left out, as
+    `interpret` leaves it out of the commands.
 
     Returns:
         The path templates.
     """
-    return frozenset(contract()["paths"])
+    return frozenset(
+        path
+        for path, item in contract()["paths"].items()
+        if not _limited(item.get("get", {}))
+    )
 
 
 def row_properties(path: str) -> dict[str, Any]:
@@ -912,14 +920,17 @@ def query_parameter(path: str, name: str) -> dict[str, Any]:
     return {}
 
 
-def query_parameters(path: str) -> frozenset[str]:
-    """List a route's query parameters as the contract declares them.
+def available_query_parameters(path: str) -> frozenset[str]:
+    """List a route's query parameters that the contract offers every tenant.
+
+    A parameter marked `LIMITED_AVAILABILITY` is left out, as `interpret`
+    leaves it out of the route's options.
 
     Args:
         path: The OpenAPI path template.
 
     Returns:
-        Every query parameter name, including ``limit`` and ``cursor``.
+        Every unmarked query parameter name, including ``limit`` and ``cursor``.
     """
     names = {
         str(parameter["name"])
@@ -927,6 +938,6 @@ def query_parameters(path: str) -> frozenset[str]:
         .get(path, {})
         .get("get", {})
         .get("parameters", [])
-        if parameter.get("in") == "query"
+        if parameter.get("in") == "query" and not _limited(parameter)
     }
     return frozenset(names)

@@ -64,9 +64,8 @@ include = ["tmxcaliber*"]
 exclude = ["test*"]
 
 [tool.setuptools.package-data]
-# The vendored API contract ships with the package: the live one sits
-# behind authentication and the tenant feature flag, so a client cannot
-# read the contract it is about to call.
+# The vendored API contract ships with the package. Why it is vendored, and
+# what keeps it current: CONTRACT_PACKAGE in tmxcaliber/lib/remote/contract.py.
 tmxcaliber = [
     "schema/*.json",
     "schema/*/*.json",
