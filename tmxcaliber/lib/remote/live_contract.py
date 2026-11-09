@@ -69,9 +69,7 @@ def load_live_contract(client: TocClient) -> Contract:
     """
     discovery = route_for_path(DISCOVERY_PATH)
     assert discovery is not None, f"{DISCOVERY_PATH} is not bound"
-    rows = call_route(
-        client, discovery, "", {}, limit=discovery.page_maximum or 0
-    ).result
+    rows = call_route(client, discovery, "", {}).result
     row = _definition_row(rows)
     listed = _listed(row.get("operations"))
     path = _definition_path(client.base_url, row.get("definitionUrl"))

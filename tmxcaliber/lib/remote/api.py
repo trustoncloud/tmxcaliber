@@ -27,12 +27,12 @@ import urllib.request
 import warnings
 from typing import Any
 
-from .client import TocClient
+from .client import QueryValue, TocClient
 from .config import DEFAULT_TIMEOUT, load_settings
 from .contract import CONTRACT_NAMES, ContractName, Route, python_name, vendored
 from .errors import IncompleteAnswer
 from .live_contract import live_refusal, load_live_contract
-from .operations import call_route, incompleteness_fields, wire
+from .operations import Answer, call_route, incompleteness_fields, read_page, wire
 
 
 def _signature(route: Route) -> inspect.Signature:
@@ -61,6 +61,7 @@ def _signature(route: Route) -> inspect.Signature:
             0, inspect.Parameter(route.positional, inspect.Parameter.POSITIONAL_ONLY)
         )
     if route.paged:
+        # 0 asks for the largest page the contract permits.
         parameters.append(inspect.Parameter("limit", keyword, default=0))
     if incompleteness_fields(route):
         parameters.append(inspect.Parameter("allow_incomplete", keyword, default=False))
@@ -112,31 +113,111 @@ class Operation:
             RemoteError: On any credential, transport or server failure.
             ValueError: If a ThreatModel reference cannot be parsed.
         """
-        bound = self.__signature__.bind(*args, **kwargs)
-        bound.apply_defaults()
-        values = bound.arguments
-        route = self._route
+        positional, filters, values = self._bind(args, kwargs)
         answer = call_route(
             self._client,
-            route,
-            str(values[route.positional]) if route.positional else "",
-            {
-                option.name: wire(
-                    values[python_name(option.name)], repeatable=option.repeatable
-                )
-                for option in route.options
-            },
+            self._route,
+            positional,
+            filters,
             limit=int(values.get("limit", 0)),
         )
-        if answer.missing and not values.get("allow_incomplete", False):
-            raise IncompleteAnswer(
-                "The API could not resolve every row: "
-                + "; ".join(answer.missing)
-                + ". Pass allow_incomplete=True to accept the partial answer.",
-                result=answer.result,
-                envelope=answer.envelope,
+        return _accepted(answer, values)
+
+    def _bind(
+        self, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> tuple[str, dict[str, QueryValue], dict[str, Any]]:
+        """Read a call's arguments as the route's positional and filters.
+
+        Args:
+            args: The positional arguments given.
+            kwargs: The keyword arguments given.
+
+        Returns:
+            The positional, the filters as the query carries them, and every
+            argument by name with the defaults applied.
+
+        Raises:
+            TypeError: If the arguments do not match the signature.
+        """
+        bound = self.__signature__.bind(*args, **kwargs)
+        bound.apply_defaults()
+        values = dict(bound.arguments)
+        route = self._route
+        filters = {
+            option.name: wire(
+                values[python_name(option.name)], repeatable=option.repeatable
             )
-        return answer.result
+            for option in route.options
+        }
+        positional = str(values[route.positional]) if route.positional else ""
+        return positional, filters, values
+
+
+class PagedOperation(Operation):
+    """A paged route: called, it reads every row; `page` reads one page."""
+
+    def page(self, *args: Any, cursor: str = "", **kwargs: Any) -> dict[str, Any]:
+        """Read one page, for a caller who walks the collection themselves.
+
+        Takes the call's own arguments, so ``limit`` sizes the page and
+        defaults to the most the API allows.
+
+        Args:
+            *args: The route's positional, when it has one.
+            cursor: A previous page's ``nextCursor``, or empty for the first
+                page. It is bound to the filters, so pass the same ones.
+            **kwargs: The route's filters, ``limit`` and ``allow_incomplete``,
+                as the call's signature lists them.
+
+        Returns:
+            The page as the API served it: ``items``, and ``nextCursor``,
+            which is null on the last page.
+
+        Raises:
+            TypeError: If the arguments do not match the signature.
+            IncompleteAnswer: If the API reported rows it could not resolve
+                and ``allow_incomplete`` was not set.
+            InvalidCursor: If the API does not accept the cursor.
+            RemoteError: On any other credential, transport or server failure.
+            ValueError: If a ThreatModel reference cannot be parsed.
+        """
+        positional, filters, values = self._bind(args, kwargs)
+        answer = read_page(
+            self._client,
+            self._route,
+            positional,
+            filters,
+            limit=int(values.get("limit", 0)),
+            cursor=cursor,
+        )
+        page: dict[str, Any] = _accepted(answer, values)
+        return page
+
+
+def _accepted(answer: Answer, values: dict[str, Any]) -> Any:
+    """Hand back an answer, unless it is incomplete and that was not accepted.
+
+    Args:
+        answer: What the route returned.
+        values: The call's arguments, with ``allow_incomplete`` when the
+            route takes it.
+
+    Returns:
+        The answer's result.
+
+    Raises:
+        IncompleteAnswer: If the API reported rows it could not resolve and
+            ``allow_incomplete`` was not set.
+    """
+    if answer.missing and not values.get("allow_incomplete", False):
+        raise IncompleteAnswer(
+            "The API could not resolve every row: "
+            + "; ".join(answer.missing)
+            + ". Pass allow_incomplete=True to accept the partial answer.",
+            result=answer.result,
+            envelope=answer.envelope,
+        )
+    return answer.result
 
 
 class Group:
@@ -251,7 +332,8 @@ class Client(TocClient):
             holder = child
         leaf = route.command[-1]
         self._refuse_shadowing(holder, leaf, route)
-        setattr(holder, leaf, Operation(self, route))
+        operation = PagedOperation if route.paged else Operation
+        setattr(holder, leaf, operation(self, route))
 
     @staticmethod
     def _refuse_shadowing(holder: object, word: str, route: Route) -> None:

@@ -429,7 +429,7 @@ def test_a_live_client_has_the_overwatch_methods_and_others_do_not() -> None:
 
     # Assert
     assert rows == []
-    assert opener.requests[-1].full_url == f"{BASE}{UPDATES}"
+    assert opener.requests[-1].full_url == f"{BASE}{UPDATES}?limit=500"
     assert not hasattr(before, "overwatch")
     assert not hasattr(after, "overwatch")
     assert contract.route_for_path(UPDATES) is None

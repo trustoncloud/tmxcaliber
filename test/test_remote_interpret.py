@@ -384,8 +384,9 @@ def test_a_repeatable_option_sends_each_value_from_both_surfaces(
         urllib.parse.parse_qsl(urllib.parse.urlsplit(request.full_url).query)
         for request in (*cli_opener.requests, *api_opener.requests)
     ]
-    both = [("colour", "red"), ("colour", "blue"), ("shape", "round")]
-    assert sent == [both, both, [("colour", "red")]]
+    # The page size is the largest the synthetic contract permits.
+    both = [("colour", "red"), ("colour", "blue"), ("shape", "round"), ("limit", "50")]
+    assert sent == [both, both, [("colour", "red"), ("limit", "50")]]
     with pytest.raises(SystemExit):
         parser.parse_args(["widgets", "list", "--shape", "round", "--shape", "oval"])
 
@@ -670,7 +671,8 @@ def test_an_unusable_positional_exits_with_its_message_not_a_trace(
 
 
 @pytest.mark.parametrize(
-    "name", ["operation", "output", "apiRoute", "api_level_1", "contract", "live"]
+    "name",
+    ["operation", "output", "apiRoute", "api_level_1", "contract", "live", "page"],
 )
 def test_an_option_that_would_overwrite_a_cli_argument_is_refused(
     use_contract: UseContract, name: str

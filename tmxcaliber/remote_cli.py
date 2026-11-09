@@ -60,7 +60,7 @@ from .lib.remote.contract import (
 )
 from .lib.remote.errors import ConfigurationError, NotFound, RemoteError
 from .lib.remote.live_contract import live_refusal, load_live_contract
-from .lib.remote.operations import call_route, incompleteness_fields, wire
+from .lib.remote.operations import call_route, incompleteness_fields, read_page, wire
 from .lib.remote.ref import is_remote_ref
 from .lib.remote.resolve import resolve_source
 from .lib.remote.suggest import alternative_names, did_you_mean, suggest
@@ -83,7 +83,17 @@ INIT_COMMAND = "init"
 #: the top-level command, the selected route and its contract, the contract
 #: options every level takes, and the leaf's own options.
 CLI_DESTS = frozenset(
-    {"operation", "api_route", "api_contract", "contract", "live", "output", "help"}
+    {
+        "operation",
+        "api_route",
+        "api_contract",
+        "contract",
+        "live",
+        "page",
+        "cursor",
+        "output",
+        "help",
+    }
 )
 
 #: The message for asking for both contracts at once.
@@ -230,14 +240,37 @@ def _leaf(parser: ArgumentParser, route: Route, contract: Contract) -> None:
             help=_filter_help(contract, route, option),
         )
     if route.paged:
+        largest = route.page_maximum
         parser.add_argument(
             "--limit",
             type=int,
             default=0,
             help=(
-                "rows per request. The whole collection is read either way; "
-                "this only changes how many calls that takes."
+                "rows per request"
+                + (
+                    f", {largest} unless given, the most the API allows"
+                    if largest
+                    else ""
+                )
+                + ". The whole collection is read either way unless --page or "
+                "--cursor is given; this only changes how many calls that takes."
             ),
+        )
+        parser.add_argument(
+            "--page",
+            action="store_true",
+            help=(
+                "read one page instead of the whole collection, and write it as "
+                '{"items": [...], "nextCursor": ...}. Pass nextCursor to --cursor, '
+                "with the same filters, to read the next page; it is null on the "
+                "last one."
+            ),
+        )
+        parser.add_argument(
+            "--cursor",
+            default="",
+            help="read the page after the one that returned this nextCursor; "
+            "implies --page.",
         )
     if incompleteness_fields(route):
         parser.add_argument(
@@ -658,12 +691,7 @@ def _did_you_mean(
     listing = contract.route_for_path(collection)
     assert listing is not None, f"{collection} is not bound"
     try:
-        # Walked at the largest page the contract allows, as every collection
-        # is, because each call of the walk spends the same hourly budget as
-        # the command that failed.
-        rows = call_route(
-            client, listing, "", {}, limit=listing.page_maximum or 0
-        ).result
+        rows = call_route(client, listing, "", {}).result
     except RemoteError:
         return ""
     names = [str(row.get(name_field) or "") for row in rows]
@@ -709,7 +737,9 @@ def run_api_command(
 
     Returns:
         The result and the result type `output_result` expects: "bytes" for a
-        binary route, "json" otherwise.
+        binary route, "json" otherwise. The result of a paged route is every
+        row, or with ``--page`` or ``--cursor`` the one page as the API served
+        it, ``items`` and ``nextCursor`` included.
 
     Raises:
         NotFound: If the API does not know the ThreatModel or pack named.
@@ -739,8 +769,13 @@ def run_api_command(
         for option in route.options
     }
     limit = int(getattr(params, "limit", 0) or 0)
+    cursor = str(getattr(params, "cursor", "") or "")
+    one_page = route.paged and (bool(getattr(params, "page", False)) or bool(cursor))
     try:
-        answer = call_route(api, route, typed, filters, limit=limit)
+        if one_page:
+            answer = read_page(api, route, typed, filters, limit=limit, cursor=cursor)
+        else:
+            answer = call_route(api, route, typed, filters, limit=limit)
     except NotFound as exc:
         sentence = _did_you_mean(api, contract, route, typed)
         if not sentence:
@@ -769,7 +804,8 @@ def run_api_command(
             raise
         # The API never saw the name, so there is no status or request id.
         raise NotFound(str(exc), code="not_found", did_you_mean=sentence) from exc
-    if route.paged:
+    # A page written whole already carries its own fields on stdout.
+    if route.paged and not one_page:
         _report_envelope(answer.envelope)
     if incomplete is not None:
         incomplete.extend(answer.missing)
