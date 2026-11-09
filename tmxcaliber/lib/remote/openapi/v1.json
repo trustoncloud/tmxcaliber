@@ -432,6 +432,259 @@
         ],
         "type": "object"
       },
+      "OverwatchUpdatesRow": {
+        "description": "A live entity's row, or a retired entity's row in its place. `retired` tells them apart.",
+        "oneOf": [
+          {
+            "properties": {
+              "actionIds": {
+                "description": "Action ids from the export's `threatmodel_change_ids`. Null on a redacted row.",
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "x-canonical-name": "actions",
+                "x-defined-by": "overwatch-export"
+              },
+              "controlIds": {
+                "description": "Control ids from the export's `threatmodel_change_ids`. Null on a redacted row.",
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "x-canonical-name": "controls",
+                "x-defined-by": "overwatch-export"
+              },
+              "controlObjectiveIds": {
+                "description": "Control objective ids from the export's `threatmodel_change_ids`. Null on a redacted row.",
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "x-canonical-name": "control_objectives",
+                "x-defined-by": "overwatch-export"
+              },
+              "entitled": {
+                "description": "True when your subscriptions include OverWatch for this update's ThreatModel. False on a redacted row, whose analysis properties are null.",
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "x-defined-by": "this-api"
+              },
+              "featureClassIds": {
+                "description": "Feature class ids from the export's `threatmodel_change_ids`. Null on a redacted row.",
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "x-canonical-name": "feature_classes",
+                "x-defined-by": "overwatch-export"
+              },
+              "number": {
+                "description": "The U-number, the integer after `U` in `overwatchId`. Assigned once and never reused, so within a provider it only grows.",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-defined-by": "this-api"
+              },
+              "overwatchId": {
+                "description": "`Overwatch.{Provider}.U{number}`, the id the OverWatch email and export carry.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-canonical-name": "overwatch_id",
+                "x-defined-by": "overwatch-export"
+              },
+              "provider": {
+                "description": "The provider whose catalogue publishes the update, such as `aws`.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "this-api"
+              },
+              "providerUpdates": {
+                "description": "The provider announcements the update was raised from. Present on a redacted row.",
+                "items": {
+                  "properties": {
+                    "link": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "x-canonical-name": "link",
+                      "x-defined-by": "overwatch-export"
+                    },
+                    "providerDescription": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "x-canonical-name": "provider_description",
+                      "x-defined-by": "overwatch-export"
+                    },
+                    "providerSummary": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "x-canonical-name": "provider_summary",
+                      "x-defined-by": "overwatch-export"
+                    },
+                    "publishedDate": {
+                      "format": "date",
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "x-defined-by": "this-api"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "x-canonical-name": "provider_updates",
+                "x-defined-by": "overwatch-export"
+              },
+              "publishedAt": {
+                "description": "When the update was published, in UTC. Null for an update numbered before publication dates were recorded.",
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "this-api"
+              },
+              "retired": {
+                "const": false,
+                "type": "boolean",
+                "x-defined-by": "this-api"
+              },
+              "securityLevel": {
+                "description": "TrustOnCloud's level for the update, such as `High`. Null on a redacted row.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-canonical-name": "security_level",
+                "x-defined-by": "overwatch-export"
+              },
+              "services": {
+                "description": "The provider's services the update concerns, as OverWatch names them, such as `s3`. Not ThreatModel ids.",
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "x-canonical-name": "services",
+                "x-defined-by": "overwatch-export"
+              },
+              "threatIds": {
+                "description": "Threat ids from the export's `threatmodel_change_ids`. Null on a redacted row.",
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "x-canonical-name": "threats",
+                "x-defined-by": "overwatch-export"
+              },
+              "threatmodelChange": {
+                "description": "What the update changes in the ThreatModel, as prose. Null on a redacted row.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-canonical-name": "threatmodel_change",
+                "x-defined-by": "overwatch-export"
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-canonical-name": "title",
+                "x-defined-by": "overwatch-export"
+              },
+              "tmId": {
+                "description": "The ThreatModel the analysis concerns, empty when there is none. Null on a redacted row.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-canonical-name": "threatmodel",
+                "x-defined-by": "overwatch-export"
+              }
+            },
+            "required": [
+              "overwatchId",
+              "provider",
+              "number",
+              "title",
+              "services",
+              "providerUpdates",
+              "publishedAt",
+              "entitled",
+              "tmId",
+              "securityLevel",
+              "threatmodelChange",
+              "featureClassIds",
+              "threatIds",
+              "controlObjectiveIds",
+              "controlIds",
+              "actionIds",
+              "retired"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A retired update keeps its place in the ordering and carries only these properties. It has no service, security level or publication date, so a page filtered by any of those leaves it out.",
+            "properties": {
+              "number": {
+                "description": "The U-number, the integer after `U` in `overwatchId`. Assigned once and never reused, so within a provider it only grows.",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-defined-by": "this-api"
+              },
+              "overwatchId": {
+                "description": "`Overwatch.{Provider}.U{number}`, the id the OverWatch email and export carry.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-canonical-name": "overwatch_id",
+                "x-defined-by": "overwatch-export"
+              },
+              "provider": {
+                "description": "The provider whose catalogue publishes the update, such as `aws`.",
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "x-defined-by": "this-api"
+              },
+              "retired": {
+                "const": true,
+                "type": "boolean",
+                "x-defined-by": "this-api"
+              }
+            },
+            "required": [
+              "overwatchId",
+              "provider",
+              "number",
+              "retired"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Page": {
         "description": "The collection envelope. A route with a declared projection narrows `items` to its own row schema.",
         "properties": {
@@ -2273,6 +2526,279 @@
           }
         },
         "summary": "The calling credential: its tenant, who it acts for, and what it may do."
+      }
+    },
+    "/v1/overwatch/updates": {
+      "get": {
+        "operationId": "overwatchUpdates",
+        "parameters": [
+          {
+            "description": "Only updates from this provider, such as `aws`, matched whole and ignoring case. Empty or absent applies no filter.",
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only updates naming this service in `services`, such as `s3`, matched whole and ignoring case. It is the service as OverWatch names it, which can be spelled apart from a ThreatModel id. Empty or absent applies no filter.",
+            "in": "query",
+            "name": "service",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only updates at this security level, such as `High`, matched whole and ignoring case. A redacted or retired row has no level, so it never matches. Empty or absent applies no filter.",
+            "in": "query",
+            "name": "securityLevel",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only updates published on or after this UTC date, as `YYYY-MM-DD`. An update whose publication date is not known, and a retired one, never matches. Empty or absent applies no filter.",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only updates numbered after this one, in its provider, such as `Overwatch.Aws.U14500`, which is how to poll for new updates. Empty or absent applies no filter.",
+            "in": "query",
+            "name": "afterId",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Defaults to 100, capped at 500.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "An opaque cursor from a previous page's `nextCursor`. Bound to the tenant, the route, the filter arguments and the credential, so it is not valid on another collection or for another caller.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/OverwatchUpdatesRow"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "One page. Ordered by provider, number."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A malformed `limit`, a cursor not valid for this request, or a parameter this operation does not accept. A `since` that is not a date as `YYYY-MM-DD`, or an `afterId` that is not an OverWatch update id, is refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "Every published OverWatch update.",
+        "x-limited-availability": true,
+        "x-required-permission": "api.overwatch.read"
+      }
+    },
+    "/v1/overwatch/updates/{overwatchId}": {
+      "get": {
+        "operationId": "overwatchUpdatesOverwatchId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "overwatchId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The resource."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A query parameter was supplied. This operation accepts none."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No credential was presented, or it did not resolve to a known key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`ip_not_allowed`: The credential is valid and the source address is not in the tenant's allowed ranges. `forbidden`: The credential was not granted the permission this operation requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such resource, or one this tenant is not entitled to. The two are deliberately indistinguishable: naming which would tell an unentitled caller that the resource exists."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too many requests. Retry after the interval given in the Retry-After header."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A failure on our side that retrying will not fix: an unhandled error, or data this API could not read. Quote the requestId in the body when reporting it."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Authentication or a dependency is unavailable. This is ours rather than the caller's and is safe to retry; a valid credential is not invalidated by it."
+          }
+        },
+        "summary": "One published OverWatch update.",
+        "x-limited-availability": true,
+        "x-required-permission": "api.overwatch.read"
       }
     },
     "/v1/subscriptions": {
