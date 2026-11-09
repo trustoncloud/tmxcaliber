@@ -13,6 +13,12 @@ The opt-in behind ``--contract live`` (``--live``) and
 The served definition is the same for every reader, which is why it alone
 cannot say what this credential has; discovery is the only per-tenant answer.
 
+**The two are joined on ``operationId``**, which both publish for every
+operation. Their paths do not agree in spelling: discovery writes a template
+Express's way, ``/v1/overwatch/updates/:overwatchId``, where the definition
+writes ``{overwatchId}``, so matching on the path silently unlocked no
+parameterized route at all.
+
 Nothing is cached: every live contract costs both calls, against the same
 hourly budget as the command that follows.
 """
@@ -67,12 +73,14 @@ def load_live_contract(client: TocClient) -> Contract:
         client, discovery, "", {}, limit=discovery.page_maximum or 0
     ).result
     row = _definition_row(rows)
-    unlocked = _unlocked(row.get("operations"))
+    listed = _listed(row.get("operations"))
     path = _definition_path(client.base_url, row.get("definitionUrl"))
     document = client.get(path)
     _check_document(document, path)
     try:
-        return Contract.from_document(document, unlocked=unlocked, source="live")
+        return Contract.from_document(
+            document, unlocked=_unlocked(document, listed), source="live"
+        )
     except UnsupportedOperation as exc:
         raise live_refusal(exc) from exc
     except (KeyError, TypeError, AttributeError, ValueError) as exc:
@@ -150,33 +158,34 @@ def _definition_row(rows: Any) -> Mapping[str, Any]:
     return matches[0]
 
 
-def _unlocked(operations: object) -> dict[str, frozenset[str]]:
-    """Read which paths, and which filters on each, this credential may use.
+def _listed(operations: object) -> dict[str, frozenset[str]]:
+    """Read which operations, and which filters on each, this credential may use.
 
     The published contract types ``operations`` only as an array, so each
     item is held here to the fields this client reads, and must hold them
     with a usable value rather than one that merely survives coercion.
 
     **Being listed is the gate; ``allowed`` is deliberately not read.** The
-    mark means "not every tenant has this yet", and discovery leaving a path
-    out is the API's answer to exactly that. Whether this key may call it is
-    another question, which the vendored contract never asks either: a key
-    without a route's permission is still offered the command and gets the
-    API's own ``403``. Reading ``allowed`` would also hide every marked route
-    from a caller outside the tenant's IP ranges, since discovery then allows
-    only itself and the definition, turning the API's ``ip_not_allowed``
-    into a command that does not exist.
+    mark means "not every tenant has this yet", and discovery leaving an
+    operation out is the API's answer to exactly that. Whether this key may
+    call it is another question, which the vendored contract never asks
+    either: a key without a route's permission is still offered the command
+    and gets the API's own ``403``. Reading ``allowed`` would also hide every
+    marked route from a caller outside the tenant's IP ranges, since
+    discovery then allows only itself and the definition, turning the API's
+    ``ip_not_allowed`` into a command that does not exist.
 
     Args:
         operations: The definition row's ``operations``.
 
     Returns:
-        Each listed path and the filters listed for it, merged where a path
-        appears twice.
+        Each listed ``operationId`` and the filters listed for it, merged
+        where an operation appears twice.
 
     Raises:
         ContractViolation: If ``operations`` is not a list of objects, each
-            with a non-empty ``path`` and a list of non-empty ``filters``.
+            with a non-empty ``operationId`` and a list of non-empty
+            ``filters``.
     """
     if not isinstance(operations, list):
         raise _drift("the definition's operations are not a list")
@@ -184,16 +193,45 @@ def _unlocked(operations: object) -> dict[str, frozenset[str]]:
     for position, item in enumerate(operations):
         if not isinstance(item, Mapping):
             raise _drift(f"operation {position} is not an object")
-        path = item.get("path")
+        operation_id = item.get("operationId")
         filters = item.get("filters")
-        if not isinstance(path, str) or not path:
-            raise _drift(f"operation {position} names no path")
+        if not isinstance(operation_id, str) or not operation_id:
+            raise _drift(f"operation {position} names no operationId")
         if not isinstance(filters, list) or not all(
             isinstance(name, str) and name for name in filters
         ):
-            raise _drift(f"{path} does not list its filters as names")
-        listed.setdefault(path, set()).update(filters)
-    return {path: frozenset(names) for path, names in listed.items()}
+            raise _drift(f"{operation_id} does not list its filters as names")
+        listed.setdefault(operation_id, set()).update(filters)
+    return {operation_id: frozenset(names) for operation_id, names in listed.items()}
+
+
+def _unlocked(
+    document: Mapping[str, Any], listed: Mapping[str, frozenset[str]]
+) -> dict[str, frozenset[str]]:
+    """Find the definition's path for each operation discovery lists.
+
+    An operation the definition does not have is ignored: it can only unlock
+    what the definition defines, and a definition a moment behind discovery
+    is a lag, not a fault.
+
+    Args:
+        document: The served definition, already held to `_check_document`.
+        listed: What `_listed` read, by ``operationId``.
+
+    Returns:
+        Each listed operation's path template, as the definition spells it,
+        and the filters listed for it.
+    """
+    unlocked: dict[str, frozenset[str]] = {}
+    for template, item in document["paths"].items():
+        # A malformed path item is left for the interpreter to refuse.
+        operation = item.get("get") if isinstance(item, Mapping) else None
+        if not isinstance(operation, Mapping):
+            continue
+        filters = listed.get(str(operation.get("operationId", "")))
+        if filters is not None:
+            unlocked[template] = filters
+    return unlocked
 
 
 def _definition_path(base_url: str, url: object) -> str:

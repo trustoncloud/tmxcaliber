@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import pathlib
+import re
 import sys
 from collections.abc import Callable
 from typing import Any, NoReturn
@@ -22,7 +23,7 @@ from tmxcaliber.lib.remote import api as api_module
 from tmxcaliber.lib.remote import contract
 from tmxcaliber.lib.remote.api import Client
 from tmxcaliber.lib.remote.client import TocClient
-from tmxcaliber.lib.remote.contract import Contract, UnsupportedOperation
+from tmxcaliber.lib.remote.contract import UnsupportedOperation
 from tmxcaliber.lib.remote.errors import (
     AddressNotAllowed,
     ContractViolation,
@@ -57,21 +58,30 @@ def isolated_credentials(
     monkeypatch.setenv("TOC_CONFIG_FILE", str(tmp_path / "absent"))
 
 
-def item(path: str, *filters: str, allowed: bool = True) -> dict[str, Any]:
+def item(
+    path: str, *filters: str, allowed: bool = True, operation_id: str = ""
+) -> dict[str, Any]:
     """Build one discovery operation, in the shape the API serves.
 
+    Discovery spells a path template Express's way (``:overwatchId``) where
+    the definition writes ``{overwatchId}``, and names the operation by the
+    definition's own ``operationId``, so both are built that way here.
+
     Args:
-        path: The operation's path template.
+        path: The operation's path template, as the definition spells it.
         *filters: The filters this credential's tenant may send.
         allowed: Whether this credential may call it.
+        operation_id: Its id, when the vendored definition does not have the
+            path; otherwise the definition's own.
 
     Returns:
         The operation.
     """
     return {
-        "operationId": path,
+        "operationId": operation_id
+        or contract.contract()["paths"][path]["get"]["operationId"],
         "method": "GET",
-        "path": path,
+        "path": re.sub(r"\{([^{}]+)\}", r":\1", path),
         "summary": "An operation.",
         "permission": None,
         "allowed": allowed,
@@ -193,6 +203,22 @@ def test_discovery_then_the_definition_bind_the_overwatch_commands() -> None:
     assert live.live
     assert live.route_for(("overwatch", "updates", "list")) is not None
     assert live.route_for(("overwatch", "updates", "get")) is not None
+
+
+def test_a_parameterized_route_binds_although_discovery_spells_its_path_apart() -> None:
+    # Discovery serves `/v1/overwatch/updates/:overwatchId` for the
+    # definition's `{overwatchId}`; matching on the path once left every
+    # parameterized marked route, and the archive's marked filters, unbound.
+    listed = item(UPDATE)
+    archive = item(ARCHIVE, "kind", "release", "matcher")
+    client, _ = live_client(page(definition(listed, archive)), served())
+
+    live = load_live_contract(client)
+
+    route = live.route_for_path(ARCHIVE)
+    assert listed["path"] == "/v1/overwatch/updates/:overwatchId"
+    assert live.route_for(("overwatch", "updates", "get")) is not None
+    assert route is not None and "matcher" in route.filters
     assert contract.route_for(("overwatch", "updates", "list")) is None
 
 
@@ -241,10 +267,9 @@ def test_a_route_this_credential_may_not_call_is_still_bound() -> None:
     assert live.route_for_path(UPDATES) is not None
 
 
-def test_a_listed_path_the_definition_does_not_have_is_ignored() -> None:
-    client, _ = live_client(
-        page(definition(item(UPDATES), item("/v1/not/yet/served"))), served()
-    )
+def test_a_listed_operation_the_definition_does_not_have_is_ignored() -> None:
+    later = item("/v1/not/yet/served", operation_id="notYetServed")
+    client, _ = live_client(page(definition(item(UPDATES), later)), served())
 
     live = load_live_contract(client)
 
@@ -273,11 +298,17 @@ def test_discovery_is_read_across_pages() -> None:
         pytest.param([definition(version="v2")], id="another version"),
         pytest.param([{**definition(), "operations": None}], id="operations null"),
         pytest.param([definition("not an object")], id="item not an object"),
-        pytest.param([definition({**item(UPDATES), "path": ""})], id="empty path"),
-        pytest.param([definition({**item(UPDATES), "path": 3})], id="path not text"),
+        pytest.param([definition({**item(UPDATES), "operationId": ""})], id="empty id"),
         pytest.param(
-            [definition({k: v for k, v in item(UPDATES).items() if k != "path"})],
-            id="no path",
+            [definition({**item(UPDATES), "operationId": 3})], id="id not text"
+        ),
+        pytest.param(
+            [
+                definition(
+                    {k: v for k, v in item(UPDATES).items() if k != "operationId"}
+                )
+            ],
+            id="no id",
         ),
         pytest.param(
             [definition({**item(UPDATES), "filters": "kind"})], id="filters not a list"
@@ -669,15 +700,11 @@ def test_every_marked_route_and_filter_binds_on_both_surfaces_once_unlocked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The guard for a flagged tenant: everything marked in today's contract
-    # must bind without a clash with a local command, the CLI's own names, or
-    # a client attribute, before any tenant is the first to find out.
-    unlocked = {
-        operation["path"]: frozenset(operation["filters"])
-        for operation in every_operation()
-    }
-    everything = Contract.from_document(
-        contract.contract(), unlocked=unlocked, source="live"
-    )
+    # must reach discovery's answer through the loader, and then bind without
+    # a clash with a local command, the CLI's own names, or a client
+    # attribute, before any tenant is the first to find out.
+    client_for_load, _ = live_client(page(definition(*every_operation())), served())
+    everything = load_live_contract(client_for_load)
     monkeypatch.setattr(cli_module, "load_contract", lambda name: everything)
     monkeypatch.setattr(api_module, "load_live_contract", lambda client: everything)
 
@@ -690,3 +717,15 @@ def test_every_marked_route_and_filter_binds_on_both_surfaces_once_unlocked(
         for word in route.command:
             holder = getattr(holder, word)
     assert len(everything.routes) == len(contract.contract()["paths"])
+    for path, path_item in contract.contract()["paths"].items():
+        bound = everything.route_for_path(path)
+        assert bound is not None
+        assert (
+            set(bound.filters)
+            == {
+                parameter["name"]
+                for parameter in path_item["get"].get("parameters", [])
+                if parameter["in"] == "query"
+            }
+            - contract.PAGING_PARAMETERS
+        )
