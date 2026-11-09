@@ -27,6 +27,7 @@ from tmxcaliber.lib.remote.errors import (
     AddressNotAllowed,
     ContractViolation,
     NotFound,
+    PermissionDenied,
     RemoteError,
 )
 from tmxcaliber.lib.remote.live_contract import load_live_contract
@@ -401,6 +402,31 @@ def test_a_live_client_has_the_overwatch_methods_and_others_do_not() -> None:
     assert not hasattr(before, "overwatch")
     assert not hasattr(after, "overwatch")
     assert contract.route_for_path(UPDATES) is None
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [("forbidden", PermissionDenied), ("ip_not_allowed", AddressNotAllowed)],
+)
+def test_a_listed_route_this_key_may_not_call_answers_with_the_apis_refusal(
+    code: str, expected: type[RemoteError]
+) -> None:
+    # Bound although discovery says `allowed: false`, as an unmarked route is
+    # offered regardless of permission: the API's 403 names the reason, where
+    # a missing command would only say `overwatch` does not exist.
+    opener = answering(
+        page(definition(item(UPDATES, allowed=False), item(UPDATE, allowed=False))),
+        served(),
+        http_error(
+            403, {"error": {"code": code, "message": "Refused.", "requestId": "r-9"}}
+        ),
+    )
+    live: Any = Client(contract="live", opener=opener)
+
+    with pytest.raises(expected) as caught:
+        live.overwatch.updates.list()
+
+    assert "r-9" in str(caught.value)
 
 
 def test_a_vendored_client_makes_no_request() -> None:

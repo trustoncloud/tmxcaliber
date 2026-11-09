@@ -157,6 +157,16 @@ def _unlocked(operations: object) -> dict[str, frozenset[str]]:
     item is held here to the fields this client reads, and must hold them
     with a usable value rather than one that merely survives coercion.
 
+    **Being listed is the gate; ``allowed`` is deliberately not read.** The
+    mark means "not every tenant has this yet", and discovery leaving a path
+    out is the API's answer to exactly that. Whether this key may call it is
+    another question, which the vendored contract never asks either: a key
+    without a route's permission is still offered the command and gets the
+    API's own ``403``. Reading ``allowed`` would also hide every marked route
+    from a caller outside the tenant's IP ranges, since discovery then allows
+    only itself and the definition, turning the API's ``ip_not_allowed``
+    into a command that does not exist.
+
     Args:
         operations: The definition row's ``operations``.
 
