@@ -229,6 +229,27 @@ commands do not cover, the API takes the same key directly:
 curl -H "Authorization: Bearer $TOC_API_KEY" https://api.trustoncloud.com/v1/apis
 ```
 
+Some routes reach organizations in turn before every organization has them,
+OverWatch updates among them. The commands are built from the API contract
+this release ships with, which leaves those routes out. `--live`, short for
+`--contract live`, builds the commands from the definition the API serves
+your key instead, so whatever your organization already has becomes a
+command:
+
+```sh
+tmxcaliber overwatch updates list --live
+tmxcaliber overwatch updates list --provider aws --since 2026-11-01 --live
+tmxcaliber overwatch updates get Overwatch.Aws.U14500 --live
+tmxcaliber --live overwatch --help
+```
+
+The flag goes anywhere on an API command line. It costs two extra calls per
+command, from the same hourly budget, and needs your key even for `--help`.
+A route your organization does not have yet stays absent, as it is without
+the flag. If the API's definition holds something this release cannot carry
+out, the command says so and names the path; leave out `--live` or upgrade
+tmxcaliber.
+
 A document pulled with your key is licensed to your organization and carries
 its attribution. It is not a file to redistribute.
 
@@ -257,6 +278,18 @@ unless you pass `allow_incomplete=True`. Every failure is a `RemoteError`
 subclass, such as `AuthenticationError`, `NotFound` or `ReleaseSuperseded`,
 importable from `tmxcaliber`. `api.get(path)` and `api.paginate(path)` remain
 available for a raw path.
+
+`Client(contract="live")` is the library's `--live`: its methods come from the
+definition the API serves your key, so routes your organization has early
+are methods too.
+
+```python
+live = Client(contract="live")
+live.overwatch.updates.list(provider="aws", since="2026-11-01")
+```
+
+Building one costs two calls, so build it once and reuse it. Each client keeps
+its own contract: a `Client()` built beside it is unaffected.
 
 ## Command Overview
 

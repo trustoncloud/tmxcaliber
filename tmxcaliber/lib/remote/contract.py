@@ -1,4 +1,9 @@
-"""The API's operations, interpreted from the vendored OpenAPI contract.
+"""The API's operations, interpreted from an OpenAPI contract.
+
+The contract is the copy vendored with this release unless a caller asks for
+the API's live definition (``--contract live``, or ``Client(contract="live")``),
+which `live_contract.py` reads for one credential. Either way it becomes one
+`Contract`, so a command and its `Client` method stay two views of one route.
 
 **Naming is derived, never invented.** Every group, command and option comes
 from the contract by one mechanical rule, so a route the API adds becomes a
@@ -28,17 +33,33 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from importlib import resources
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 #: Where the pinned copy of the contract lives inside the package.
 #:
-#: Vendored rather than fetched. ``/v1/apis/openapi.json`` requires an API key,
-#: so a client cannot read the contract it is about to call without already
-#: being configured for it. The copy is kept current by
+#: Vendored by default rather than fetched. ``/v1/apis/openapi.json`` requires
+#: an API key, so a client that fetched it could not list its own commands, or
+#: show help, before being configured, and every invocation would spend a
+#: request. The copy is kept current by
 #: ``.github/workflows/refresh-api-contract.yml``, which releases a patch version
-#: whenever the published contract changes.
+#: whenever the published contract changes. Fetching is the opt-in
+#: (`live_contract.py`), for a credential whose tenant has routes not yet
+#: released to every tenant.
 CONTRACT_PACKAGE: Final[str] = "tmxcaliber.lib.remote.openapi"
 CONTRACT_FILE: Final[str] = "v1.json"
+
+#: Where a contract comes from: the vendored copy, or the API's live definition.
+ContractName = Literal["vendored", "live"]
+
+#: Every `ContractName`, in the order the command line offers them.
+CONTRACT_NAMES: Final[tuple[ContractName, ...]] = ("vendored", "live")
+
+#: What one credential's discovery answer lists: each path, and the filters on
+#: it that the credential's tenant may send.
+Unlocked = Mapping[str, frozenset[str]]
+
+#: The API version every route sits under, and the one discovery is read for.
+API_VERSION: Final[str] = "v1"
 
 #: Query parameters the client spends on walking pages rather than offering.
 PAGING_PARAMETERS: Final[frozenset[str]] = frozenset({"limit", "cursor"})
@@ -63,8 +84,13 @@ RESERVED_ARGUMENTS: Final[frozenset[str]] = frozenset({"limit", "allow_incomplet
 #: releasing to tenants in turn and answers it only for those that have it.
 #: A marked route or option is interpreted, so a fault in it still fails the
 #: load, and then left out until the mark goes, rather than offered to every
-#: caller as a command that answers 404 for most of them.
+#: caller as a command that answers 404 for most of them. Under the live
+#: contract it is also bound once the credential's own discovery answer lists
+#: it, which is the API saying this tenant has it.
 LIMITED_AVAILABILITY: Final[str] = "x-limited-availability"
+
+#: The one media type the client reads as JSON; any other 200 is bytes.
+_JSON_MEDIA_TYPE: Final[str] = "application/json"
 
 #: The keys of an OpenAPI path item that name an HTTP operation.
 _METHODS: Final[frozenset[str]] = frozenset(
@@ -76,9 +102,6 @@ _OPTION_TYPES: Final[dict[str, type[str] | type[int]]] = {"string": str, "intege
 
 #: The schema every paged response extends.
 _PAGE_SCHEMA: Final[str] = "#/components/schemas/Page"
-
-#: The path segment every route starts with, which names no command.
-_VERSION_SEGMENT: Final[str] = "v1"
 
 #: A response-format suffix on a path segment, which names no command.
 _FORMAT_SUFFIX: Final[str] = ".json"
@@ -130,7 +153,14 @@ class Route:
         path_parameters: The path template's parameters, in order.
         positional: What the command's positional argument holds, if any.
         summary: One line, for the command's help.
-        binary: Whether the response is bytes rather than JSON, such as a pack archive.
+        media_type: The one media type its 200 is served as.
+        page_maximum: The largest page a paged route permits, or None.
+        page_fields: Each field its every page must carry beyond the paging
+            ones, with the Python types its value may have.
+
+    The last three are read from the document the route came from and carried
+    here, so a route bound from the live definition is executed by what that
+    definition says, never by the vendored copy.
     """
 
     path: str
@@ -140,7 +170,18 @@ class Route:
     path_parameters: tuple[str, ...]
     positional: str | None
     summary: str
-    binary: bool = False
+    media_type: str = _JSON_MEDIA_TYPE
+    page_maximum: int | None = None
+    page_fields: tuple[tuple[str, tuple[type, ...]], ...] = ()
+
+    @property
+    def binary(self) -> bool:
+        """Tell whether the response is bytes rather than JSON, such as a pack archive.
+
+        Returns:
+            True when the 200 is served as anything but JSON.
+        """
+        return self.media_type != _JSON_MEDIA_TYPE
 
     @property
     def filters(self) -> tuple[str, ...]:
@@ -160,6 +201,121 @@ class Route:
 UNBOUND: Final[frozenset[str]] = frozenset()
 
 
+@dataclass(frozen=True, eq=False)
+class Contract:
+    """The routes one OpenAPI document binds, and the lookups across them.
+
+    Held by whatever builds a surface from it, the command line or one
+    `Client`, so two clients built from different documents in one process
+    never see each other's routes.
+
+    Attributes:
+        routes: Every route bound, in the document's order.
+        source: Where the document came from.
+    """
+
+    routes: tuple[Route, ...]
+    source: ContractName = "vendored"
+
+    @classmethod
+    def from_document(
+        cls,
+        document: Mapping[str, Any],
+        *,
+        unlocked: Unlocked | None = None,
+        source: ContractName = "vendored",
+    ) -> Contract:
+        """Interpret a document into the routes it binds.
+
+        Args:
+            document: A parsed OpenAPI document.
+            unlocked: What one credential's discovery lists, which binds the
+                marked routes and filters it names; None binds none of them.
+            source: Where the document came from.
+
+        Returns:
+            The contract.
+
+        Raises:
+            UnsupportedOperation: As `interpret` does.
+        """
+        return cls(interpret(document, unlocked=unlocked), source)
+
+    @property
+    def live(self) -> bool:
+        """Tell whether the document is the API's live definition.
+
+        Returns:
+            True when it was read from the API rather than the package.
+        """
+        return self.source == "live"
+
+    def route_for(self, command: tuple[str, ...]) -> Route | None:
+        """Find the route a command reaches.
+
+        Args:
+            command: The argv words after the program name.
+
+        Returns:
+            The route, or None when no command matches.
+        """
+        return next((route for route in self.routes if route.command == command), None)
+
+    def route_for_path(self, path: str) -> Route | None:
+        """Find the route bound to a path template.
+
+        Args:
+            path: The OpenAPI path template.
+
+        Returns:
+            The route, or None when no route binds that path.
+        """
+        return next((route for route in self.routes if route.path == path), None)
+
+    def values_route(self, route: Route, filter_name: str) -> Route | None:
+        """Find the route that lists the values one of a route's filters accepts.
+
+        Derived by the same kind of mechanical rule as the command names: the
+        paged sibling collection named for the filter's plural. ``frameworkId``
+        on ``/v1/compliance/mappings`` is answered by
+        ``/v1/compliance/frameworks``, whose rows carry a ``frameworkId``.
+
+        Args:
+            route: The route whose filter is being described.
+            filter_name: The query parameter, as the API spells it.
+
+        Returns:
+            The listing route, or None when this contract binds no such list.
+        """
+        parent = route.path.rsplit("/", 1)[0]
+        noun = filter_name.removesuffix("Id")
+        candidate = self.route_for_path(f"{parent}/{noun}s")
+        if candidate is None or not candidate.paged or candidate is route:
+            return None
+        return candidate
+
+    def listing_route(self, route: Route) -> Route | None:
+        """Find the collection whose rows name what a route's positional takes.
+
+        The paged route at the path before the first parameter: the ThreatModel
+        in ``/v1/threatmodels/{provider}/{service}/threats`` is one that
+        ``/v1/threatmodels`` lists.
+
+        Args:
+            route: The route whose positional is being described.
+
+        Returns:
+            The listing route, or None when the route takes no positional or
+            this contract binds no such list.
+        """
+        if not route.path_parameters:
+            return None
+        candidate = self.route_for_path(route.path.split("/{", 1)[0])
+        if candidate is None or not candidate.paged:
+            return None
+        return candidate
+
+
 @lru_cache(maxsize=1)
 def contract() -> dict[str, Any]:
     """Load the vendored OpenAPI document.
@@ -173,40 +329,63 @@ def contract() -> dict[str, Any]:
 
 
 @lru_cache(maxsize=1)
-def routes() -> tuple[Route, ...]:
+def vendored() -> Contract:
     """Interpret the vendored contract, once per process.
 
     Returns:
-        Every route the client binds, in the contract's order.
+        The contract every tenant is offered.
     """
-    return interpret(contract())
+    return Contract.from_document(contract())
 
 
-def interpret(document: Mapping[str, Any]) -> tuple[Route, ...]:
+def routes() -> tuple[Route, ...]:
+    """List the routes the vendored contract binds.
+
+    Returns:
+        Every route the client binds by default, in the contract's order.
+    """
+    return vendored().routes
+
+
+def interpret(
+    document: Mapping[str, Any], *, unlocked: Unlocked | None = None
+) -> tuple[Route, ...]:
     """Read every operation in a contract as the command that reaches it.
 
     Args:
         document: A parsed OpenAPI document.
+        unlocked: What one credential's discovery lists. A marked route binds
+            when its path is listed, and a marked filter when it is also among
+            that path's filters. None, or a path not listed, binds no marked
+            route or filter.
 
     Returns:
         One route per path outside `UNBOUND` whose operation is not marked
-        `LIMITED_AVAILABILITY`, in the document's order.
+        `LIMITED_AVAILABILITY` or is listed, in the document's order.
 
     Raises:
         UnsupportedOperation: If an operation cannot be carried out
             faithfully, or two operations would answer to one command. A
-            marked operation is held to both, so it binds as it is once the
-            mark goes.
+            marked operation is held to both whether or not it is listed, so
+            it binds as it is once the mark goes.
     """
+    listed: Unlocked = unlocked or {}
     items = [
         (path, item)
         for path, item in document.get("paths", {}).items()
         if path not in UNBOUND
     ]
-    bound = tuple(_route(document, path, item) for path, item in items)
+    bound = tuple(
+        _route(document, path, item, listed.get(path, frozenset()))
+        for path, item in items
+    )
     _refuse_collisions(bound)
-    limited = {path for path, item in items if _limited(item.get("get", {}))}
-    return tuple(route for route in bound if route.path not in limited)
+    waiting = {
+        path
+        for path, item in items
+        if _limited(item.get("get", {})) and path not in listed
+    }
+    return tuple(route for route in bound if route.path not in waiting)
 
 
 def _limited(obj: Mapping[str, Any]) -> bool:
@@ -236,7 +415,7 @@ def command_for(path: str, *, paged: bool) -> tuple[str, ...]:
             segment, or has one that cannot be a command word.
     """
     version, *tail = path.strip("/").split("/")
-    if version != _VERSION_SEGMENT or not tail:
+    if version != API_VERSION or not tail:
         raise UnsupportedOperation(f"{path}: every route must sit under /v1/.")
     parameterized = [_PLACEHOLDER.fullmatch(segment) is not None for segment in tail]
     literals = tuple(
@@ -261,13 +440,20 @@ def command_for(path: str, *, paged: bool) -> tuple[str, ...]:
     return literals
 
 
-def _route(document: Mapping[str, Any], path: str, item: Mapping[str, Any]) -> Route:
+def _route(
+    document: Mapping[str, Any],
+    path: str,
+    item: Mapping[str, Any],
+    unlocked_filters: frozenset[str] = frozenset(),
+) -> Route:
     """Interpret one path item.
 
     Args:
         document: The whole contract, for resolving references.
         path: The path template.
         item: Its path item.
+        unlocked_filters: Marked filters a credential's discovery lists for
+            this path, which bind as any other filter does.
 
     Returns:
         The route.
@@ -301,11 +487,15 @@ def _route(document: Mapping[str, Any], path: str, item: Mapping[str, Any]) -> R
         )
     # Anything but JSON is bytes the command writes to a file, as a pack
     # archive is; `call_route` holds the answer to the declared type.
-    binary = media_types != ["application/json"]
+    media_type = str(media_types[0])
     parameters = _parameters(document, path, item, operation)
     paged = _is_paged(operation)
     _check_paging(path, paged, parameters)
-    if not paged and not binary and not _answers_object(document, path, operation):
+    if (
+        not paged
+        and media_type == _JSON_MEDIA_TYPE
+        and not _answers_object(document, path, operation)
+    ):
         raise UnsupportedOperation(
             f"{path}: its 200 response is not a JSON object, which is the only "
             "answer the client reads outside a page."
@@ -335,7 +525,9 @@ def _route(document: Mapping[str, Any], path: str, item: Mapping[str, Any]) -> R
         path_parameters=path_parameters,
         positional=_positional(path, path_parameters),
         summary=summary,
-        binary=binary,
+        media_type=media_type,
+        page_maximum=_page_maximum(operation) if paged else None,
+        page_fields=tuple(_page_fields(document, operation).items()),
     )
     # Held to the naming rules with every option, marked or not, so a marked
     # one binds as it is once the mark goes.
@@ -345,7 +537,7 @@ def _route(document: Mapping[str, Any], path: str, item: Mapping[str, Any]) -> R
         options=tuple(
             option
             for option, parameter in zip(route.options, queried, strict=True)
-            if not _limited(parameter)
+            if not _limited(parameter) or option.name in unlocked_filters
         ),
     )
 
@@ -689,7 +881,7 @@ def row_properties(path: str) -> dict[str, Any]:
 
 
 def route_for(command: tuple[str, ...]) -> Route | None:
-    """Find the route a command reaches.
+    """Find the route a command reaches in the vendored contract.
 
     Args:
         command: The argv words after the program name.
@@ -697,17 +889,45 @@ def route_for(command: tuple[str, ...]) -> Route | None:
     Returns:
         The route, or None when no command matches.
     """
-    for route in routes():
-        if route.command == command:
-            return route
+    return vendored().route_for(command)
+
+
+def _operation(document: Mapping[str, Any], path: str) -> Mapping[str, Any]:
+    """Find a path's GET operation in a document.
+
+    Args:
+        document: A parsed OpenAPI document.
+        path: The OpenAPI path template.
+
+    Returns:
+        The operation object, or an empty mapping when the path declares none.
+    """
+    found: Mapping[str, Any] = document["paths"].get(path, {}).get("get", {})
+    return found
+
+
+def _page_maximum(operation: Mapping[str, Any]) -> int | None:
+    """Read an operation's largest permitted page size.
+
+    Walking a collection at its maximum is what keeps a full read inside the
+    API's hourly budget, and the maximum is the contract's to state.
+
+    Args:
+        operation: The operation object.
+
+    Returns:
+        The maximum, or None when the operation takes no ``limit`` or states
+        no maximum for it.
+    """
+    for parameter in operation.get("parameters", []):
+        if parameter.get("name") == "limit":
+            maximum = parameter.get("schema", {}).get("maximum")
+            return int(maximum) if maximum is not None else None
     return None
 
 
 def page_maximum(path: str) -> int | None:
-    """Read a route's largest permitted page size from the contract.
-
-    Walking a collection at its maximum is what keeps a full read inside the
-    API's hourly budget, and the maximum is the contract's to state.
+    """Read a route's largest permitted page size from the vendored contract.
 
     Args:
         path: The OpenAPI path template.
@@ -715,17 +935,11 @@ def page_maximum(path: str) -> int | None:
     Returns:
         The maximum, or None when the route is not paged.
     """
-    for parameter in (
-        contract()["paths"].get(path, {}).get("get", {}).get("parameters", [])
-    ):
-        if parameter.get("name") == "limit":
-            maximum = parameter.get("schema", {}).get("maximum")
-            return int(maximum) if maximum is not None else None
-    return None
+    return _page_maximum(_operation(contract(), path))
 
 
 def response_media_type(path: str) -> str | None:
-    """Name the media type a route's 200 is served as.
+    """Name the media type a route's 200 is served as, in the vendored contract.
 
     Read from the contract, because whether a route answers with JSON or with
     bytes is the API's decision, and a client that guessed would decode a zip.
@@ -736,60 +950,7 @@ def response_media_type(path: str) -> str | None:
     Returns:
         The media type, or None when the contract declares no 200 content.
     """
-    content = (
-        contract()["paths"]
-        .get(path, {})
-        .get("get", {})
-        .get("responses", {})
-        .get("200", {})
-        .get("content", {})
-    )
-    return next(iter(content), None)
-
-
-def values_route(route: Route, filter_name: str) -> Route | None:
-    """Find the route that lists the values one of a route's filters accepts.
-
-    Derived by the same kind of mechanical rule as the command names: the
-    paged sibling collection named for the filter's plural. ``frameworkId`` on
-    ``/v1/compliance/mappings`` is answered by ``/v1/compliance/frameworks``,
-    whose rows carry a ``frameworkId``.
-
-    Args:
-        route: The route whose filter is being described.
-        filter_name: The query parameter, as the API spells it.
-
-    Returns:
-        The listing route, or None when the API publishes no such list.
-    """
-    parent = route.path.rsplit("/", 1)[0]
-    noun = filter_name.removesuffix("Id")
-    candidate = route_for_path(f"{parent}/{noun}s")
-    if candidate is None or not candidate.paged or candidate is route:
-        return None
-    return candidate
-
-
-def listing_route(route: Route) -> Route | None:
-    """Find the collection whose rows name what a route's positional takes.
-
-    The paged route at the path before the first parameter: the ThreatModel
-    in ``/v1/threatmodels/{provider}/{service}/threats`` is one that
-    ``/v1/threatmodels`` lists.
-
-    Args:
-        route: The route whose positional is being described.
-
-    Returns:
-        The listing route, or None when the route takes no positional or the
-        API publishes no such list.
-    """
-    if not route.path_parameters:
-        return None
-    candidate = route_for_path(route.path.split("/{", 1)[0])
-    if candidate is None or not candidate.paged:
-        return None
-    return candidate
+    return next(iter(_success(_operation(contract(), path)).get("content", {})), None)
 
 
 def values_field(filter_name: str) -> str:
@@ -817,7 +978,7 @@ def python_name(api_name: str) -> str:
 
 
 def route_for_path(path: str) -> Route | None:
-    """Find the route bound to a path template.
+    """Find the route bound to a path template in the vendored contract.
 
     Args:
         path: The OpenAPI path template.
@@ -825,10 +986,7 @@ def route_for_path(path: str) -> Route | None:
     Returns:
         The route, or None when no route binds that path.
     """
-    for route in routes():
-        if route.path == path:
-            return route
-    return None
+    return vendored().route_for_path(path)
 
 
 #: What each JSON Schema type is in Python, for checking a page's own fields.
@@ -843,22 +1001,29 @@ _JSON_TYPES: Final[dict[str, type | tuple[type, ...]]] = {
 }
 
 
-def paging_fields() -> frozenset[str]:
-    """List the fields every page carries, as the contract's ``Page`` declares.
+def _paging_fields(document: Mapping[str, Any]) -> frozenset[str]:
+    """List the fields every page carries, as a document's ``Page`` declares.
+
+    Args:
+        document: A parsed OpenAPI document.
 
     Returns:
         The envelope fields the client walks by, such as ``nextCursor``.
     """
-    return frozenset(contract()["components"]["schemas"]["Page"]["required"])
+    return frozenset(document["components"]["schemas"]["Page"]["required"])
+
+
+def paging_fields() -> frozenset[str]:
+    """List the fields every page carries, as the vendored ``Page`` declares.
+
+    Returns:
+        The envelope fields the client walks by, such as ``nextCursor``.
+    """
+    return _paging_fields(contract())
 
 
 def required_page_fields(path: str) -> dict[str, tuple[type, ...]]:
-    """List the fields a route's every page must carry beyond the paging ones.
-
-    Read from the contract's 200 schema, so a field the API makes required,
-    such as which ThreatModels a compliance mapping could not resolve, is held
-    to without restating it here. A page that omits one is a contract breach,
-    not an answer with nothing to report.
+    """List the fields a route's every page must carry, in the vendored contract.
 
     Args:
         path: The OpenAPI path template.
@@ -867,21 +1032,38 @@ def required_page_fields(path: str) -> dict[str, tuple[type, ...]]:
         Each required field and the Python types its value may have; empty
         for a route that is not paged or declares none.
     """
+    return _page_fields(contract(), _operation(contract(), path))
+
+
+def _page_fields(
+    document: Mapping[str, Any], operation: Mapping[str, Any]
+) -> dict[str, tuple[type, ...]]:
+    """List the fields an operation's every page must carry beyond the paging ones.
+
+    Read from the contract's 200 schema, so a field the API makes required,
+    such as which ThreatModels a compliance mapping could not resolve, is held
+    to without restating it here. A page that omits one is a contract breach,
+    not an answer with nothing to report.
+
+    Args:
+        document: The document the operation belongs to, for its ``Page``.
+        operation: The operation object.
+
+    Returns:
+        Each required field and the Python types its value may have; empty
+        for an operation that is not paged or declares none.
+    """
     schema = (
-        contract()["paths"]
-        .get(path, {})
-        .get("get", {})
-        .get("responses", {})
-        .get("200", {})
+        _success(operation)
         .get("content", {})
-        .get("application/json", {})
+        .get(_JSON_MEDIA_TYPE, {})
         .get("schema", {})
     )
     fields: dict[str, tuple[type, ...]] = {}
     for part in schema.get("allOf", []):
         properties = part.get("properties", {})
         for name in part.get("required", []):
-            if name in paging_fields():
+            if name in _paging_fields(document):
                 continue
             declared = properties.get(name, {}).get("type", [])
             names = declared if isinstance(declared, list) else [declared]

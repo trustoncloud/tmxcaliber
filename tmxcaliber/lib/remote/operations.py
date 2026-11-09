@@ -1,10 +1,14 @@
 """How one route becomes one request, for the CLI and for `Client` alike.
 
-Both surfaces are built from `contract.routes()`, and both need the same three
-answers for a route: which concrete path a positional fills in, which query
-it sends, and whether the rows that came back are whole. Giving those one
-owner here is what keeps ``tmxcaliber threatmodels threats aws-s3`` and
-``Client().threatmodels.threats("aws-s3")`` from drifting apart.
+Both surfaces are built from one `contract.Contract`'s routes, and both need
+the same three answers for a route: which concrete path a positional fills in,
+which query it sends, and whether the rows that came back are whole. Giving
+those one owner here is what keeps ``tmxcaliber threatmodels threats aws-s3``
+and ``Client().threatmodels.threats("aws-s3")`` from drifting apart.
+
+Everything a call needs from the contract travels on the `Route` itself, so a
+route bound from the API's live definition is executed by what that
+definition says rather than by the vendored copy.
 """
 
 from __future__ import annotations
@@ -16,13 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 from .client import QueryValue, TocClient
-from .contract import (
-    REFERENCE_PARAMETERS,
-    RELEASE_OPTION,
-    Route,
-    required_page_fields,
-    response_media_type,
-)
+from .contract import REFERENCE_PARAMETERS, RELEASE_OPTION, Route
 from .ref import parse_ref
 
 #: Page fields that, when not empty, mean the rows are incomplete.
@@ -59,7 +57,7 @@ def incompleteness_fields(route: Route) -> tuple[str, ...]:
     Returns:
         The names, in ``INCOMPLETENESS_FIELDS`` order.
     """
-    required = required_page_fields(route.path)
+    required = dict(route.page_fields)
     return tuple(name for name in INCOMPLETENESS_FIELDS if name in required)
 
 
@@ -163,9 +161,7 @@ def call_route(
     if route.binary:
         # Held to the type the contract publishes, so the transport can tell
         # the archive asked for from a body that only carries its label.
-        media_type = response_media_type(route.path)
-        assert media_type is not None, f"{route.path} publishes no 200 content"
-        return Answer(result=client.get_bytes(path, query, media_type=media_type))
+        return Answer(result=client.get_bytes(path, query, media_type=route.media_type))
     if not route.paged:
         return Answer(result=client.get(path, query))
 
@@ -176,7 +172,7 @@ def call_route(
             query,
             page_size=limit,
             envelope=envelope,
-            required=required_page_fields(route.path),
+            required=dict(route.page_fields),
         )
     )
     missing = tuple(

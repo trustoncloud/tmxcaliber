@@ -2,9 +2,9 @@
 
 Every attribute path on a `Client` is a CLI command with the spaces turned
 into dots, built at construction from the same routes the CLI is built from
-(`contract.routes()`, interpreted from the vendored OpenAPI document). Nothing
-here names a route, so a route the API adds is a method here and a command
-there, with no naming decision in between:
+(one `contract.Contract`, the vendored OpenAPI document unless the API's live
+definition is asked for). Nothing here names a route, so a route the API adds
+is a method here and a command there, with no naming decision in between:
 
     from tmxcaliber import Client
 
@@ -12,6 +12,9 @@ there, with no naming decision in between:
     api.me()
     api.threatmodels.list(provider="aws")  # tmxcaliber threatmodels list --provider aws
     api.threatmodels.threats("aws-s3", feature_class_id="S3.FC1")
+
+    live = Client(contract="live")         # tmxcaliber overwatch updates list --live
+    live.overwatch.updates.list()
 
 A route's positional is the method's one positional argument, its filters are
 keyword arguments, and a paged route returns every row, as the CLI does.
@@ -26,8 +29,9 @@ from typing import Any
 
 from .client import TocClient
 from .config import DEFAULT_TIMEOUT, load_settings
-from .contract import Route, python_name, routes
+from .contract import CONTRACT_NAMES, ContractName, Route, python_name, vendored
 from .errors import IncompleteAnswer
+from .live_contract import live_refusal, load_live_contract
 from .operations import call_route, incompleteness_fields, wire
 
 
@@ -170,11 +174,20 @@ class Client(TocClient):
         api_key: A key to use instead of the environment's or the file's.
         api_url: An endpoint to use instead of the environment's or the
             file's.
+        contract: ``"vendored"`` builds the methods from the contract this
+            release ships with, at no cost. ``"live"`` reads the API's own
+            definition for this credential first, two calls on every
+            construction, so routes this tenant has before every tenant
+            does, such as ``overwatch``, are methods too; reuse the client.
         timeout: Seconds to wait on one request.
         opener: The URL opener, injected so a test needs no network.
 
     Raises:
+        ValueError: If ``contract`` is not one of the names above.
         ConfigurationError: If no usable credential is configured.
+        ContractViolation: If the live definition cannot be read or bound
+            by this release.
+        RemoteError: On any other failure reading the live definition.
 
     Warns:
         UserWarning: When a key given for this call will reach an endpoint
@@ -186,15 +199,32 @@ class Client(TocClient):
         api_key: str = "",
         api_url: str = "",
         *,
+        contract: ContractName = "vendored",
         timeout: float = DEFAULT_TIMEOUT,
         opener: urllib.request.OpenerDirector | None = None,
     ) -> None:
+        # Checked first, so a misspelling needs no credential and spends no call.
+        if contract not in CONTRACT_NAMES:
+            raise ValueError(
+                f"contract must be one of {', '.join(CONTRACT_NAMES)}, "
+                f"not {contract!r}."
+            )
         settings = load_settings(api_key=api_key, api_url=api_url, timeout=timeout)
         if settings.sends_key_to_stored_endpoint:
             warnings.warn(settings.stored_endpoint_note, stacklevel=2)
         super().__init__(settings, opener=opener)
-        for route in routes():
-            self._attach(route)
+        # Held by this client alone, so two clients built from different
+        # contracts in one process never see each other's routes.
+        self._contract = (
+            vendored() if contract == "vendored" else load_live_contract(self)
+        )
+        try:
+            for route in self._contract.routes:
+                self._attach(route)
+        except ValueError as exc:
+            if not self._contract.live:
+                raise
+            raise live_refusal(exc) from exc
 
     def _attach(self, route: Route) -> None:
         """Hang one route's operation at its command's attribute path.
@@ -204,9 +234,10 @@ class Client(TocClient):
 
         Raises:
             ValueError: If a command word would hide a client attribute, or a
-                group and an operation would share a name. Every test builds
-                a client over the vendored contract, so this fires in CI
-                rather than for a caller.
+                group and an operation would share a name. Tests build a
+                client over the vendored contract with every marked route
+                unlocked, so this fires in CI rather than for a caller, unless
+                a live definition is newer than this release.
         """
         holder: object = self
         for depth, word in enumerate(route.command[:-1]):

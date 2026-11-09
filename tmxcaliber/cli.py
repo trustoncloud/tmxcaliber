@@ -6,7 +6,7 @@ import re
 import sys
 from argparse import ArgumentParser, ArgumentTypeError, Namespace, RawTextHelpFormatter
 from base64 import b64decode
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from importlib import metadata
 from itertools import product
 from shutil import rmtree
@@ -39,12 +39,17 @@ from .params import (
 )
 from .remote_cli import (
     INCOMPLETE_EXIT,
+    INIT_COMMAND,
     add_api_parsers,
+    add_contract_arguments,
     add_init_parser,
+    load_contract,
+    requested_contract,
     resolve_command_source,
     run_api_command,
     run_init,
     selected_route,
+    settle_contract,
 )
 
 JsonDict = dict[str, Any]
@@ -59,7 +64,16 @@ def _get_version() -> str:
         return f"{module_name} version not found"
 
 
-def get_params() -> Namespace:
+def get_params(argv: Sequence[str] | None = None) -> Namespace:
+    """Parse the command line.
+
+    Args:
+        argv: The arguments after the program name, defaulting to the real ones.
+
+    Returns:
+        The parsed arguments.
+    """
+    arguments = list(sys.argv[1:] if argv is None else argv)
     parser = ArgumentParser(formatter_class=RawTextHelpFormatter)
     parser.add_argument(
         "-v",
@@ -68,6 +82,7 @@ def get_params() -> Namespace:
         version=_get_version(),
         help="show the installed version.\n\n",
     )
+    add_contract_arguments(parser, root=True)
     subparsers = parser.add_subparsers(
         title="operation", dest="operation", required=True
     )
@@ -78,13 +93,22 @@ def get_params() -> Namespace:
     parsers.add_gen_parser(subparsers)
     parsers.add_list_parser(subparsers)
     parsers.add_changelog_parser(subparsers)
-    # Built from the vendored API contract rather than written out here, so the API
+    # The API commands are built from a contract, so which one is read from
+    # argv before the tree it decides is built. A conflict is refused before
+    # any call is spent on the live one.
+    try:
+        requested = requested_contract(arguments, {*subparsers.choices, INIT_COMMAND})
+    except ValueError as exc:
+        parser.error(str(exc))
+    # Built from the API contract rather than written out here, so the API
     # surface and the CLI cannot drift apart.
-    add_api_parsers(subparsers)
+    add_api_parsers(subparsers, load_contract(requested))
     # The one command with no route behind it; see add_init_parser.
     add_init_parser(subparsers)
 
-    return validate(parser)
+    params = validate(parser, arguments)
+    settle_contract(parser, params, requested)
+    return params
 
 
 def get_metadata(csv_path: str) -> tuple[list[str], dict[str, dict[str, str]]]:
@@ -199,8 +223,8 @@ def _filter_or_exit(parser: ArgumentParser, **values: str) -> Filter:
         parser.error(str(exc))
 
 
-def validate(parser: ArgumentParser) -> Namespace:
-    args = parser.parse_args()
+def validate(parser: ArgumentParser, argv: Sequence[str] | None = None) -> Namespace:
+    args = parser.parse_args(argv)
     if args.operation == Operation.create_change_log:
         args.filter_obj = _filter_or_exit(parser, ids=args.ids)
     elif args.operation == Operation.filter:

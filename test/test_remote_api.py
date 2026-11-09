@@ -18,6 +18,7 @@ from tmxcaliber.lib.remote.api import Client, Group, Operation
 from tmxcaliber.lib.remote.config import DEFAULT_BASE_URL
 from tmxcaliber.lib.remote.contract import (
     REFERENCE_PARAMETERS,
+    Contract,
     Route,
     python_name,
     required_page_fields,
@@ -457,7 +458,7 @@ def test_a_command_word_that_would_hide_a_client_attribute_is_refused(
         positional=None,
         summary="A route whose command would hide Client.get.",
     )
-    monkeypatch.setattr(api_module, "routes", lambda: (*routes(), clash))
+    monkeypatch.setattr(api_module, "vendored", lambda: Contract((*routes(), clash)))
 
     with pytest.raises(ValueError, match="'get' is already taken"):
         Client()

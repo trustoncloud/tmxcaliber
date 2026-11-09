@@ -1,9 +1,11 @@
 """The API commands, built from the contract rather than written out.
 
-Every group, command, positional and option below is derived from the vendored
-OpenAPI document, as `lib/remote/contract.py` interprets it. A route the API
-adds therefore becomes a command here once the vendored copy is refreshed,
-with no naming decision to make and nothing to keep in step by hand.
+Every group, command, positional and option below is derived from an OpenAPI
+document, as `lib/remote/contract.py` interprets it: the copy vendored with
+this release, or with ``--contract live`` (``--live``) the API's own
+definition for the caller's credential. A route the API adds therefore becomes
+a command here once the vendored copy is refreshed, or at once under the live
+contract, with no naming decision to make and nothing to keep in step by hand.
 
 The shape mirrors the API:
 
@@ -13,6 +15,7 @@ The shape mirrors the API:
     tmxcaliber threatmodels threats aws-s3 --feature-class-id S3.FC1
     tmxcaliber threatmodels dfd aws-s3@1611187200
     tmxcaliber compliance mappings list --framework-id nist-800-53-r5
+    tmxcaliber overwatch updates list --live
 """
 
 from __future__ import annotations
@@ -22,8 +25,14 @@ import getpass
 import json
 import os
 import sys
-from argparse import ArgumentParser, Namespace, _SubParsersAction
-from collections.abc import Callable, Mapping
+from argparse import (
+    SUPPRESS,
+    ArgumentError,
+    ArgumentParser,
+    Namespace,
+    _SubParsersAction,
+)
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any
 
 from . import console
@@ -38,19 +47,19 @@ from .lib.remote.config import (
     write_credentials,
 )
 from .lib.remote.contract import (
+    CONTRACT_NAMES,
     REFERENCE_PARAMETERS,
     RELEASE_OPTION,
+    Contract,
+    ContractName,
     Option,
     Route,
-    listing_route,
-    page_maximum,
     python_name,
-    route_for_path,
-    routes,
     values_field,
-    values_route,
+    vendored,
 )
 from .lib.remote.errors import ConfigurationError, NotFound, RemoteError
+from .lib.remote.live_contract import live_refusal, load_live_contract
 from .lib.remote.operations import call_route, incompleteness_fields, wire
 from .lib.remote.ref import is_remote_ref
 from .lib.remote.resolve import resolve_source
@@ -71,8 +80,16 @@ POSITIONALS = {"tm_id": ("TMID", "the ThreatModel")}
 INIT_COMMAND = "init"
 
 #: Namespace keys the CLI sets itself, which a route's argument would overwrite:
-#: the top-level command, the selected route, and the leaf's own options.
-CLI_DESTS = frozenset({"operation", "api_route", "output", "help"})
+#: the top-level command, the selected route and its contract, the contract
+#: options every level takes, and the leaf's own options.
+CLI_DESTS = frozenset(
+    {"operation", "api_route", "api_contract", "contract", "live", "output", "help"}
+)
+
+#: The message for asking for both contracts at once.
+_BOTH_CONTRACTS = (
+    "--live and --contract vendored ask for different contracts; give one."
+)
 
 
 def _escaped(text: str) -> str:
@@ -99,7 +116,7 @@ def _option(filter_name: str) -> str:
     return f"--{python_name(filter_name).replace('_', '-')}"
 
 
-def _filter_help(route: Route, option: Option) -> str:
+def _filter_help(contract: Contract, route: Route, option: Option) -> str:
     """Describe one query parameter for a command's help.
 
     The contract's own description wins when it has one: it is the API's
@@ -107,6 +124,8 @@ def _filter_help(route: Route, option: Option) -> str:
     parameter's name can be.
 
     Args:
+        contract: The contract the command tree is built from, which says
+            which command lists the values.
         route: The route the command reaches.
         option: The parameter.
 
@@ -125,7 +144,7 @@ def _filter_help(route: Route, option: Option) -> str:
     # The contract's description already says so where it has one.
     if option.repeatable and not option.description:
         text += " Repeat it to match any of several."
-    lookup = values_route(route, option.name)
+    lookup = contract.values_route(route, option.name)
     if lookup is not None:
         text += (
             f" Takes a {values_field(option.name)} as "
@@ -136,10 +155,12 @@ def _filter_help(route: Route, option: Option) -> str:
     return _escaped(text)
 
 
-def _positional_help(route: Route) -> tuple[str, str]:
+def _positional_help(contract: Contract, route: Route) -> tuple[str, str]:
     """Name and describe a command's positional.
 
     Args:
+        contract: The contract the command tree is built from, which says
+            which command lists what the positional takes.
         route: The route the command reaches; it takes a positional.
 
     Returns:
@@ -150,7 +171,7 @@ def _positional_help(route: Route) -> tuple[str, str]:
         positional, (positional.upper(), f"the {positional.replace('_', ' ')}")
     )
     text = noun
-    listing = listing_route(route)
+    listing = contract.listing_route(route)
     if listing is not None:
         text += f", as `{' '.join(listing.command)}` reports it"
     if (
@@ -180,15 +201,16 @@ def _summary(route: Route) -> str:
     return _escaped(f"{route.summary} Requires {required}.")
 
 
-def _leaf(parser: ArgumentParser, route: Route) -> None:
+def _leaf(parser: ArgumentParser, route: Route, contract: Contract) -> None:
     """Add one route's arguments to its parser.
 
     Args:
         parser: The parser for this command.
         route: The route it reaches.
+        contract: The contract the route was bound from.
     """
     if route.positional:
-        metavar, help_text = _positional_help(route)
+        metavar, help_text = _positional_help(contract, route)
         parser.add_argument(route.positional, metavar=metavar, help=help_text)
     # argparse files every option under "options" whether or not it is
     # required, which made a mandatory --framework-id read as an optional filter.
@@ -205,7 +227,7 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
             action="append" if option.repeatable else "store",
             default=None,
             required=option.required,
-            help=_filter_help(route, option),
+            help=_filter_help(contract, route, option),
         )
     if route.paged:
         parser.add_argument(
@@ -240,20 +262,189 @@ def _leaf(parser: ArgumentParser, route: Route) -> None:
             else "file to write the result to. Prints to stdout when omitted."
         ),
     )
-    parser.set_defaults(api_route=route)
+    add_contract_arguments(parser)
+    parser.set_defaults(api_route=route, api_contract=contract)
 
 
-def add_api_parsers(subparsers: _SubParsersAction[ArgumentParser]) -> None:
+def add_contract_arguments(parser: ArgumentParser, *, root: bool = False) -> None:
+    """Let a parser take the choice of contract.
+
+    Declared at every level of the API tree, so ``--live`` reads the same
+    wherever it is typed: ``tmxcaliber --live overwatch updates list`` and
+    ``tmxcaliber overwatch updates list --live`` alike. **No level has a
+    default**, because argparse copies each subcommand's results over its
+    parent's, and a default one level down would erase a choice made above
+    it. The choice itself was already read from argv by `requested_contract`,
+    before the tree was built from it; parsing it here is what makes argparse
+    accept it and list it in the help.
+
+    Args:
+        parser: The root parser, an API group's, or an API command's.
+        root: Whether it is the root parser, whose help is laid out by hand.
+    """
+    gap = "\n\n" if root else ""
+    group = parser.add_argument_group("API contract")
+    group.add_argument(
+        "--contract",
+        choices=CONTRACT_NAMES,
+        default=SUPPRESS,
+        help=(
+            "which definition the API commands are built from: vendored, the "
+            "one this release ships with (the default), or live, the one the "
+            "API serves your credential, which adds what your tenant has "
+            f"before every tenant does. Live costs two calls per command.{gap}"
+        ),
+    )
+    group.add_argument(
+        "--live",
+        action="store_true",
+        default=SUPPRESS,
+        help=f"short for --contract live.{gap}",
+    )
+
+
+def requested_contract(argv: Sequence[str], local: Collection[str]) -> ContractName:
+    """Read which contract a command line asks for, before it is parsed.
+
+    The API commands are built from the contract, so the choice has to be
+    known before argparse can parse the line that makes it. A local command,
+    or `init`, never asks for one: neither is built from the contract, so no
+    call is spent, and argparse then refuses the option there itself.
+
+    Args:
+        argv: The arguments after the program name.
+        local: The top-level commands that are not built from the contract.
+
+    Returns:
+        ``"live"`` when ``--live``, ``--contract live`` or ``--contract=live``
+        precedes any ``--``, with the last ``--contract`` winning, and
+        ``"vendored"`` otherwise. A value argparse will refuse counts as
+        vendored, so it is refused without a call.
+
+    Raises:
+        ValueError: If ``--live`` and ``--contract vendored`` are both given.
+    """
+    live = False
+    explicit: str | None = None
+    first: str | None = None
+    tokens = iter(argv)
+    for token in tokens:
+        if token == "--":
+            break
+        if token == "--live":
+            live = True
+        elif token == "--contract":
+            explicit = next(tokens, None)
+        elif token.startswith("--contract="):
+            explicit = token.partition("=")[2]
+        elif first is None and not token.startswith("-"):
+            first = token
+    if first in local:
+        return "vendored"
+    if live and explicit == "vendored":
+        raise ValueError(_BOTH_CONTRACTS)
+    return "live" if live or explicit == "live" else "vendored"
+
+
+def load_contract(name: ContractName) -> Contract:
+    """Load the contract a command line asked for.
+
+    Args:
+        name: The contract `requested_contract` read.
+
+    Returns:
+        The vendored contract, which costs nothing, or the live one, read
+        through `connect` with the caller's own credential.
+
+    Raises:
+        RemoteError: If the live contract cannot be read or bound.
+    """
+    if name == "vendored":
+        return vendored()
+    return load_live_contract(connect())
+
+
+def settle_contract(
+    parser: ArgumentParser, params: Namespace, requested: ContractName
+) -> None:
+    """Hold what argparse parsed to the contract the tree was built from.
+
+    `requested_contract` reads the exact spellings; argparse also accepts an
+    abbreviation such as ``--liv``, which would otherwise ask for one
+    contract on a tree built from the other.
+
+    Args:
+        parser: The root parser, which reports a mismatch as a usage error.
+        params: The parsed arguments.
+        requested: The contract the tree was built from.
+    """
+    explicit = getattr(params, "contract", None)
+    live = bool(getattr(params, "live", False))
+    if live and explicit == "vendored":
+        parser.error(_BOTH_CONTRACTS)
+    if selected_route(params) is None:
+        if live or explicit is not None:
+            parser.error("--live and --contract apply only to the API commands.")
+        return
+    parsed: ContractName = "live" if live or explicit == "live" else "vendored"
+    if parsed != requested:
+        parser.error(
+            "--live and --contract choose the contract the commands are built "
+            "from, so they are read before parsing; spell them out in full."
+        )
+
+
+def selected_contract(params: Namespace) -> Contract:
+    """Report which contract the selected API command was built from.
+
+    Args:
+        params: The parsed arguments.
+
+    Returns:
+        The contract, or the vendored one when the arguments name none.
+    """
+    found = getattr(params, "api_contract", None)
+    return found if isinstance(found, Contract) else vendored()
+
+
+def add_api_parsers(
+    subparsers: _SubParsersAction[ArgumentParser], contract: Contract | None = None
+) -> None:
     """Build every API command onto the top-level parser.
 
     Args:
         subparsers: The top-level subparser action.
+        contract: The contract to build from, the vendored one when omitted.
+
+    Raises:
+        ValueError: If a vendored route clashes with a local command or the
+            CLI's own arguments, which CI catches.
+        ContractViolation: If a live route does, which only a definition newer
+            than this release can.
+    """
+    contract = contract or vendored()
+    try:
+        _add_api_parsers(subparsers, contract)
+    except (ValueError, ArgumentError) as exc:
+        if not contract.live:
+            raise
+        raise live_refusal(exc) from exc
+
+
+def _add_api_parsers(
+    subparsers: _SubParsersAction[ArgumentParser], contract: Contract
+) -> None:
+    """Build every route of one contract onto the top-level parser.
+
+    Args:
+        subparsers: The top-level subparser action.
+        contract: The contract to build from.
     """
     # One parser per group prefix, created on first use so the tree is built
     # from the interpreted contract rather than spelled out.
     groups: dict[tuple[str, ...], _SubParsersAction[ArgumentParser]] = {}
 
-    for route in routes():
+    for route in contract.routes:
         parent: _SubParsersAction[ArgumentParser] = subparsers
         if len(route.command) == 1 or route.command[:1] not in groups:
             _refuse_local_command(subparsers, route.command[0], route)
@@ -264,6 +455,7 @@ def add_api_parsers(subparsers: _SubParsersAction[ArgumentParser]) -> None:
                 group_parser = parent.add_parser(
                     word, help=f"{word} operations against the TrustOnCloud API."
                 )
+                add_contract_arguments(group_parser)
                 groups[prefix] = group_parser.add_subparsers(
                     dest=LEVEL_DEST.format(depth=depth + 1), required=True
                 )
@@ -271,7 +463,7 @@ def add_api_parsers(subparsers: _SubParsersAction[ArgumentParser]) -> None:
         leaf = parent.add_parser(
             route.command[-1], help=_summary(route), description=_summary(route)
         )
-        _leaf(leaf, route)
+        _leaf(leaf, route, contract)
 
 
 def _refuse_local_command(
@@ -426,7 +618,9 @@ NAME_LISTS: Mapping[str, tuple[str, str | None]] = {
 }
 
 
-def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
+def _did_you_mean(
+    client: TocClient, contract: Contract, route: Route, typed: str
+) -> str:
     """Say which listed name a positional the API does not know probably meant.
 
     The command line asks only after a ``NotFound``, so a name typed right
@@ -437,6 +631,8 @@ def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
 
     Args:
         client: The client the command used.
+        contract: The contract the command was built from, which binds the
+            list to read.
         route: The route that answered ``NotFound``.
         typed: The positional as typed, with any ``@release``.
 
@@ -459,14 +655,14 @@ def _did_you_mean(client: TocClient, route: Route, typed: str) -> str:
     if not wanted:
         return ""
     name_field, title_field = lookup
-    listing = route_for_path(collection)
+    listing = contract.route_for_path(collection)
     assert listing is not None, f"{collection} is not bound"
     try:
         # Walked at the largest page the contract allows, as every collection
         # is, because each call of the walk spends the same hourly budget as
         # the command that failed.
         rows = call_route(
-            client, listing, "", {}, limit=page_maximum(listing.path) or 0
+            client, listing, "", {}, limit=listing.page_maximum or 0
         ).result
     except RemoteError:
         return ""
@@ -531,6 +727,7 @@ def run_api_command(
     """
     route = selected_route(params)
     assert route is not None, "run_api_command called for a non-API command"
+    contract = selected_contract(params)
     api = client or connect()
     typed = str(getattr(params, route.positional, "") or "") if route.positional else ""
     # The API spells a filter in camelCase and argparse keeps it in snake_case.
@@ -545,7 +742,7 @@ def run_api_command(
     try:
         answer = call_route(api, route, typed, filters, limit=limit)
     except NotFound as exc:
-        sentence = _did_you_mean(api, route, typed)
+        sentence = _did_you_mean(api, contract, route, typed)
         if not sentence:
             raise
         raise NotFound(
@@ -564,7 +761,7 @@ def run_api_command(
         # as one encoded path segment and parse no reference, so only a route
         # with {provider} in its path is refused this way.
         sentence = (
-            _did_you_mean(api, route, typed)
+            _did_you_mean(api, contract, route, typed)
             if "{provider}" in route.path and not is_remote_ref(typed)
             else ""
         )

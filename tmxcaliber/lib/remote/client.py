@@ -651,7 +651,7 @@ class TocClient:
             envelope: When given, filled with the first page's top-level
                 fields other than the paging ones.
             required: Fields every page must carry, with the types their
-                value may have (``contract.required_page_fields``).
+                value may have (a route's ``page_fields``).
 
         Yields:
             Each row, in the order the API returns it.
