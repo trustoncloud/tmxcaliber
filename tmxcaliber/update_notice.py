@@ -238,19 +238,25 @@ class UpdateCheck:
         now = self._clock()
         if isinstance(checked_at, (int, float)) and now - checked_at < CHECK_INTERVAL:
             return
+        # Recorded before asking, and here rather than in the thread: a command
+        # that finishes before a slow PyPI answers kills the thread, and a check
+        # recorded only on an answer would then be due again on every command.
+        write_state(path, {"checked_at": now, "latest": self._latest})
         self._thread = threading.Thread(
             target=self._refresh, args=(path, now), name="update-check", daemon=True
         )
         self._thread.start()
 
     def _refresh(self, path: Path, now: float) -> None:
-        """Ask PyPI, and record the time even when it does not answer.
+        """Ask PyPI, and keep its answer when it gives one.
 
         Args:
             path: The state file.
             now: When the check started.
         """
-        latest = self._fetch() or self._latest
+        latest = self._fetch()
+        if latest is None:
+            return
         write_state(path, {"checked_at": now, "latest": latest})
         self._latest = latest
 

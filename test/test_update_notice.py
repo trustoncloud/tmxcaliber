@@ -6,6 +6,7 @@ import io
 import json
 import pathlib
 import sys
+import threading
 import urllib.error
 from typing import Any
 
@@ -279,3 +280,32 @@ def test_the_command_offers_the_notice_after_success_only(
     assert succeeded.value.code == 0
     assert failed.value.code == 1
     assert _Recorder.finished == 1
+
+
+def test_a_check_cut_short_by_a_finished_command_still_counts_for_the_day(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange: PyPI answers only after the command has finished and gone.
+    monkeypatch.setattr(update_notice, "EXIT_WAIT", 0.01)
+    released = threading.Event()
+
+    class Slow(Fetch):
+        def __call__(self) -> str | None:
+            self.calls += 1
+            released.wait(5)
+            return "0.14.0"
+
+    slow = Slow(None)
+    first = _check(tmp_path, slow)
+
+    # Act
+    first.start()
+    first.finish()
+    later = _check(tmp_path, slow, now=NOW + 60)
+    later.start()
+    later.finish()
+    released.set()
+
+    # Assert: one question for the day, recorded before it was answered.
+    assert slow.calls == 1
+    assert _state(tmp_path)["checked_at"] == NOW
