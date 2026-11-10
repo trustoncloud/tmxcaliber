@@ -116,6 +116,22 @@ def test_a_limit_is_the_rows_asked_for_and_spends_one_call() -> None:
     assert query_of(opener)["limit"] == "3"
 
 
+def test_the_limit_help_states_the_default_page_and_the_maximum(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Both bounds come from the contract, so a reader learns how many rows a
+    # command answers with before spending a call on it.
+    assert THREATMODELS is not None
+    assert THREATMODELS.page_default and THREATMODELS.page_maximum
+
+    with pytest.raises(SystemExit):
+        cli_module.get_params(["threatmodels", "list", "--help"])
+    text = " ".join(capsys.readouterr().out.split())
+
+    assert f"{THREATMODELS.page_default}, the API's default, when omitted" in text
+    assert f"at most {THREATMODELS.page_maximum}" in text
+
+
 def test_a_cursor_reads_the_page_after_it() -> None:
     assert THREATMODELS is not None
     served = page(THREATMODELS, [{"tmId": "gcp-gke"}])

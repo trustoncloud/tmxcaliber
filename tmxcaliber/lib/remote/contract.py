@@ -154,13 +154,16 @@ class Route:
         positional: What the command's positional argument holds, if any.
         summary: One line, for the command's help.
         media_type: The one media type its 200 is served as.
+        page_default: The page a paged route serves when no ``limit`` is sent,
+            or None when the contract states none.
         page_maximum: The largest page a paged route permits, or None.
         page_fields: Each field its every page must carry beyond the paging
             ones, with the Python types its value may have.
 
-    The last three are read from the document the route came from and carried
-    here, so a route bound from the live definition is executed by what that
-    definition says, never by the vendored copy.
+    The media type, the page bounds and the page fields are read from the
+    document the route came from and carried here, so a route bound from the
+    live definition is executed by what that definition says, never by the
+    vendored copy.
     """
 
     path: str
@@ -171,6 +174,7 @@ class Route:
     positional: str | None
     summary: str
     media_type: str = _JSON_MEDIA_TYPE
+    page_default: int | None = None
     page_maximum: int | None = None
     page_fields: tuple[tuple[str, tuple[type, ...]], ...] = ()
 
@@ -526,6 +530,7 @@ def _route(
         positional=_positional(path, path_parameters),
         summary=summary,
         media_type=media_type,
+        page_default=_page_bound(operation, "default") if paged else None,
         page_maximum=_page_maximum(operation) if paged else None,
         page_fields=tuple(_page_fields(document, operation).items()),
     )
@@ -906,6 +911,25 @@ def _operation(document: Mapping[str, Any], path: str) -> Mapping[str, Any]:
     return found
 
 
+def _page_bound(operation: Mapping[str, Any], keyword: str) -> int | None:
+    """Read one bound of an operation's ``limit`` from its schema.
+
+    Args:
+        operation: The operation object.
+        keyword: ``default``, the page served when no limit is sent, or
+            ``maximum``, the largest page permitted.
+
+    Returns:
+        The bound, or None when the operation takes no ``limit`` or its schema
+        states no such bound.
+    """
+    for parameter in operation.get("parameters", []):
+        if parameter.get("name") == "limit":
+            bound = parameter.get("schema", {}).get(keyword)
+            return int(bound) if bound is not None else None
+    return None
+
+
 def _page_maximum(operation: Mapping[str, Any]) -> int | None:
     """Read an operation's largest permitted page size.
 
@@ -919,11 +943,7 @@ def _page_maximum(operation: Mapping[str, Any]) -> int | None:
         The maximum, or None when the operation takes no ``limit`` or states
         no maximum for it.
     """
-    for parameter in operation.get("parameters", []):
-        if parameter.get("name") == "limit":
-            maximum = parameter.get("schema", {}).get("maximum")
-            return int(maximum) if maximum is not None else None
-    return None
+    return _page_bound(operation, "maximum")
 
 
 def page_maximum(path: str) -> int | None:

@@ -29,7 +29,11 @@ from tmxcaliber.lib.remote.operations import request_for
 from .test_remote_client import FakeOpener, FakeResponse
 from .test_remote_config import KEY
 
-LIMIT = {"in": "query", "name": "limit", "schema": {"type": "integer", "maximum": 50}}
+LIMIT = {
+    "in": "query",
+    "name": "limit",
+    "schema": {"type": "integer", "default": 20, "maximum": 50},
+}
 CURSOR = {"in": "query", "name": "cursor", "schema": {"type": "string"}}
 
 UseContract = Callable[[dict[str, Any]], None]
@@ -538,6 +542,7 @@ def test_a_route_carries_what_its_own_document_says_about_its_answer() -> None:
     archive = bound.route_for(("widgets", "archive"))
 
     assert widgets is not None and archive is not None
+    assert widgets.page_default == 20
     assert widgets.page_maximum == 50
     assert dict(widgets.page_fields) == {"unresolvedTmIds": (list,)}
     assert operations.incompleteness_fields(widgets) == ("unresolvedTmIds",)

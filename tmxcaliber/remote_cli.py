@@ -238,6 +238,7 @@ def _leaf(parser: ArgumentParser, route: Route, contract: Contract) -> None:
             help=_filter_help(contract, route, option),
         )
     if route.paged:
+        default = route.page_default
         largest = route.page_maximum
         # One page is the only answer a list command gives: reading the whole
         # collection by default once spent a key's hourly budget on one
@@ -247,7 +248,12 @@ def _leaf(parser: ArgumentParser, route: Route, contract: Contract) -> None:
             type=int,
             default=0,
             help=(
-                "rows to return, the API's own default when omitted"
+                "rows to return: "
+                + (
+                    f"{default}, the API's default, when omitted"
+                    if default
+                    else "the API's default when omitted"
+                )
                 + (f", at most {largest}" if largest else "")
                 + '. The command reads one page and writes it as {"items": [...], '
                 '"nextCursor": ...}; nextCursor is null on the last page.'
