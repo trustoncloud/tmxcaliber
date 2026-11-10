@@ -241,13 +241,14 @@ def test_the_signature_reads_like_the_cli_command(route: Route) -> None:
     names = [
         name
         for name in parameters
-        if name not in ("limit", "cursor", "allow_incomplete")
+        if name not in ("limit", "page_size", "cursor", "allow_incomplete")
     ]
     expected = ([route.positional] if route.positional else []) + [
         python_name(name) for name in route.filters
     ]
     assert names == expected
     assert ("limit" in parameters) is route.paged
+    assert ("page_size" in parameters) is route.paged
     assert ("cursor" in parameters) is route.paged
     assert ("allow_incomplete" in parameters) is bool(incompleteness_fields(route))
     for option in route.options:
@@ -267,10 +268,14 @@ def test_a_paged_route_returns_one_page_and_its_cursor() -> None:
 
     first = client.threatmodels.list(provider="aws", limit=1)
 
+    # One row asked for, so one call asking for one row, and the page as served.
     assert first == served
     assert len(opener.requests) == 1
     sent = urllib.parse.urlsplit(opener.requests[0].full_url)
-    assert dict(urllib.parse.parse_qsl(sent.query)) == {"provider": "aws", "limit": "1"}
+    assert dict(urllib.parse.parse_qsl(sent.query)) == {
+        "provider": "aws",
+        "pageSize": "1",
+    }
 
 
 def test_python_feature_class_keyword_uses_snake_case() -> None:
@@ -355,7 +360,8 @@ def test_an_incomplete_answer_is_refused_with_its_rows() -> None:
         operation_for(client, route)(*args, **kwargs)
 
     # Assert
-    assert raised.value.result == body
+    assert raised.value.result["items"] == [{"id": "row-1"}]
+    assert raised.value.result[field] == ["aws-gone"]
     assert raised.value.envelope[field] == ["aws-gone"]
 
 
@@ -368,7 +374,8 @@ def test_an_incomplete_answer_is_returned_when_the_caller_allows_it() -> None:
 
     answer = operation_for(client, route)(*args, allow_incomplete=True, **kwargs)
 
-    assert answer == body
+    assert answer["items"] == [{"id": "row-1"}]
+    assert answer[incompleteness_fields(route)[0]] == ["aws-gone"]
 
 
 def test_with_no_arguments_the_key_resolves_as_the_cli_resolves_it() -> None:

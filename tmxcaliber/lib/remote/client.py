@@ -29,7 +29,7 @@ from importlib import metadata
 from typing import Any, Final, TypeVar
 
 from .config import Settings
-from .contract import paging_fields
+from .contract import CURSOR_PARAMETER, PAGE_SIZE_PARAMETER, paging_fields
 from .errors import (
     BY_CODE,
     BY_STATUS,
@@ -647,7 +647,7 @@ class TocClient:
 
         Args:
             path: The path, beginning with a slash.
-            params: Query parameters other than ``limit`` and ``cursor``.
+            params: Query parameters other than the paging ones.
             page_size: Rows per request, or 0 for the server's default.
             envelope: When given, filled with the first page's top-level
                 fields other than the paging ones.
@@ -665,7 +665,7 @@ class TocClient:
         """
         query = dict(params or {})
         if page_size:
-            query["limit"] = str(page_size)
+            query[PAGE_SIZE_PARAMETER] = str(page_size)
         seen: set[str] = set()
         pages = 0
         while True:
@@ -701,7 +701,7 @@ class TocClient:
                     code="cursor_repeated",
                 )
             seen.add(cursor)
-            query["cursor"] = cursor
+            query[CURSOR_PARAMETER] = cursor
 
     def page(
         self,
@@ -720,7 +720,7 @@ class TocClient:
 
         Args:
             path: The path, beginning with a slash.
-            params: Query parameters other than ``limit`` and ``cursor``.
+            params: Query parameters other than the paging ones.
             page_size: Rows in the page, or 0 for the server's default.
             cursor: A previous page's ``nextCursor``, or empty for the first.
             required: Fields the page must carry, with the types their value
@@ -739,9 +739,9 @@ class TocClient:
         """
         query = dict(params or {})
         if page_size:
-            query["limit"] = str(page_size)
+            query[PAGE_SIZE_PARAMETER] = str(page_size)
         if cursor:
-            query["cursor"] = cursor
+            query[CURSOR_PARAMETER] = cursor
         body = self.get(path, query)
         _checked_page(path, body, required or {})
         return body

@@ -1094,7 +1094,7 @@ def test_the_list_a_suggestion_reads_is_walked_at_its_largest_page(
     sent = urllib.parse.urlsplit(opener.requests[-1].full_url)
     assert status == 1
     assert sent.path == list_route.path
-    assert urllib.parse.parse_qs(sent.query) == {"limit": [str(largest)]}
+    assert urllib.parse.parse_qs(sent.query) == {"pageSize": [str(largest)]}
 
 
 @pytest.mark.parametrize(

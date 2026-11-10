@@ -59,7 +59,7 @@ from .lib.remote.contract import (
 )
 from .lib.remote.errors import ConfigurationError, NotFound, RemoteError
 from .lib.remote.live_contract import live_refusal, load_live_contract
-from .lib.remote.operations import call_route, incompleteness_fields, read_page, wire
+from .lib.remote.operations import call_route, incompleteness_fields, read_pages, wire
 from .lib.remote.ref import is_remote_ref
 from .lib.remote.resolve import resolve_source
 from .lib.remote.suggest import alternative_names, did_you_mean, suggest
@@ -89,6 +89,7 @@ CLI_DESTS = frozenset(
         "contract",
         "live",
         "cursor",
+        "page_size",
         "output",
         "help",
     }
@@ -240,29 +241,39 @@ def _leaf(parser: ArgumentParser, route: Route, contract: Contract) -> None:
     if route.paged:
         default = route.page_default
         largest = route.page_maximum
-        # One page is the only answer a list command gives: reading the whole
-        # collection by default once spent a key's hourly budget on one
-        # OverWatch list, because --limit sized the requests, not the answer.
+        # Without --limit a command reads one page, in one call. --limit is
+        # the total across pages and --page-size the size of each request:
+        # one number for both once read a whole OverWatch catalogue three
+        # rows at a time and spent a key's hourly budget doing it.
         parser.add_argument(
             "--limit",
             type=int,
             default=0,
             help=(
-                "rows to return: "
-                + (
-                    f"{default}, the API's default, when omitted"
-                    if default
-                    else "the API's default when omitted"
-                )
+                "the most rows to return, reading as many pages as that takes; "
+                'one page when omitted. Writes {"items": [...], "nextCursor": '
+                "...}, where nextCursor continues after the last row and is "
+                "null once there are no more."
+            ),
+        )
+        parser.add_argument(
+            "--page-size",
+            type=int,
+            default=0,
+            help=(
+                "rows per request"
                 + (f", at most {largest}" if largest else "")
-                + '. The command reads one page and writes it as {"items": [...], '
-                '"nextCursor": ...}; nextCursor is null on the last page.'
+                + ": "
+                + (f"{default}, the API's default," if default else "the API's default")
+                + " when omitted"
+                + (f", or {largest} with --limit" if largest else "")
+                + "."
             ),
         )
         parser.add_argument(
             "--cursor",
             default="",
-            help="read the page after the one that returned this nextCursor, "
+            help="continue after the answer that returned this nextCursor, "
             "with the same filters.",
         )
     if incompleteness_fields(route):
@@ -713,8 +724,9 @@ def run_api_command(
 
     Returns:
         The result and the result type `output_result` expects: "bytes" for a
-        binary route, "json" otherwise. The result of a paged route is one
-        page as the API served it, ``items`` and ``nextCursor`` included.
+        binary route, "json" otherwise. The result of a paged route is
+        ``items`` and a ``nextCursor`` that continues after them: one page, or
+        with ``--limit`` up to that many rows read across pages.
 
     Raises:
         NotFound: If the API does not know the ThreatModel or pack named.
@@ -744,10 +756,19 @@ def run_api_command(
         for option in route.options
     }
     limit = int(getattr(params, "limit", 0) or 0)
+    page_size = int(getattr(params, "page_size", 0) or 0)
     cursor = str(getattr(params, "cursor", "") or "")
     try:
         if route.paged:
-            answer = read_page(api, route, typed, filters, limit=limit, cursor=cursor)
+            answer = read_pages(
+                api,
+                route,
+                typed,
+                filters,
+                limit=limit,
+                page_size=page_size,
+                cursor=cursor,
+            )
         else:
             answer = call_route(api, route, typed, filters)
     except NotFound as exc:

@@ -197,7 +197,7 @@ def test_discovery_then_the_definition_bind_the_overwatch_commands() -> None:
 
     # Assert
     assert [request.full_url for request in opener.requests] == [
-        f"{BASE}/v1/apis?limit=50",
+        f"{BASE}/v1/apis?pageSize=50",
         DEFINITION_URL,
     ]
     assert live.live

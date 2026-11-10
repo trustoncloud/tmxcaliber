@@ -31,7 +31,7 @@ from .test_remote_config import KEY
 
 LIMIT = {
     "in": "query",
-    "name": "limit",
+    "name": "pageSize",
     "schema": {"type": "integer", "default": 20, "maximum": 50},
 }
 CURSOR = {"in": "query", "name": "cursor", "schema": {"type": "string"}}
@@ -252,7 +252,12 @@ def test_a_new_operation_becomes_a_client_method(use_contract: UseContract) -> N
     client = Client(opener=FakeOpener([]))
 
     listing: Any = client.widgets.list  # type: ignore[attr-defined]
-    assert list(inspect.signature(listing).parameters) == ["colour", "limit", "cursor"]
+    assert list(inspect.signature(listing).parameters) == [
+        "colour",
+        "limit",
+        "page_size",
+        "cursor",
+    ]
     assert listing.__doc__ == "Widgets this credential may see."
 
 

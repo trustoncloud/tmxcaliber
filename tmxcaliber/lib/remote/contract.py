@@ -61,8 +61,16 @@ Unlocked = Mapping[str, frozenset[str]]
 #: The API version every route sits under, and the one discovery is read for.
 API_VERSION: Final[str] = "v1"
 
-#: Query parameters the client spends on walking pages rather than offering.
-PAGING_PARAMETERS: Final[frozenset[str]] = frozenset({"limit", "cursor"})
+#: The query parameter that sizes one page, as the API names it.
+PAGE_SIZE_PARAMETER: Final[str] = "pageSize"
+
+#: The query parameter that continues a collection after a previous page.
+CURSOR_PARAMETER: Final[str] = "cursor"
+
+#: Query parameters the client spends on paging rather than offering as filters.
+PAGING_PARAMETERS: Final[frozenset[str]] = frozenset(
+    {PAGE_SIZE_PARAMETER, CURSOR_PARAMETER}
+)
 
 #: The path parameter pair a ThreatModel reference fills, as ``tmId[@release]``.
 REFERENCE_PARAMETERS: Final[tuple[str, str]] = ("provider", "service")
@@ -74,9 +82,12 @@ REFERENCE_POSITIONAL: Final[str] = "tm_id"
 RELEASE_OPTION: Final[str] = "release"
 
 #: Keywords both surfaces add beside a route's own arguments, so no route
-#: argument may take one: ``limit`` sizes a page walk, and
+#: argument may take one: ``limit`` caps the rows read across pages,
+#: ``page_size`` sizes each request, ``cursor`` continues a collection, and
 #: ``allow_incomplete`` accepts a partial answer.
-RESERVED_ARGUMENTS: Final[frozenset[str]] = frozenset({"limit", "allow_incomplete"})
+RESERVED_ARGUMENTS: Final[frozenset[str]] = frozenset(
+    {"limit", "page_size", "cursor", "allow_incomplete"}
+)
 
 #: The mark on an operation or parameter not every tenant has yet.
 #:
@@ -149,13 +160,13 @@ class Route:
         path: The OpenAPI path template.
         command: The argv words that select it, after the program name.
         paged: Whether the response is a page envelope this client walks.
-        options: Query parameters other than ``limit`` and ``cursor``.
+        options: Query parameters other than the paging ones.
         path_parameters: The path template's parameters, in order.
         positional: What the command's positional argument holds, if any.
         summary: One line, for the command's help.
         media_type: The one media type its 200 is served as.
-        page_default: The page a paged route serves when no ``limit`` is sent,
-            or None when the contract states none.
+        page_default: The page a paged route serves when no page size is
+            sent, or None when the contract states none.
         page_maximum: The largest page a paged route permits, or None.
         page_fields: Each field its every page must carry beyond the paging
             ones, with the Python types its value may have.
@@ -679,8 +690,9 @@ def _check_paging(path: str, paged: bool, parameters: list[dict[str, Any]]) -> N
     names = {str(p["name"]) for p in parameters if p["in"] == "query"}
     if paged and not names >= PAGING_PARAMETERS:
         raise UnsupportedOperation(
-            f"{path}: answers with a page but does not take both limit and cursor, "
-            "so the client could not walk it."
+            f"{path}: answers with a page but does not take both "
+            f"{PAGE_SIZE_PARAMETER} and {CURSOR_PARAMETER}, so the client could "
+            "not walk it."
         )
     if not paged and names & PAGING_PARAMETERS:
         raise UnsupportedOperation(
@@ -912,19 +924,19 @@ def _operation(document: Mapping[str, Any], path: str) -> Mapping[str, Any]:
 
 
 def _page_bound(operation: Mapping[str, Any], keyword: str) -> int | None:
-    """Read one bound of an operation's ``limit`` from its schema.
+    """Read one bound of an operation's page size from its schema.
 
     Args:
         operation: The operation object.
-        keyword: ``default``, the page served when no limit is sent, or
+        keyword: ``default``, the page served when no page size is sent, or
             ``maximum``, the largest page permitted.
 
     Returns:
-        The bound, or None when the operation takes no ``limit`` or its schema
+        The bound, or None when the operation takes no page size or its schema
         states no such bound.
     """
     for parameter in operation.get("parameters", []):
-        if parameter.get("name") == "limit":
+        if parameter.get("name") == PAGE_SIZE_PARAMETER:
             bound = parameter.get("schema", {}).get(keyword)
             return int(bound) if bound is not None else None
     return None
@@ -940,7 +952,7 @@ def _page_maximum(operation: Mapping[str, Any]) -> int | None:
         operation: The operation object.
 
     Returns:
-        The maximum, or None when the operation takes no ``limit`` or states
+        The maximum, or None when the operation takes no page size or states
         no maximum for it.
     """
     return _page_bound(operation, "maximum")
