@@ -10,14 +10,18 @@ is a method here and a command there, with no naming decision in between:
 
     api = Client()                         # tmxcaliber me
     api.me()
-    api.threatmodels.list(provider="aws")  # tmxcaliber threatmodels list --provider aws
+    page = api.threatmodels.list(provider="aws")
+    api.threatmodels.list(provider="aws", cursor=page["nextCursor"])
+    api.threatmodels.list(provider="aws", limit=300)  # up to 300 rows
     api.threatmodels.threats("aws-s3", feature_class_id="S3.FC1")
 
     live = Client(contract="live")         # tmxcaliber overwatch updates list --live
     live.overwatch.updates.list()
 
 A route's positional is the method's one positional argument, its filters are
-keyword arguments, and a paged route returns every row, as the CLI does.
+keyword arguments, and a paged route returns one page, as the CLI does, or up
+to ``limit=`` rows read across pages: its ``items`` and a ``nextCursor`` that
+``cursor=`` continues from. ``page_size=`` sizes each request.
 """
 
 from __future__ import annotations
@@ -32,7 +36,7 @@ from .config import DEFAULT_TIMEOUT, load_settings
 from .contract import CONTRACT_NAMES, ContractName, Route, python_name, vendored
 from .errors import IncompleteAnswer
 from .live_contract import live_refusal, load_live_contract
-from .operations import Answer, call_route, incompleteness_fields, read_page, wire
+from .operations import Answer, call_route, incompleteness_fields, read_pages, wire
 
 
 def _signature(route: Route) -> inspect.Signature:
@@ -44,8 +48,8 @@ def _signature(route: Route) -> inspect.Signature:
     Returns:
         A positional-only parameter for the route's positional, a keyword-only
         one per filter (without a default when the API requires it), then
-        ``limit`` for a paged route and ``allow_incomplete`` for a route whose
-        pages can report missing rows.
+        ``limit``, ``page_size`` and ``cursor`` for a paged route and
+        ``allow_incomplete`` for a route whose pages can report missing rows.
     """
     keyword = inspect.Parameter.KEYWORD_ONLY
     parameters = [
@@ -61,8 +65,10 @@ def _signature(route: Route) -> inspect.Signature:
             0, inspect.Parameter(route.positional, inspect.Parameter.POSITIONAL_ONLY)
         )
     if route.paged:
-        # 0 asks for the largest page the contract permits.
+        # 0 for both reads one page of the API's own default size.
         parameters.append(inspect.Parameter("limit", keyword, default=0))
+        parameters.append(inspect.Parameter("page_size", keyword, default=0))
+        parameters.append(inspect.Parameter("cursor", keyword, default=""))
     if incompleteness_fields(route):
         parameters.append(inspect.Parameter("allow_incomplete", keyword, default=False))
     return inspect.Signature(parameters)
@@ -99,28 +105,41 @@ class Operation:
 
         Args:
             *args: The route's positional, when it has one.
-            **kwargs: The route's filters, ``limit`` and ``allow_incomplete``,
-                as the signature lists them.
+            **kwargs: The route's filters, ``limit``, ``page_size``,
+                ``cursor`` and ``allow_incomplete``, as the signature lists
+                them. ``limit`` is the most rows to read across pages, one
+                page when 0; ``page_size`` the rows per request, the API's
+                default when 0; ``cursor`` a previous answer's
+                ``nextCursor``, bound to the filters it was read with.
 
         Returns:
-            Every row of a paged route, the bytes of a binary route, or the
-            object any other route returns.
+            For a paged route, ``items`` and a ``nextCursor`` that continues
+            after them, null once the collection is exhausted, beside any
+            other field the page reported; the bytes of a binary route; or
+            the object any other route returns.
 
         Raises:
             TypeError: If the arguments do not match the signature.
             IncompleteAnswer: If the API reported rows it could not resolve
                 and ``allow_incomplete`` was not set.
-            RemoteError: On any credential, transport or server failure.
+            InvalidCursor: If the API does not accept the cursor.
+            RemoteError: On any other credential, transport or server failure.
             ValueError: If a ThreatModel reference cannot be parsed.
         """
         positional, filters, values = self._bind(args, kwargs)
-        answer = call_route(
-            self._client,
-            self._route,
-            positional,
-            filters,
-            limit=int(values.get("limit", 0)),
-        )
+        route = self._route
+        if route.paged:
+            answer = read_pages(
+                self._client,
+                route,
+                positional,
+                filters,
+                limit=int(values.get("limit", 0) or 0),
+                page_size=int(values.get("page_size", 0) or 0),
+                cursor=str(values.get("cursor", "") or ""),
+            )
+        else:
+            answer = call_route(self._client, route, positional, filters)
         return _accepted(answer, values)
 
     def _bind(
@@ -151,47 +170,6 @@ class Operation:
         }
         positional = str(values[route.positional]) if route.positional else ""
         return positional, filters, values
-
-
-class PagedOperation(Operation):
-    """A paged route: called, it reads every row; `page` reads one page."""
-
-    def page(self, *args: Any, cursor: str = "", **kwargs: Any) -> dict[str, Any]:
-        """Read one page, for a caller who walks the collection themselves.
-
-        Takes the call's own arguments, so ``limit`` sizes the page and
-        defaults to the most the API allows.
-
-        Args:
-            *args: The route's positional, when it has one.
-            cursor: A previous page's ``nextCursor``, or empty for the first
-                page. It is bound to the filters, so pass the same ones.
-            **kwargs: The route's filters, ``limit`` and ``allow_incomplete``,
-                as the call's signature lists them.
-
-        Returns:
-            The page as the API served it: ``items``, and ``nextCursor``,
-            which is null on the last page.
-
-        Raises:
-            TypeError: If the arguments do not match the signature.
-            IncompleteAnswer: If the API reported rows it could not resolve
-                and ``allow_incomplete`` was not set.
-            InvalidCursor: If the API does not accept the cursor.
-            RemoteError: On any other credential, transport or server failure.
-            ValueError: If a ThreatModel reference cannot be parsed.
-        """
-        positional, filters, values = self._bind(args, kwargs)
-        answer = read_page(
-            self._client,
-            self._route,
-            positional,
-            filters,
-            limit=int(values.get("limit", 0)),
-            cursor=cursor,
-        )
-        page: dict[str, Any] = _accepted(answer, values)
-        return page
 
 
 def _accepted(answer: Answer, values: dict[str, Any]) -> Any:
@@ -332,8 +310,7 @@ class Client(TocClient):
             holder = child
         leaf = route.command[-1]
         self._refuse_shadowing(holder, leaf, route)
-        operation = PagedOperation if route.paged else Operation
-        setattr(holder, leaf, operation(self, route))
+        setattr(holder, leaf, Operation(self, route))
 
     @staticmethod
     def _refuse_shadowing(holder: object, word: str, route: Route) -> None:

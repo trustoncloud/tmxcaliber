@@ -21,6 +21,7 @@ from typing import Any, Final
 
 from .client import QueryValue, TocClient
 from .contract import REFERENCE_PARAMETERS, RELEASE_OPTION, Route, paging_fields
+from .errors import ContractViolation
 from .ref import parse_ref
 
 #: Page fields that, when not empty, mean the rows are incomplete.
@@ -132,42 +133,26 @@ def request_for(
     return path, query
 
 
-def page_size(route: Route, limit: int = 0) -> int:
-    """Choose how many rows each request for a paged route asks for.
-
-    The largest page the contract permits, unless the caller chose one. The
-    server's own default is smaller, and every request draws on the same
-    hourly budget, so a walk at the server's default spent several times the
-    calls on the same rows; on the OverWatch list it used most of a key's
-    hourly budget.
-
-    Args:
-        route: The route.
-        limit: The caller's choice, or 0 for none.
-
-    Returns:
-        The page size to send, or 0 when the route states no maximum and the
-        caller chose none, which leaves the server's default.
-    """
-    return limit or route.page_maximum or 0
-
-
 def call_route(
     client: TocClient,
     route: Route,
     positional: str,
     filters: Mapping[str, QueryValue],
-    limit: int = 0,
 ) -> Answer:
     """Call one route, walking every page of a paged one.
+
+    **Only for this client's own reads that need the whole answer**: the live
+    contract's discovery and a "Did you mean" suggestion. A collection a
+    caller asks for is read with `read_pages`, one page or up to a limit, so
+    the caller decides how many calls to spend. A walk asks for the largest page
+    the contract permits, because every request draws on the key's hourly
+    budget and the server's default is smaller.
 
     Args:
         client: The client to call through.
         route: The route.
         positional: The value of the route's positional, or empty.
         filters: Values for the route's filters, by name.
-        limit: Rows per request for a paged route, or 0 for the largest the
-            contract permits. The whole collection is read either way.
 
     Returns:
         The answer, including whether the API reported missing rows.
@@ -190,7 +175,7 @@ def call_route(
         client.paginate(
             path,
             query,
-            page_size=page_size(route, limit),
+            page_size=route.page_maximum or 0,
             envelope=envelope,
             required=dict(route.page_fields),
         )
@@ -198,16 +183,26 @@ def call_route(
     return Answer(result=rows, envelope=envelope, missing=_missing(route, envelope))
 
 
-def read_page(
+def read_pages(
     client: TocClient,
     route: Route,
     positional: str,
     filters: Mapping[str, QueryValue],
     *,
     limit: int = 0,
+    page_size: int = 0,
     cursor: str = "",
 ) -> Answer:
-    """Read one page of a paged route, for a caller who walks it themselves.
+    """Read a paged route the way a caller asks: one page, or up to ``limit`` rows.
+
+    **Without a limit this is one call**, so a plain command never spends more
+    than one request of the key's hourly budget. **With one, pages are read
+    until that many rows have arrived or the collection ends**, and no request
+    asks for more rows than are still wanted, so the cursor handed back
+    continues exactly after the last row returned rather than skipping the
+    rest of a page. Reading a whole collection by default once spent a key's
+    hourly budget on one OverWatch list, because the one number a caller gave
+    sized the requests rather than the answer.
 
     Args:
         client: The client to call through.
@@ -215,30 +210,69 @@ def read_page(
         positional: The value of the route's positional, or empty.
         filters: Values for the route's filters, by name. A cursor is bound to
             them, so a later page needs the ones its first was read with.
-        limit: Rows in the page, or 0 for the largest the contract permits.
-        cursor: A previous page's ``nextCursor``, or empty for the first page.
+        limit: The most rows to return across pages, or 0 for one page.
+        page_size: Rows per request, or 0 for the API's own default without a
+            limit, and the most the contract permits with one.
+        cursor: A previous answer's ``nextCursor``, or empty to start at the
+            beginning.
 
     Returns:
-        The answer, whose result is the page as the API served it, with its
-        ``items`` and its ``nextCursor`` (null on the last page).
+        The answer, whose result holds ``items``, the rows read in order;
+        ``nextCursor``, which continues after the last of them and is null
+        once the collection is exhausted; ``pageSize``, what the API applied
+        to the first request, so a page size above the maximum shows as
+        clamped rather than as a short collection; and any other field the
+        first page reported, such as ``unresolvedTmIds``. One page reads
+        exactly as the API served it.
 
     Raises:
         ValueError: If the route is not paged, or as `request_for` does.
+        ContractViolation: If the API serves a cursor it already served.
         RemoteError: On any credential, transport or server failure,
             including `InvalidCursor` for a cursor the API does not accept.
     """
     if not route.paged:
         raise ValueError(f"`{' '.join(route.command)}` is not paged.")
     path, query = request_for(route, positional, filters)
-    body = client.page(
-        path,
-        query,
-        page_size=page_size(route, limit),
-        cursor=cursor,
-        required=dict(route.page_fields),
-    )
-    envelope = {k: v for k, v in body.items() if k not in paging_fields()}
-    return Answer(result=body, envelope=envelope, missing=_missing(route, envelope))
+    rows: list[Any] = []
+    envelope: dict[str, Any] = {}
+    applied: Any = None
+    missing: list[str] = []
+    seen: set[str] = set()
+    while True:
+        size = page_size
+        if limit:
+            wanted = limit - len(rows)
+            size = min(page_size or route.page_maximum or wanted, wanted)
+        body = client.page(
+            path,
+            query,
+            page_size=size,
+            cursor=cursor,
+            required=dict(route.page_fields),
+        )
+        fields = {k: v for k, v in body.items() if k not in paging_fields()}
+        if not seen:
+            envelope = fields
+            applied = body.get("pageSize")
+        missing.extend(line for line in _missing(route, fields) if line not in missing)
+        rows.extend(body["items"])
+        cursor = body.get("nextCursor") or ""
+        if not limit or not cursor or len(rows) >= limit:
+            break
+        if cursor in seen:
+            raise ContractViolation(
+                f"{path} returned a cursor it had already served.",
+                code="cursor_repeated",
+            )
+        seen.add(cursor)
+    result = {
+        "items": rows,
+        "nextCursor": cursor or None,
+        "pageSize": applied,
+        **envelope,
+    }
+    return Answer(result=result, envelope=envelope, missing=tuple(missing))
 
 
 def _missing(route: Route, envelope: Mapping[str, Any]) -> tuple[str, ...]:
