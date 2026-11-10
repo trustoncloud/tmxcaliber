@@ -221,11 +221,9 @@ def test_every_route_calls_its_own_path_with_its_filters(route: Route) -> None:
     client = Client(opener=opener)
     args, kwargs = call_arguments(route)
     wire = {name: kwargs[python_name(name)] for name in route.filters}
+    # A collection is read one page at a time, the API's own default page
+    # when no limit is given, so a paged route sends no limit either.
     expected_path, expected_query = request_for(route, args[0] if args else "", wire)
-    if route.paged:
-        # Every collection is read at the largest page its contract permits.
-        assert route.page_maximum is not None
-        expected_query["limit"] = str(route.page_maximum)
 
     # Act
     operation_for(client, route)(*args, **kwargs)
@@ -240,12 +238,18 @@ def test_every_route_calls_its_own_path_with_its_filters(route: Route) -> None:
 def test_the_signature_reads_like_the_cli_command(route: Route) -> None:
     parameters = inspect.signature(operation_for(Client(), route)).parameters
 
-    names = [name for name in parameters if name not in ("limit", "allow_incomplete")]
+    names = [
+        name
+        for name in parameters
+        if name not in ("limit", "page_size", "cursor", "allow_incomplete")
+    ]
     expected = ([route.positional] if route.positional else []) + [
         python_name(name) for name in route.filters
     ]
     assert names == expected
     assert ("limit" in parameters) is route.paged
+    assert ("page_size" in parameters) is route.paged
+    assert ("cursor" in parameters) is route.paged
     assert ("allow_incomplete" in parameters) is bool(incompleteness_fields(route))
     for option in route.options:
         if option.required:
@@ -254,25 +258,23 @@ def test_the_signature_reads_like_the_cli_command(route: Route) -> None:
             )
 
 
-def test_a_paged_route_returns_every_row_across_pages() -> None:
+def test_a_paged_route_returns_one_page_and_its_cursor() -> None:
     route = next(
         route for route in routes() if route.command == ("threatmodels", "list")
     )
-    opener = FakeOpener(
-        [
-            FakeResponse(page(route, [{"tmId": "aws-s3"}], cursor="next")),
-            FakeResponse(page(route, [{"tmId": "aws-ec2"}])),
-        ]
-    )
+    served = page(route, [{"tmId": "aws-s3"}], cursor="next")
+    opener = FakeOpener([FakeResponse(served)])
+    client: Any = Client(opener=opener)
 
-    rows = Client(opener=opener).threatmodels.list(provider="aws", limit=1)
+    first = client.threatmodels.list(provider="aws", limit=1)
 
-    assert rows == [{"tmId": "aws-s3"}, {"tmId": "aws-ec2"}]
-    second = urllib.parse.urlsplit(opener.requests[1].full_url)
-    assert dict(urllib.parse.parse_qsl(second.query)) == {
+    # One row asked for, so one call asking for one row, and the page as served.
+    assert first == served
+    assert len(opener.requests) == 1
+    sent = urllib.parse.urlsplit(opener.requests[0].full_url)
+    assert dict(urllib.parse.parse_qsl(sent.query)) == {
         "provider": "aws",
-        "limit": "1",
-        "cursor": "next",
+        "pageSize": "1",
     }
 
 
@@ -358,7 +360,8 @@ def test_an_incomplete_answer_is_refused_with_its_rows() -> None:
         operation_for(client, route)(*args, **kwargs)
 
     # Assert
-    assert raised.value.result == [{"id": "row-1"}]
+    assert raised.value.result["items"] == [{"id": "row-1"}]
+    assert raised.value.result[field] == ["aws-gone"]
     assert raised.value.envelope[field] == ["aws-gone"]
 
 
@@ -369,9 +372,10 @@ def test_an_incomplete_answer_is_returned_when_the_caller_allows_it() -> None:
     client = Client(opener=FakeOpener([FakeResponse(body)]))
     args, kwargs = call_arguments(route)
 
-    rows = operation_for(client, route)(*args, allow_incomplete=True, **kwargs)
+    answer = operation_for(client, route)(*args, allow_incomplete=True, **kwargs)
 
-    assert rows == [{"id": "row-1"}]
+    assert answer["items"] == [{"id": "row-1"}]
+    assert answer[incompleteness_fields(route)[0]] == ["aws-gone"]
 
 
 def test_with_no_arguments_the_key_resolves_as_the_cli_resolves_it() -> None:

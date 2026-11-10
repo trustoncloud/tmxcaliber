@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import configparser
 import getpass
-import json
 import os
 import sys
 from argparse import (
@@ -60,7 +59,7 @@ from .lib.remote.contract import (
 )
 from .lib.remote.errors import ConfigurationError, NotFound, RemoteError
 from .lib.remote.live_contract import live_refusal, load_live_contract
-from .lib.remote.operations import call_route, incompleteness_fields, read_page, wire
+from .lib.remote.operations import call_route, incompleteness_fields, read_pages, wire
 from .lib.remote.ref import is_remote_ref
 from .lib.remote.resolve import resolve_source
 from .lib.remote.suggest import alternative_names, did_you_mean, suggest
@@ -89,8 +88,8 @@ CLI_DESTS = frozenset(
         "api_contract",
         "contract",
         "live",
-        "page",
         "cursor",
+        "page_size",
         "output",
         "help",
     }
@@ -240,37 +239,42 @@ def _leaf(parser: ArgumentParser, route: Route, contract: Contract) -> None:
             help=_filter_help(contract, route, option),
         )
     if route.paged:
+        default = route.page_default
         largest = route.page_maximum
+        # Without --limit a command reads one page, in one call. --limit is
+        # the total across pages and --page-size the size of each request:
+        # one number for both once read a whole OverWatch catalogue three
+        # rows at a time and spent a key's hourly budget doing it.
         parser.add_argument(
             "--limit",
             type=int,
             default=0,
             help=(
-                "rows per request"
-                + (
-                    f", {largest} unless given, the most the API allows"
-                    if largest
-                    else ""
-                )
-                + ". The whole collection is read either way unless --page or "
-                "--cursor is given; this only changes how many calls that takes."
+                "the most rows to return, reading as many pages as that takes; "
+                'one page when omitted. Writes {"items": [...], "nextCursor": '
+                "...}, where nextCursor continues after the last row and is "
+                "null once there are no more."
             ),
         )
         parser.add_argument(
-            "--page",
-            action="store_true",
+            "--page-size",
+            type=int,
+            default=0,
             help=(
-                "read one page instead of the whole collection, and write it as "
-                '{"items": [...], "nextCursor": ...}. Pass nextCursor to --cursor, '
-                "with the same filters, to read the next page; it is null on the "
-                "last one."
+                "rows per request"
+                + (f", at most {largest}" if largest else "")
+                + ": "
+                + (f"{default}, the API's default," if default else "the API's default")
+                + " when omitted"
+                + (f", or {largest} with --limit" if largest else "")
+                + "."
             ),
         )
         parser.add_argument(
             "--cursor",
             default="",
-            help="read the page after the one that returned this nextCursor; "
-            "implies --page.",
+            help="continue after the answer that returned this nextCursor, "
+            "with the same filters.",
         )
     if incompleteness_fields(route):
         parser.add_argument(
@@ -555,23 +559,6 @@ def selected_route(params: Namespace) -> Route | None:
     return route if isinstance(route, Route) else None
 
 
-def _report_envelope(envelope: Mapping[str, Any]) -> None:
-    """Print what a collection said about itself beyond its rows, on stderr.
-
-    The rows stay the whole of stdout, so a script reading them is unaffected,
-    while a person still sees, for example, which ThreatModels a compliance
-    mapping could not resolve. Dropping that would present an incomplete
-    collection as a complete one. An empty value says nothing and is skipped.
-
-    Args:
-        envelope: The page's fields other than the paging ones.
-    """
-    for name, value in envelope.items():
-        if value in (None, "", [], {}):
-            continue
-        console.stderr().line(f"{name}: {json.dumps(value)}", "yellow")
-
-
 #: Stored-endpoint notes this process has already written. A process is one
 #: invocation, and `create-change-log` can resolve two references in it;
 #: the same note twice would read like two different problems.
@@ -737,9 +724,9 @@ def run_api_command(
 
     Returns:
         The result and the result type `output_result` expects: "bytes" for a
-        binary route, "json" otherwise. The result of a paged route is every
-        row, or with ``--page`` or ``--cursor`` the one page as the API served
-        it, ``items`` and ``nextCursor`` included.
+        binary route, "json" otherwise. The result of a paged route is
+        ``items`` and a ``nextCursor`` that continues after them: one page, or
+        with ``--limit`` up to that many rows read across pages.
 
     Raises:
         NotFound: If the API does not know the ThreatModel or pack named.
@@ -769,13 +756,21 @@ def run_api_command(
         for option in route.options
     }
     limit = int(getattr(params, "limit", 0) or 0)
+    page_size = int(getattr(params, "page_size", 0) or 0)
     cursor = str(getattr(params, "cursor", "") or "")
-    one_page = route.paged and (bool(getattr(params, "page", False)) or bool(cursor))
     try:
-        if one_page:
-            answer = read_page(api, route, typed, filters, limit=limit, cursor=cursor)
+        if route.paged:
+            answer = read_pages(
+                api,
+                route,
+                typed,
+                filters,
+                limit=limit,
+                page_size=page_size,
+                cursor=cursor,
+            )
         else:
-            answer = call_route(api, route, typed, filters, limit=limit)
+            answer = call_route(api, route, typed, filters)
     except NotFound as exc:
         sentence = _did_you_mean(api, contract, route, typed)
         if not sentence:
@@ -804,9 +799,6 @@ def run_api_command(
             raise
         # The API never saw the name, so there is no status or request id.
         raise NotFound(str(exc), code="not_found", did_you_mean=sentence) from exc
-    # A page written whole already carries its own fields on stdout.
-    if route.paged and not one_page:
-        _report_envelope(answer.envelope)
     if incomplete is not None:
         incomplete.extend(answer.missing)
     return answer.result, "bytes" if route.binary else "json"
