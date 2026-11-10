@@ -425,11 +425,11 @@ def test_a_live_client_has_the_overwatch_methods_and_others_do_not() -> None:
     # Act
     live: Any = Client(contract="live", opener=opener)
     after = Client(opener=FakeOpener([]))
-    rows = live.overwatch.updates.list()
+    first = live.overwatch.updates.list()
 
-    # Assert
-    assert rows == []
-    assert opener.requests[-1].full_url == f"{BASE}{UPDATES}?limit=500"
+    # Assert: one page, the API's own default, so no limit is sent.
+    assert first["items"] == []
+    assert opener.requests[-1].full_url == f"{BASE}{UPDATES}"
     assert not hasattr(before, "overwatch")
     assert not hasattr(after, "overwatch")
     assert contract.route_for_path(UPDATES) is None

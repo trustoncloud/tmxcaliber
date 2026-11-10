@@ -118,11 +118,56 @@ class StubClient:
         self.required = dict(required or {})
         if envelope is not None:
             envelope.update(self.envelope_fields)
+        yield from self._rows(path)
+
+    def page(
+        self,
+        path: str,
+        params: Mapping[str, str] | None = None,
+        *,
+        page_size: int = 0,
+        cursor: str = "",
+        required: Mapping[str, tuple[type, ...]] | None = None,
+    ) -> dict[str, Any]:
+        """Answer one page of a collection, as a list command reads it.
+
+        Args:
+            path: The path.
+            params: The query, recorded with ``limit`` and ``cursor`` when sent.
+            page_size: Rows asked for, recorded as ``limit`` when not 0.
+            cursor: Recorded when given.
+            required: Recorded, for the caller to assert on.
+
+        Returns:
+            Every fixture row as the last page, with ``envelope_fields``.
+        """
+        query = dict(params or {})
+        if page_size:
+            query["limit"] = str(page_size)
+        if cursor:
+            query["cursor"] = cursor
+        self.calls.append((path, query))
+        self.required = dict(required or {})
+        return {
+            "items": list(self._rows(path)),
+            "nextCursor": None,
+            **self.envelope_fields,
+        }
+
+    @staticmethod
+    def _rows(path: str) -> list[dict[str, Any]]:
+        """Return the fixture rows for a collection path.
+
+        Args:
+            path: The path.
+
+        Returns:
+            The section's rows, or one ThreatModel summary.
+        """
         section = path.rsplit("/", 1)[-1]
         if section in PARTS:
-            yield from PARTS[section]
-        else:
-            yield {"tmId": "aws-s3", "title": "Amazon S3"}
+            return list(PARTS[section])
+        return [{"tmId": "aws-s3", "title": "Amazon S3"}]
 
 
 def test_a_path_that_exists_is_returned_unchanged(tmp_path: pathlib.Path) -> None:
@@ -186,29 +231,27 @@ def test_an_api_command_runs_and_returns_json() -> None:
     result, kind = run_api_command(params, client=StubClient())  # type: ignore[arg-type]
 
     assert kind == "json"
-    assert isinstance(result, list)
-    assert result[0]["threatId"] == "S3.T1"
+    assert result["nextCursor"] is None
+    assert result["items"][0]["threatId"] == "S3.T1"
 
 
-def test_what_a_collection_says_beyond_its_rows_reaches_stderr(
+def test_what_a_collection_says_beyond_its_rows_is_in_the_page_written(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Unresolved ThreatModels mean the rows are incomplete. Printing them on
-    # stderr tells a person without changing what a script reads on stdout.
+    # Unresolved ThreatModels mean the rows are incomplete. The page is written
+    # whole, so a script reads them beside the rows on stdout.
     route = route_for(("compliance", "mappings", "list"))
     assert route is not None
     client = StubClient()
-    client.envelope_fields = {"unresolvedTmIds": ["aws-s3"], "empty": []}
+    client.envelope_fields = {"unresolvedTmIds": ["aws-s3"]}
     params = Namespace(
         api_route=route, framework_id="nist-800-53-r5", tm_id="", limit=0
     )
 
     result, _ = run_api_command(params, client=client)  # type: ignore[arg-type]
 
-    assert isinstance(result, list)
-    err = capsys.readouterr().err
-    assert 'unresolvedTmIds: ["aws-s3"]' in err
-    assert "empty" not in err
+    assert result["unresolvedTmIds"] == ["aws-s3"]
+    assert "unresolvedTmIds" not in capsys.readouterr().err
 
 
 def test_unresolved_threatmodels_mark_the_answer_incomplete() -> None:
@@ -224,7 +267,7 @@ def test_unresolved_threatmodels_mark_the_answer_incomplete() -> None:
     run_api_command(params, client=client, incomplete=incomplete)  # type: ignore[arg-type]
 
     assert incomplete == ['unresolvedTmIds: ["aws-s3"]']
-    # The walk is held to the fields the contract makes required.
+    # The page is held to the fields the contract makes required.
     assert client.required == {"unresolvedTmIds": (list,)}
 
 

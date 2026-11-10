@@ -132,42 +132,26 @@ def request_for(
     return path, query
 
 
-def page_size(route: Route, limit: int = 0) -> int:
-    """Choose how many rows each request for a paged route asks for.
-
-    The largest page the contract permits, unless the caller chose one. The
-    server's own default is smaller, and every request draws on the same
-    hourly budget, so a walk at the server's default spent several times the
-    calls on the same rows; on the OverWatch list it used most of a key's
-    hourly budget.
-
-    Args:
-        route: The route.
-        limit: The caller's choice, or 0 for none.
-
-    Returns:
-        The page size to send, or 0 when the route states no maximum and the
-        caller chose none, which leaves the server's default.
-    """
-    return limit or route.page_maximum or 0
-
-
 def call_route(
     client: TocClient,
     route: Route,
     positional: str,
     filters: Mapping[str, QueryValue],
-    limit: int = 0,
 ) -> Answer:
     """Call one route, walking every page of a paged one.
+
+    **Only for this client's own reads that need the whole answer**: the live
+    contract's discovery and a "Did you mean" suggestion. A collection a
+    caller asks for is read one page at a time, with `read_page`, so the
+    caller decides how many calls to spend. A walk asks for the largest page
+    the contract permits, because every request draws on the key's hourly
+    budget and the server's default is smaller.
 
     Args:
         client: The client to call through.
         route: The route.
         positional: The value of the route's positional, or empty.
         filters: Values for the route's filters, by name.
-        limit: Rows per request for a paged route, or 0 for the largest the
-            contract permits. The whole collection is read either way.
 
     Returns:
         The answer, including whether the API reported missing rows.
@@ -190,7 +174,7 @@ def call_route(
         client.paginate(
             path,
             query,
-            page_size=page_size(route, limit),
+            page_size=route.page_maximum or 0,
             envelope=envelope,
             required=dict(route.page_fields),
         )
@@ -207,7 +191,13 @@ def read_page(
     limit: int = 0,
     cursor: str = "",
 ) -> Answer:
-    """Read one page of a paged route, for a caller who walks it themselves.
+    """Read one page of a paged route: what every list command answers.
+
+    **One page is the only way a caller reads a collection**, on the CLI and
+    through `Client` alike, so a command spends exactly one call and the
+    caller holds the cursor. Reading the whole collection by default once
+    spent a key's hourly budget on one OverWatch list, because ``--limit``
+    sized the requests rather than the answer.
 
     Args:
         client: The client to call through.
@@ -215,7 +205,8 @@ def read_page(
         positional: The value of the route's positional, or empty.
         filters: Values for the route's filters, by name. A cursor is bound to
             them, so a later page needs the ones its first was read with.
-        limit: Rows in the page, or 0 for the largest the contract permits.
+        limit: Rows in the page, or 0 for the API's own default, so the
+            answer is the one curl gets for the same request.
         cursor: A previous page's ``nextCursor``, or empty for the first page.
 
     Returns:
@@ -233,7 +224,7 @@ def read_page(
     body = client.page(
         path,
         query,
-        page_size=page_size(route, limit),
+        page_size=limit,
         cursor=cursor,
         required=dict(route.page_fields),
     )

@@ -248,7 +248,7 @@ def test_a_new_operation_becomes_a_client_method(use_contract: UseContract) -> N
     client = Client(opener=FakeOpener([]))
 
     listing: Any = client.widgets.list  # type: ignore[attr-defined]
-    assert list(inspect.signature(listing).parameters) == ["colour", "limit"]
+    assert list(inspect.signature(listing).parameters) == ["colour", "limit", "cursor"]
     assert listing.__doc__ == "Widgets this credential may see."
 
 
@@ -384,9 +384,9 @@ def test_a_repeatable_option_sends_each_value_from_both_surfaces(
         urllib.parse.parse_qsl(urllib.parse.urlsplit(request.full_url).query)
         for request in (*cli_opener.requests, *api_opener.requests)
     ]
-    # The page size is the largest the synthetic contract permits.
-    both = [("colour", "red"), ("colour", "blue"), ("shape", "round"), ("limit", "50")]
-    assert sent == [both, both, [("colour", "red"), ("limit", "50")]]
+    # No limit given, so each page is the API's own default.
+    both = [("colour", "red"), ("colour", "blue"), ("shape", "round")]
+    assert sent == [both, both, [("colour", "red")]]
     with pytest.raises(SystemExit):
         parser.parse_args(["widgets", "list", "--shape", "round", "--shape", "oval"])
 
@@ -545,18 +545,15 @@ def test_a_route_carries_what_its_own_document_says_about_its_answer() -> None:
     assert contract.route_for_path("/v1/widgets") is None
 
 
-def test_a_paged_operation_walks_every_page(use_contract: UseContract) -> None:
+def test_a_paged_operation_reads_one_page(use_contract: UseContract) -> None:
     use_contract(document(WIDGETS))
-    opener = FakeOpener(
-        [
-            FakeResponse({"items": [{"id": 1}], "nextCursor": "next", "pageSize": 1}),
-            FakeResponse({"items": [{"id": 2}], "nextCursor": None, "pageSize": 1}),
-        ]
-    )
+    served = {"items": [{"id": 1}], "nextCursor": "next", "pageSize": 1}
+    opener = FakeOpener([FakeResponse(served)])
 
-    rows = Client(opener=opener).widgets.list()  # type: ignore[attr-defined]
+    first = Client(opener=opener).widgets.list()  # type: ignore[attr-defined]
 
-    assert rows == [{"id": 1}, {"id": 2}]
+    assert first == served
+    assert len(opener.requests) == 1
 
 
 def test_a_threatmodel_reference_fills_provider_and_service(
@@ -672,7 +669,7 @@ def test_an_unusable_positional_exits_with_its_message_not_a_trace(
 
 @pytest.mark.parametrize(
     "name",
-    ["operation", "output", "apiRoute", "api_level_1", "contract", "live", "page"],
+    ["operation", "output", "apiRoute", "api_level_1", "contract", "live"],
 )
 def test_an_option_that_would_overwrite_a_cli_argument_is_refused(
     use_contract: UseContract, name: str

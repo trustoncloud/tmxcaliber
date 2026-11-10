@@ -218,17 +218,16 @@ from what your key can list: `ccr packs get aws-ec3` ends with
 ThreatModel's title. Errors and suggestions go to stderr, in color only on a
 terminal; set `NO_COLOR` to turn the color off there too.
 
-Collections are read in full; paging is handled for you, at the largest page
-each route allows (500 rows where the API permits it), so a full read takes as
-few calls as it can. `--limit` sets another page size. To read one page at a
-time instead, pass `--page`: the command writes the page as
-`{"items": [...], "nextCursor": ...}`, and passing that `nextCursor` back with
-`--cursor`, and the same filters, reads the next one. `nextCursor` is null on
-the last page.
+A list command reads one page, in one call, and writes it as
+`{"items": [...], "nextCursor": ...}`. `--limit` is how many rows the page
+holds, the API's own default when omitted, up to the most each route allows.
+Passing that `nextCursor` back with `--cursor`, and the same filters, reads
+the next page; `nextCursor` is null on the last one. Each call draws on your
+key's hourly budget, so you decide how many to spend.
 
 ```sh
-tmxcaliber overwatch updates list --provider aws --page --live
-tmxcaliber overwatch updates list --provider aws --cursor "$NEXT" --live
+tmxcaliber overwatch updates list --provider aws --limit 3 --live
+tmxcaliber overwatch updates list --provider aws --limit 3 --cursor "$NEXT" --live
 ```
 
 When the API reports
@@ -277,20 +276,20 @@ from tmxcaliber import Client
 
 api = Client()
 api.me()
-api.threatmodels.list(provider="aws")
-api.threatmodels.threats("aws-s3", feature_class_id="S3.FC1")
+page = api.threatmodels.list(provider="aws")
+api.threatmodels.list(provider="aws", cursor=page["nextCursor"])
+api.threatmodels.threats("aws-s3", feature_class_id="S3.FC1", limit=5)
 api.ccr.packs.archive("aws-s3", kind="deploy")  # the zip, as bytes
 api.compliance.mappings.list(framework_id="nist-800-53-r5")
 ```
 
 `Client()` finds the key and endpoint exactly as the CLI does. To use a key
 kept somewhere else, pass it: `Client(api_key=..., api_url=...)`. A collection
-comes back as a list of every row, and an archive as its bytes. A
-collection's method also has `.page()`, the library's `--page`:
-`api.threatmodels.list.page(provider="aws")` returns one page with its
-`nextCursor`, and `.page(provider="aws", cursor=...)` reads the next. An incomplete
-answer raises `IncompleteAnswer`, which carries the rows that did arrive,
-unless you pass `allow_incomplete=True`. Every failure is a `RemoteError`
+comes back one page at a time, as the CLI writes it: `items`, and a
+`nextCursor` that `cursor=` continues from, null on the last page. `limit=`
+is how many rows the page holds. An archive comes back as its bytes. An
+incomplete answer raises `IncompleteAnswer`, which carries the page that did
+arrive, unless you pass `allow_incomplete=True`. Every failure is a `RemoteError`
 subclass, such as `AuthenticationError`, `NotFound` or `ReleaseSuperseded`,
 importable from `tmxcaliber`. `api.get(path)` and `api.paginate(path)` remain
 available for a raw path.
