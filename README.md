@@ -67,7 +67,7 @@ When a newer release is on PyPI, the CLI says so after a command succeeds, on
 stderr, as pip does:
 
 ```text
-A new release of tmxcaliber is available: 0.13.0 -> 0.13.1. To update, run: pip install --upgrade tmxcaliber
+A new release of tmxcaliber is available: 0.14.0 -> 0.14.1. To update, run: pip install --upgrade tmxcaliber
 ```
 
 It asks PyPI at most once a day, in the background, and keeps the answer in
