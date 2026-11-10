@@ -634,9 +634,10 @@ class TocClient:
     ) -> Iterator[dict[str, Any]]:
         """Walk a collection, yielding rows.
 
-        The cursor never reaches the caller. It is bound server-side to the
-        credential, the route and the filters, so it is meaningless outside
-        one walk and a caller shown one would be tempted to keep it.
+        The cursor never reaches the caller of a walk. It is bound
+        server-side to the credential, the route and the filters, so it is
+        meaningless outside the walk that received it. A caller who wants to
+        hold one reads a page at a time with `page` instead.
 
         **A page can say more than its rows**, such as when the answer was
         evaluated, or which ThreatModels it could not resolve. Those top-level
@@ -651,7 +652,7 @@ class TocClient:
             envelope: When given, filled with the first page's top-level
                 fields other than the paging ones.
             required: Fields every page must carry, with the types their
-                value may have (``contract.required_page_fields``).
+                value may have (a route's ``page_fields``).
 
         Yields:
             Each row, in the order the API returns it.
@@ -686,55 +687,119 @@ class TocClient:
                     code="invalid_cursor",
                     request_id=exc.request_id,
                 ) from None
-            items = body.get("items")
-            if not isinstance(items, list):
-                raise ContractViolation(
-                    f"{path} answered without an items list.", code="bad_page"
-                )
-            _check_required(path, body, required or {})
+            items, cursor = _checked_page(path, body, required or {})
             if envelope is not None and pages == 1:
                 envelope.update(
                     {k: v for k, v in body.items() if k not in paging_fields()}
                 )
-            for row in items:
-                if not isinstance(row, dict):
-                    # Skipping it would quietly drop an entity from the
-                    # assembled document, which then caches as complete.
-                    raise ContractViolation(
-                        f"{path} returned a row that is not an object.",
-                        code="bad_row",
-                    )
-                yield row
-            if "nextCursor" not in body:
-                # The envelope always carries it, null on the last page.
-                # Treating an absent one as "no more" is how a drifted
-                # response silently truncates a model, and a pinned release
-                # then caches that truncation.
-                raise ContractViolation(
-                    f"{path} returned a page with no nextCursor.",
-                    code="bad_page",
-                )
-            cursor = body.get("nextCursor")
-            # Null, and only null, means the walk is over. An empty string,
-            # false or zero from a degraded response would otherwise read as
-            # completion, and the truncated collection then caches as a whole
-            # document.
+            yield from items
             if cursor is None:
                 return
-            if not isinstance(cursor, str) or not cursor:
-                raise ContractViolation(
-                    f"{path} returned a nextCursor that is neither null nor a cursor.",
-                    code="bad_cursor",
-                )
             if cursor in seen:
                 raise ContractViolation(
                     f"{path} returned a cursor it had already served.",
                     code="cursor_repeated",
                 )
-            if not items:
-                raise ContractViolation(
-                    f"{path} returned an empty page with more to come.",
-                    code="empty_page",
-                )
             seen.add(cursor)
             query["cursor"] = cursor
+
+    def page(
+        self,
+        path: str,
+        params: Mapping[str, QueryValue] | None = None,
+        *,
+        page_size: int = 0,
+        cursor: str = "",
+        required: Mapping[str, tuple[type, ...]] | None = None,
+    ) -> dict[str, Any]:
+        """Read one page of a collection, held to every check a walk applies.
+
+        The caller asked to hold the cursor, so it is handed back here rather
+        than spent: the page's ``nextCursor`` continues the collection from a
+        later call with the same filters, and null means there is no more.
+
+        Args:
+            path: The path, beginning with a slash.
+            params: Query parameters other than ``limit`` and ``cursor``.
+            page_size: Rows in the page, or 0 for the server's default.
+            cursor: A previous page's ``nextCursor``, or empty for the first.
+            required: Fields the page must carry, with the types their value
+                may have (a route's ``page_fields``).
+
+        Returns:
+            The page as the API served it: ``items``, ``nextCursor``, and the
+            route's other page fields.
+
+        Raises:
+            InvalidCursor: If the API does not accept the cursor, as for one
+                read with other filters, another key, or on another route.
+            ContractViolation: If the page is not an envelope, lacks a
+                required field or carries one of the wrong type.
+            RemoteError: On any transport or server failure.
+        """
+        query = dict(params or {})
+        if page_size:
+            query["limit"] = str(page_size)
+        if cursor:
+            query["cursor"] = cursor
+        body = self.get(path, query)
+        _checked_page(path, body, required or {})
+        return body
+
+
+def _checked_page(
+    path: str, body: Mapping[str, Any], required: Mapping[str, tuple[type, ...]]
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Hold one page to the envelope every collection answers with.
+
+    Args:
+        path: The path, for the message.
+        body: The page as it arrived.
+        required: Fields it must carry beyond the paging ones, with the types
+            their value may have.
+
+    Returns:
+        The rows, and the next cursor, or None on the last page.
+
+    Raises:
+        ContractViolation: If the page has no items list, a row that is not
+            an object, a required field missing or of the wrong type, no
+            ``nextCursor``, a ``nextCursor`` that is neither null nor a cursor,
+            or no rows while promising more.
+    """
+    items = body.get("items")
+    if not isinstance(items, list):
+        raise ContractViolation(
+            f"{path} answered without an items list.", code="bad_page"
+        )
+    _check_required(path, body, required)
+    for row in items:
+        if not isinstance(row, dict):
+            # Skipping it would quietly drop an entity from the assembled
+            # document, which then caches as complete.
+            raise ContractViolation(
+                f"{path} returned a row that is not an object.", code="bad_row"
+            )
+    if "nextCursor" not in body:
+        # The envelope always carries it, null on the last page. Treating an
+        # absent one as "no more" is how a drifted response silently
+        # truncates a model, and a pinned release then caches that truncation.
+        raise ContractViolation(
+            f"{path} returned a page with no nextCursor.", code="bad_page"
+        )
+    cursor = body.get("nextCursor")
+    # Null, and only null, means the collection is over. An empty string,
+    # false or zero from a degraded response would otherwise read as
+    # completion, and the truncated collection then caches as a whole document.
+    if cursor is None:
+        return items, None
+    if not isinstance(cursor, str) or not cursor:
+        raise ContractViolation(
+            f"{path} returned a nextCursor that is neither null nor a cursor.",
+            code="bad_cursor",
+        )
+    if not items:
+        raise ContractViolation(
+            f"{path} returned an empty page with more to come.", code="empty_page"
+        )
+    return items, cursor

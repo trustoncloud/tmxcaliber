@@ -1,10 +1,14 @@
 """How one route becomes one request, for the CLI and for `Client` alike.
 
-Both surfaces are built from `contract.routes()`, and both need the same three
-answers for a route: which concrete path a positional fills in, which query
-it sends, and whether the rows that came back are whole. Giving those one
-owner here is what keeps ``tmxcaliber threatmodels threats aws-s3`` and
-``Client().threatmodels.threats("aws-s3")`` from drifting apart.
+Both surfaces are built from one `contract.Contract`'s routes, and both need
+the same three answers for a route: which concrete path a positional fills in,
+which query it sends, and whether the rows that came back are whole. Giving
+those one owner here is what keeps ``tmxcaliber threatmodels threats aws-s3``
+and ``Client().threatmodels.threats("aws-s3")`` from drifting apart.
+
+Everything a call needs from the contract travels on the `Route` itself, so a
+route bound from the API's live definition is executed by what that
+definition says rather than by the vendored copy.
 """
 
 from __future__ import annotations
@@ -16,13 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 from .client import QueryValue, TocClient
-from .contract import (
-    REFERENCE_PARAMETERS,
-    RELEASE_OPTION,
-    Route,
-    required_page_fields,
-    response_media_type,
-)
+from .contract import REFERENCE_PARAMETERS, RELEASE_OPTION, Route, paging_fields
 from .ref import parse_ref
 
 #: Page fields that, when not empty, mean the rows are incomplete.
@@ -59,7 +57,7 @@ def incompleteness_fields(route: Route) -> tuple[str, ...]:
     Returns:
         The names, in ``INCOMPLETENESS_FIELDS`` order.
     """
-    required = required_page_fields(route.path)
+    required = dict(route.page_fields)
     return tuple(name for name in INCOMPLETENESS_FIELDS if name in required)
 
 
@@ -134,6 +132,26 @@ def request_for(
     return path, query
 
 
+def page_size(route: Route, limit: int = 0) -> int:
+    """Choose how many rows each request for a paged route asks for.
+
+    The largest page the contract permits, unless the caller chose one. The
+    server's own default is smaller, and every request draws on the same
+    hourly budget, so a walk at the server's default spent several times the
+    calls on the same rows; on the OverWatch list it used most of a key's
+    hourly budget.
+
+    Args:
+        route: The route.
+        limit: The caller's choice, or 0 for none.
+
+    Returns:
+        The page size to send, or 0 when the route states no maximum and the
+        caller chose none, which leaves the server's default.
+    """
+    return limit or route.page_maximum or 0
+
+
 def call_route(
     client: TocClient,
     route: Route,
@@ -148,8 +166,8 @@ def call_route(
         route: The route.
         positional: The value of the route's positional, or empty.
         filters: Values for the route's filters, by name.
-        limit: Rows per request for a paged route, or 0 for the server's
-            default. The whole collection is read either way.
+        limit: Rows per request for a paged route, or 0 for the largest the
+            contract permits. The whole collection is read either way.
 
     Returns:
         The answer, including whether the API reported missing rows.
@@ -163,9 +181,7 @@ def call_route(
     if route.binary:
         # Held to the type the contract publishes, so the transport can tell
         # the archive asked for from a body that only carries its label.
-        media_type = response_media_type(route.path)
-        assert media_type is not None, f"{route.path} publishes no 200 content"
-        return Answer(result=client.get_bytes(path, query, media_type=media_type))
+        return Answer(result=client.get_bytes(path, query, media_type=route.media_type))
     if not route.paged:
         return Answer(result=client.get(path, query))
 
@@ -174,14 +190,69 @@ def call_route(
         client.paginate(
             path,
             query,
-            page_size=limit,
+            page_size=page_size(route, limit),
             envelope=envelope,
-            required=required_page_fields(route.path),
+            required=dict(route.page_fields),
         )
     )
-    missing = tuple(
+    return Answer(result=rows, envelope=envelope, missing=_missing(route, envelope))
+
+
+def read_page(
+    client: TocClient,
+    route: Route,
+    positional: str,
+    filters: Mapping[str, QueryValue],
+    *,
+    limit: int = 0,
+    cursor: str = "",
+) -> Answer:
+    """Read one page of a paged route, for a caller who walks it themselves.
+
+    Args:
+        client: The client to call through.
+        route: The route, which must be paged.
+        positional: The value of the route's positional, or empty.
+        filters: Values for the route's filters, by name. A cursor is bound to
+            them, so a later page needs the ones its first was read with.
+        limit: Rows in the page, or 0 for the largest the contract permits.
+        cursor: A previous page's ``nextCursor``, or empty for the first page.
+
+    Returns:
+        The answer, whose result is the page as the API served it, with its
+        ``items`` and its ``nextCursor`` (null on the last page).
+
+    Raises:
+        ValueError: If the route is not paged, or as `request_for` does.
+        RemoteError: On any credential, transport or server failure,
+            including `InvalidCursor` for a cursor the API does not accept.
+    """
+    if not route.paged:
+        raise ValueError(f"`{' '.join(route.command)}` is not paged.")
+    path, query = request_for(route, positional, filters)
+    body = client.page(
+        path,
+        query,
+        page_size=page_size(route, limit),
+        cursor=cursor,
+        required=dict(route.page_fields),
+    )
+    envelope = {k: v for k, v in body.items() if k not in paging_fields()}
+    return Answer(result=body, envelope=envelope, missing=_missing(route, envelope))
+
+
+def _missing(route: Route, envelope: Mapping[str, Any]) -> tuple[str, ...]:
+    """Name what a page reported it could not resolve.
+
+    Args:
+        route: The route the page came from.
+        envelope: The page's fields other than the paging ones.
+
+    Returns:
+        One ``name: value`` line per incompleteness field that is not empty.
+    """
+    return tuple(
         f"{name}: {json.dumps(envelope[name])}"
         for name in incompleteness_fields(route)
         if envelope.get(name)
     )
-    return Answer(result=rows, envelope=envelope, missing=missing)

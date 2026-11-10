@@ -218,7 +218,20 @@ from what your key can list: `ccr packs get aws-ec3` ends with
 ThreatModel's title. Errors and suggestions go to stderr, in color only on a
 terminal; set `NO_COLOR` to turn the color off there too.
 
-Collections are read in full; paging is handled for you. When the API reports
+Collections are read in full; paging is handled for you, at the largest page
+each route allows (500 rows where the API permits it), so a full read takes as
+few calls as it can. `--limit` sets another page size. To read one page at a
+time instead, pass `--page`: the command writes the page as
+`{"items": [...], "nextCursor": ...}`, and passing that `nextCursor` back with
+`--cursor`, and the same filters, reads the next one. `nextCursor` is null on
+the last page.
+
+```sh
+tmxcaliber overwatch updates list --provider aws --page --live
+tmxcaliber overwatch updates list --provider aws --cursor "$NEXT" --live
+```
+
+When the API reports
 that an answer is incomplete (for example, compliance mappings for
 ThreatModels whose SCF release is not supported yet), the command still writes
 what it got, names what is missing on stderr, and exits 3; pass
@@ -228,6 +241,27 @@ commands do not cover, the API takes the same key directly:
 ```sh
 curl -H "Authorization: Bearer $TOC_API_KEY" https://api.trustoncloud.com/v1/apis
 ```
+
+Some routes reach organizations in turn before every organization has them,
+OverWatch updates among them. The commands are built from the API contract
+this release ships with, which leaves those routes out. `--live`, short for
+`--contract live`, builds the commands from the definition the API serves
+your key instead, so whatever your organization already has becomes a
+command:
+
+```sh
+tmxcaliber overwatch updates list --live
+tmxcaliber overwatch updates list --provider aws --since 2026-11-01 --live
+tmxcaliber overwatch updates get Overwatch.Aws.U14500 --live
+tmxcaliber --live overwatch --help
+```
+
+The flag goes anywhere on an API command line. It costs two extra calls per
+command, from the same hourly budget, and needs your key even for `--help`.
+A route your organization does not have yet stays absent, as it is without
+the flag. If the API's definition holds something this release cannot carry
+out, the command says so and names the path; leave out `--live` or upgrade
+tmxcaliber.
 
 A document pulled with your key is licensed to your organization and carries
 its attribution. It is not a file to redistribute.
@@ -251,12 +285,27 @@ api.compliance.mappings.list(framework_id="nist-800-53-r5")
 
 `Client()` finds the key and endpoint exactly as the CLI does. To use a key
 kept somewhere else, pass it: `Client(api_key=..., api_url=...)`. A collection
-comes back as a list of every row, and an archive as its bytes. An incomplete
+comes back as a list of every row, and an archive as its bytes. A
+collection's method also has `.page()`, the library's `--page`:
+`api.threatmodels.list.page(provider="aws")` returns one page with its
+`nextCursor`, and `.page(provider="aws", cursor=...)` reads the next. An incomplete
 answer raises `IncompleteAnswer`, which carries the rows that did arrive,
 unless you pass `allow_incomplete=True`. Every failure is a `RemoteError`
 subclass, such as `AuthenticationError`, `NotFound` or `ReleaseSuperseded`,
 importable from `tmxcaliber`. `api.get(path)` and `api.paginate(path)` remain
 available for a raw path.
+
+`Client(contract="live")` is the library's `--live`: its methods come from the
+definition the API serves your key, so routes your organization has early
+are methods too.
+
+```python
+live = Client(contract="live")
+live.overwatch.updates.list(provider="aws", since="2026-11-01")
+```
+
+Building one costs two calls, so build it once and reuse it. Each client keeps
+its own contract: a `Client()` built beside it is unaffected.
 
 ## Command Overview
 

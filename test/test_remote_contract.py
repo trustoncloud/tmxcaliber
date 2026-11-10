@@ -136,7 +136,7 @@ def test_the_framework_filter_names_the_frameworks_list() -> None:
     mappings = contract.route_for(("compliance", "mappings", "list"))
     assert mappings is not None
 
-    lookup = contract.values_route(mappings, "frameworkId")
+    lookup = contract.vendored().values_route(mappings, "frameworkId")
 
     assert lookup is not None
     assert lookup.command == ("compliance", "frameworks", "list")
@@ -149,7 +149,7 @@ def test_every_values_route_carries_the_field_it_is_cited_for(
 ) -> None:
     """The help names a field; the listing it points at must have that field."""
     for name in route.filters:
-        lookup = contract.values_route(route, name)
+        lookup = contract.vendored().values_route(route, name)
         if lookup is None:
             continue
         field = contract.values_field(name)

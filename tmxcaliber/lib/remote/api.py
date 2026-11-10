@@ -2,9 +2,9 @@
 
 Every attribute path on a `Client` is a CLI command with the spaces turned
 into dots, built at construction from the same routes the CLI is built from
-(`contract.routes()`, interpreted from the vendored OpenAPI document). Nothing
-here names a route, so a route the API adds is a method here and a command
-there, with no naming decision in between:
+(one `contract.Contract`, the vendored OpenAPI document unless the API's live
+definition is asked for). Nothing here names a route, so a route the API adds
+is a method here and a command there, with no naming decision in between:
 
     from tmxcaliber import Client
 
@@ -12,6 +12,9 @@ there, with no naming decision in between:
     api.me()
     api.threatmodels.list(provider="aws")  # tmxcaliber threatmodels list --provider aws
     api.threatmodels.threats("aws-s3", feature_class_id="S3.FC1")
+
+    live = Client(contract="live")         # tmxcaliber overwatch updates list --live
+    live.overwatch.updates.list()
 
 A route's positional is the method's one positional argument, its filters are
 keyword arguments, and a paged route returns every row, as the CLI does.
@@ -24,11 +27,12 @@ import urllib.request
 import warnings
 from typing import Any
 
-from .client import TocClient
+from .client import QueryValue, TocClient
 from .config import DEFAULT_TIMEOUT, load_settings
-from .contract import Route, python_name, routes
+from .contract import CONTRACT_NAMES, ContractName, Route, python_name, vendored
 from .errors import IncompleteAnswer
-from .operations import call_route, incompleteness_fields, wire
+from .live_contract import live_refusal, load_live_contract
+from .operations import Answer, call_route, incompleteness_fields, read_page, wire
 
 
 def _signature(route: Route) -> inspect.Signature:
@@ -57,6 +61,7 @@ def _signature(route: Route) -> inspect.Signature:
             0, inspect.Parameter(route.positional, inspect.Parameter.POSITIONAL_ONLY)
         )
     if route.paged:
+        # 0 asks for the largest page the contract permits.
         parameters.append(inspect.Parameter("limit", keyword, default=0))
     if incompleteness_fields(route):
         parameters.append(inspect.Parameter("allow_incomplete", keyword, default=False))
@@ -108,31 +113,111 @@ class Operation:
             RemoteError: On any credential, transport or server failure.
             ValueError: If a ThreatModel reference cannot be parsed.
         """
-        bound = self.__signature__.bind(*args, **kwargs)
-        bound.apply_defaults()
-        values = bound.arguments
-        route = self._route
+        positional, filters, values = self._bind(args, kwargs)
         answer = call_route(
             self._client,
-            route,
-            str(values[route.positional]) if route.positional else "",
-            {
-                option.name: wire(
-                    values[python_name(option.name)], repeatable=option.repeatable
-                )
-                for option in route.options
-            },
+            self._route,
+            positional,
+            filters,
             limit=int(values.get("limit", 0)),
         )
-        if answer.missing and not values.get("allow_incomplete", False):
-            raise IncompleteAnswer(
-                "The API could not resolve every row: "
-                + "; ".join(answer.missing)
-                + ". Pass allow_incomplete=True to accept the partial answer.",
-                result=answer.result,
-                envelope=answer.envelope,
+        return _accepted(answer, values)
+
+    def _bind(
+        self, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> tuple[str, dict[str, QueryValue], dict[str, Any]]:
+        """Read a call's arguments as the route's positional and filters.
+
+        Args:
+            args: The positional arguments given.
+            kwargs: The keyword arguments given.
+
+        Returns:
+            The positional, the filters as the query carries them, and every
+            argument by name with the defaults applied.
+
+        Raises:
+            TypeError: If the arguments do not match the signature.
+        """
+        bound = self.__signature__.bind(*args, **kwargs)
+        bound.apply_defaults()
+        values = dict(bound.arguments)
+        route = self._route
+        filters = {
+            option.name: wire(
+                values[python_name(option.name)], repeatable=option.repeatable
             )
-        return answer.result
+            for option in route.options
+        }
+        positional = str(values[route.positional]) if route.positional else ""
+        return positional, filters, values
+
+
+class PagedOperation(Operation):
+    """A paged route: called, it reads every row; `page` reads one page."""
+
+    def page(self, *args: Any, cursor: str = "", **kwargs: Any) -> dict[str, Any]:
+        """Read one page, for a caller who walks the collection themselves.
+
+        Takes the call's own arguments, so ``limit`` sizes the page and
+        defaults to the most the API allows.
+
+        Args:
+            *args: The route's positional, when it has one.
+            cursor: A previous page's ``nextCursor``, or empty for the first
+                page. It is bound to the filters, so pass the same ones.
+            **kwargs: The route's filters, ``limit`` and ``allow_incomplete``,
+                as the call's signature lists them.
+
+        Returns:
+            The page as the API served it: ``items``, and ``nextCursor``,
+            which is null on the last page.
+
+        Raises:
+            TypeError: If the arguments do not match the signature.
+            IncompleteAnswer: If the API reported rows it could not resolve
+                and ``allow_incomplete`` was not set.
+            InvalidCursor: If the API does not accept the cursor.
+            RemoteError: On any other credential, transport or server failure.
+            ValueError: If a ThreatModel reference cannot be parsed.
+        """
+        positional, filters, values = self._bind(args, kwargs)
+        answer = read_page(
+            self._client,
+            self._route,
+            positional,
+            filters,
+            limit=int(values.get("limit", 0)),
+            cursor=cursor,
+        )
+        page: dict[str, Any] = _accepted(answer, values)
+        return page
+
+
+def _accepted(answer: Answer, values: dict[str, Any]) -> Any:
+    """Hand back an answer, unless it is incomplete and that was not accepted.
+
+    Args:
+        answer: What the route returned.
+        values: The call's arguments, with ``allow_incomplete`` when the
+            route takes it.
+
+    Returns:
+        The answer's result.
+
+    Raises:
+        IncompleteAnswer: If the API reported rows it could not resolve and
+            ``allow_incomplete`` was not set.
+    """
+    if answer.missing and not values.get("allow_incomplete", False):
+        raise IncompleteAnswer(
+            "The API could not resolve every row: "
+            + "; ".join(answer.missing)
+            + ". Pass allow_incomplete=True to accept the partial answer.",
+            result=answer.result,
+            envelope=answer.envelope,
+        )
+    return answer.result
 
 
 class Group:
@@ -170,11 +255,20 @@ class Client(TocClient):
         api_key: A key to use instead of the environment's or the file's.
         api_url: An endpoint to use instead of the environment's or the
             file's.
+        contract: ``"vendored"`` builds the methods from the contract this
+            release ships with, at no cost. ``"live"`` reads the API's own
+            definition for this credential first, two calls on every
+            construction, so routes this tenant has before every tenant
+            does, such as ``overwatch``, are methods too; reuse the client.
         timeout: Seconds to wait on one request.
         opener: The URL opener, injected so a test needs no network.
 
     Raises:
+        ValueError: If ``contract`` is not one of the names above.
         ConfigurationError: If no usable credential is configured.
+        ContractViolation: If the live definition cannot be read or bound
+            by this release.
+        RemoteError: On any other failure reading the live definition.
 
     Warns:
         UserWarning: When a key given for this call will reach an endpoint
@@ -186,15 +280,32 @@ class Client(TocClient):
         api_key: str = "",
         api_url: str = "",
         *,
+        contract: ContractName = "vendored",
         timeout: float = DEFAULT_TIMEOUT,
         opener: urllib.request.OpenerDirector | None = None,
     ) -> None:
+        # Checked first, so a misspelling needs no credential and spends no call.
+        if contract not in CONTRACT_NAMES:
+            raise ValueError(
+                f"contract must be one of {', '.join(CONTRACT_NAMES)}, "
+                f"not {contract!r}."
+            )
         settings = load_settings(api_key=api_key, api_url=api_url, timeout=timeout)
         if settings.sends_key_to_stored_endpoint:
             warnings.warn(settings.stored_endpoint_note, stacklevel=2)
         super().__init__(settings, opener=opener)
-        for route in routes():
-            self._attach(route)
+        # Held by this client alone, so two clients built from different
+        # contracts in one process never see each other's routes.
+        self._contract = (
+            vendored() if contract == "vendored" else load_live_contract(self)
+        )
+        try:
+            for route in self._contract.routes:
+                self._attach(route)
+        except ValueError as exc:
+            if not self._contract.live:
+                raise
+            raise live_refusal(exc) from exc
 
     def _attach(self, route: Route) -> None:
         """Hang one route's operation at its command's attribute path.
@@ -204,9 +315,10 @@ class Client(TocClient):
 
         Raises:
             ValueError: If a command word would hide a client attribute, or a
-                group and an operation would share a name. Every test builds
-                a client over the vendored contract, so this fires in CI
-                rather than for a caller.
+                group and an operation would share a name. Tests build a
+                client over the vendored contract with every marked route
+                unlocked, so this fires in CI rather than for a caller, unless
+                a live definition is newer than this release.
         """
         holder: object = self
         for depth, word in enumerate(route.command[:-1]):
@@ -220,7 +332,8 @@ class Client(TocClient):
             holder = child
         leaf = route.command[-1]
         self._refuse_shadowing(holder, leaf, route)
-        setattr(holder, leaf, Operation(self, route))
+        operation = PagedOperation if route.paged else Operation
+        setattr(holder, leaf, operation(self, route))
 
     @staticmethod
     def _refuse_shadowing(holder: object, word: str, route: Route) -> None:

@@ -63,10 +63,10 @@ def use_contract(monkeypatch: pytest.MonkeyPatch) -> Iterator[UseContract]:
 
     def use(document: dict[str, Any]) -> None:
         monkeypatch.setattr(contract, "contract", lambda: document)
-        contract.routes.cache_clear()
+        contract.vendored.cache_clear()
 
     yield use
-    contract.routes.cache_clear()
+    contract.vendored.cache_clear()
 
 
 def document(paths: dict[str, Any]) -> dict[str, Any]:
@@ -384,8 +384,9 @@ def test_a_repeatable_option_sends_each_value_from_both_surfaces(
         urllib.parse.parse_qsl(urllib.parse.urlsplit(request.full_url).query)
         for request in (*cli_opener.requests, *api_opener.requests)
     ]
-    both = [("colour", "red"), ("colour", "blue"), ("shape", "round")]
-    assert sent == [both, both, [("colour", "red")]]
+    # The page size is the largest the synthetic contract permits.
+    both = [("colour", "red"), ("colour", "blue"), ("shape", "round"), ("limit", "50")]
+    assert sent == [both, both, [("colour", "red"), ("limit", "50")]]
     with pytest.raises(SystemExit):
         parser.parse_args(["widgets", "list", "--shape", "round", "--shape", "oval"])
 
@@ -434,6 +435,114 @@ def test_a_route_or_filter_not_yet_available_to_every_tenant_is_left_out(
     for argv in (["widgets", "--colour", "red"], ["gadgets"]):
         with pytest.raises(SystemExit):
             parser.parse_args(argv)
+
+
+MARKED = {
+    "/v1/widgets": {"get": operation(limited(repeated("colour")), query("size"))},
+    "/v1/gadgets": {"get": limited(operation(repeated("colour")))},
+}
+
+
+@pytest.mark.parametrize(
+    ("unlocked", "commands", "widget_filters"),
+    [
+        pytest.param(None, [("widgets",)], ("size",), id="nothing listed"),
+        pytest.param(
+            {"/v1/widgets": frozenset()},
+            [("widgets",)],
+            ("size",),
+            id="route listed without its marked filter",
+        ),
+        pytest.param(
+            {"/v1/widgets": frozenset({"colour", "size"})},
+            [("widgets",)],
+            ("colour", "size"),
+            id="marked filter listed",
+        ),
+        pytest.param(
+            {"/v1/widgets": frozenset({"size"}), "/v1/gadgets": frozenset()},
+            [("widgets",), ("gadgets",)],
+            ("size",),
+            id="marked route listed",
+        ),
+        pytest.param(
+            {"/v1/gadgets": frozenset({"colour"})},
+            [("widgets",), ("gadgets",)],
+            ("size",),
+            id="a filter listed on another path unlocks nothing here",
+        ),
+    ],
+)
+def test_a_marked_route_or_filter_binds_once_discovery_lists_it(
+    unlocked: dict[str, frozenset[str]] | None,
+    commands: list[tuple[str, ...]],
+    widget_filters: tuple[str, ...],
+) -> None:
+    bound = contract.Contract.from_document(document(MARKED), unlocked=unlocked)
+
+    widgets = bound.route_for_path("/v1/widgets")
+
+    assert [route.command for route in bound.routes] == commands
+    assert widgets is not None and widgets.filters == widget_filters
+
+
+def test_a_collision_with_a_locked_marked_route_is_still_refused() -> None:
+    # A clash is refused whatever discovery lists, so a marked route that
+    # would collide fails the load before any tenant is given it.
+    paths = {
+        "/v1/widgets": {"get": limited(operation(paged=True))},
+        "/v1/widgets/list": {"get": operation()},
+        "/v1/gadgets": {"get": operation()},
+    }
+
+    with pytest.raises(UnsupportedOperation, match="both answer to `widgets list`"):
+        interpret(document(paths), unlocked={"/v1/gadgets": frozenset()})
+
+
+def test_a_route_carries_what_its_own_document_says_about_its_answer() -> None:
+    # A route bound from the live definition must be executed by that
+    # definition, so the facts the executor reads travel on the route.
+    paths = {
+        "/v1/widgets": {
+            "get": {
+                **operation(paged=True),
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "allOf": [
+                                        {"$ref": "#/components/schemas/Page"},
+                                        {
+                                            "type": "object",
+                                            "required": ["unresolvedTmIds"],
+                                            "properties": {
+                                                "unresolvedTmIds": {"type": "array"}
+                                            },
+                                        },
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        },
+        "/v1/widgets/{widgetId}/archive": {
+            "get": operation(path_parameter("widgetId"), content_type="application/zip")
+        },
+    }
+
+    bound = contract.Contract.from_document(document(paths), source="live")
+    widgets = bound.route_for(("widgets", "list"))
+    archive = bound.route_for(("widgets", "archive"))
+
+    assert widgets is not None and archive is not None
+    assert widgets.page_maximum == 50
+    assert dict(widgets.page_fields) == {"unresolvedTmIds": (list,)}
+    assert operations.incompleteness_fields(widgets) == ("unresolvedTmIds",)
+    assert archive.binary is True and archive.media_type == "application/zip"
+    assert contract.route_for_path("/v1/widgets") is None
 
 
 def test_a_paged_operation_walks_every_page(use_contract: UseContract) -> None:
@@ -561,7 +670,10 @@ def test_an_unusable_positional_exits_with_its_message_not_a_trace(
     assert message in str(caught.value.code)
 
 
-@pytest.mark.parametrize("name", ["operation", "output", "apiRoute", "api_level_1"])
+@pytest.mark.parametrize(
+    "name",
+    ["operation", "output", "apiRoute", "api_level_1", "contract", "live", "page"],
+)
 def test_an_option_that_would_overwrite_a_cli_argument_is_refused(
     use_contract: UseContract, name: str
 ) -> None:
@@ -607,7 +719,7 @@ def test_the_contract_describes_an_option_and_percent_is_safe(
     route = contract.route_for(("widgets", "list"))
     assert route is not None
     leaf = ArgumentParser()
-    remote_cli._leaf(leaf, route)
+    remote_cli._leaf(leaf, route, contract.vendored())
     rendered = " ".join(leaf.format_help().split())
 
     assert "Matches 100% of the name." in rendered

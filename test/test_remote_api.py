@@ -18,6 +18,7 @@ from tmxcaliber.lib.remote.api import Client, Group, Operation
 from tmxcaliber.lib.remote.config import DEFAULT_BASE_URL
 from tmxcaliber.lib.remote.contract import (
     REFERENCE_PARAMETERS,
+    Contract,
     Route,
     python_name,
     required_page_fields,
@@ -221,6 +222,10 @@ def test_every_route_calls_its_own_path_with_its_filters(route: Route) -> None:
     args, kwargs = call_arguments(route)
     wire = {name: kwargs[python_name(name)] for name in route.filters}
     expected_path, expected_query = request_for(route, args[0] if args else "", wire)
+    if route.paged:
+        # Every collection is read at the largest page its contract permits.
+        assert route.page_maximum is not None
+        expected_query["limit"] = str(route.page_maximum)
 
     # Act
     operation_for(client, route)(*args, **kwargs)
@@ -457,7 +462,7 @@ def test_a_command_word_that_would_hide_a_client_attribute_is_refused(
         positional=None,
         summary="A route whose command would hide Client.get.",
     )
-    monkeypatch.setattr(api_module, "routes", lambda: (*routes(), clash))
+    monkeypatch.setattr(api_module, "vendored", lambda: Contract((*routes(), clash)))
 
     with pytest.raises(ValueError, match="'get' is already taken"):
         Client()
