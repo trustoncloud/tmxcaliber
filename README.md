@@ -61,6 +61,21 @@ Every merge to `main` publishes a new version to PyPI automatically, so the
 latest released code is always there. The Git tags remain the release history
 and carry the same sdist and wheel as attachments.
 
+### Update notice
+
+When a newer release is on PyPI, the CLI says so after a command succeeds, on
+stderr, as pip does:
+
+```text
+A new release of tmxcaliber is available: 0.14.0 -> 0.14.1. To update, run: pip install --upgrade tmxcaliber
+```
+
+It asks PyPI at most once a day, in the background, and keeps the answer in
+the cache directory (`~/.tmxcaliber/cache`, or `TMXCALIBER_CACHE_DIR`). Without
+a network it says nothing and does not try again until the next day. It stays
+silent when stderr is not a terminal and under CI, and
+`TMXCALIBER_NO_UPDATE_CHECK=1` turns it off. The Python library never checks.
+
 ### Install from source
 
 For contributors, or to work against unreleased changes. This uses

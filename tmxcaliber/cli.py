@@ -12,7 +12,7 @@ from itertools import product
 from shutil import rmtree
 from typing import Any
 
-from . import console, parsers
+from . import console, parsers, update_notice
 from .lib.change_log import generate_change_log
 from .lib.control_selector import resolve_control_ids
 from .lib.errors import BinaryNotFound, FeatureClassCycleError
@@ -633,12 +633,22 @@ def main() -> None:
     to stderr, so a command whose output is redirected keeps only results in
     the redirect and still shows the reader what went wrong, with any ``Did
     you mean ...?`` on a line of its own.
+
+    A newer release is mentioned after a command that succeeded, never after one
+    that failed, where it would bury the error; see `update_notice`.
     """
+    check = update_notice.UpdateCheck()
+    check.start()
     try:
         _run()
     except RemoteError as exc:
         console.stderr().error(exc)
         sys.exit(1)
+    except SystemExit as exc:
+        if exc.code in (None, 0):
+            check.finish()
+        raise
+    check.finish()
 
 
 def _run() -> None:
