@@ -835,6 +835,7 @@ dependencies = [
     { name = "lxml" },
     { name = "networkx" },
     { name = "openpyxl" },
+    { name = "soupsieve" },
     { name = "tqdm" },
 ]
 
@@ -870,6 +871,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9,<10" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.14,<4" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6,<1" },
+    { name = "soupsieve", specifier = ">=4,<5" },
     { name = "tqdm", specifier = ">=4,<5" },
     { name = "types-beautifulsoup4", marker = "extra == 'dev'" },
     { name = "types-colorama", marker = "extra == 'dev'" },

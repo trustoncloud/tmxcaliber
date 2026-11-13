@@ -26,6 +26,10 @@ classifiers = [
 ]
 dependencies = [
     "beautifulsoup4>=4,<5",
+    # Never imported: it is what beautifulsoup4's select() runs on. Direct only to hold
+    # installs to the first release fixing GHSA-mmhr-3c5m-f64f, which beautifulsoup4's
+    # own soupsieve>1.2 does not.
+    "soupsieve>=4,<5",
     "lxml>=5,<7",
     "colorama>=0.4.6,<1",
     "openpyxl>=3,<4",
