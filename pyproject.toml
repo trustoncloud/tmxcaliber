@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tmxcaliber"
-version = "0.14.0"
+version = "0.15.0"
 description = "CLI utility to filter down one or more TrustOnCloud ThreatModels and get more refined information."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11.5"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "TrustOnCloud", email = "dev@trustoncloud.com" }]
@@ -26,6 +26,10 @@ classifiers = [
 ]
 dependencies = [
     "beautifulsoup4>=4,<5",
+    # Never imported: it is what beautifulsoup4's select() runs on. Direct only to hold
+    # installs to the first release fixing GHSA-mmhr-3c5m-f64f, which beautifulsoup4's
+    # own soupsieve>1.2 does not.
+    "soupsieve>=4,<5",
     "lxml>=5,<7",
     "colorama>=0.4.6,<1",
     "openpyxl>=3,<4",
