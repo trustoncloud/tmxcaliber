@@ -61,7 +61,7 @@ PERMISSION_REGEX = {
         rf"Role\:[a-zA-Z0-9 ]+$|"
         rf"VaultAccessPolicy\:[a-zA-Z0-9.]+$|"
         rf"API\:[a-zA-Z0-9_-]+\.?[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]+|"
-        rf"ApiKey/(?:{_AZURE_API_KEYS})|BasicAuth|"
+        rf"ApiKey/(?:{_AZURE_API_KEYS})|AccessToken/[A-Za-z0-9.]+|BasicAuth|"
         rf"directory:[RWX]{{1,3}};file:[RWX]{{1,3}})$"
     ),
 }
