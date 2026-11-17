@@ -1,7 +1,7 @@
-"""Tests for the Azure ``ApiKey/...`` tokens in the permission regex.
+"""Tests for Azure credential tokens in the permission regex.
 
 TM QA rule E93 flags every threat ``access`` leaf that fails
-``PERMISSION_REGEX[provider]``, so a key name missing from the alternation
+``PERMISSION_REGEX[provider]``, so a credential form missing from the alternation
 raises a false finding on every Azure ThreatModel that uses it.
 """
 
@@ -50,3 +50,31 @@ def test_an_unknown_azure_api_key_is_rejected(perm: str) -> None:
 
     # Assert
     assert match is None
+
+
+@pytest.mark.parametrize(
+    "perm",
+    [
+        "AccessToken/token",
+        "AccessToken/Token123",
+        "AccessToken/eyJhbGci.eyJzdWI.signature",
+        "AccessToken/.",
+    ],
+)
+def test_azure_access_token_is_accepted(perm: str) -> None:
+    assert PERMISSION_REGEX["azure"].fullmatch(perm) is not None
+
+
+@pytest.mark.parametrize(
+    "perm",
+    [
+        "AccessToken/",
+        "AccessToken/token_value",
+        "AccessToken/token-value",
+        "AccessToken/token/value",
+        "AccessToken:token",
+        "AccessToken/token!",
+    ],
+)
+def test_invalid_azure_access_token_is_rejected(perm: str) -> None:
+    assert PERMISSION_REGEX["azure"].search(perm) is None
