@@ -1798,8 +1798,7 @@
               },
               "type": "array"
             },
-            "style": "form",
-            "x-limited-availability": true
+            "style": "form"
           },
           {
             "description": "Only rules that ship this mode, ignoring case. The modes are the pack format's, such as `allowlist` and `universal` today. A file under another mode's folder is left out of the zip. Repeat it to match any of several values, up to 20, each at most 200 characters. Absent or empty applies no filter.",
@@ -1813,8 +1812,7 @@
               },
               "type": "array"
             },
-            "style": "form",
-            "x-limited-availability": true
+            "style": "form"
           },
           {
             "description": "Only rules that implement this matcher, ignoring case. The matchers are the pack format's, such as `cloud` and `terraform` today. A file under another matcher's folder, `<mode>/<matcher>/`, is left out of the zip, while the rest of a mode's files and the rule's root files are kept. Repeat it to match any of several values, up to 20, each at most 200 characters. Absent or empty applies no filter.",
@@ -1828,8 +1826,7 @@
               },
               "type": "array"
             },
-            "style": "form",
-            "x-limited-availability": true
+            "style": "form"
           },
           {
             "description": "Only files whose path in the zip, `<controlId>/<path>`, matches this pattern, case-sensitively, such as `*/terraform/*.rego`. `*` matches any run of characters, `/` included, and `?` exactly one. Repeat it to match any of several values, up to 20, each at most 200 characters. Absent or empty applies no filter.",
@@ -1843,8 +1840,7 @@
               },
               "type": "array"
             },
-            "style": "form",
-            "x-limited-availability": true
+            "style": "form"
           }
         ],
         "responses": {
@@ -1881,7 +1877,7 @@
                 }
               }
             },
-            "description": "A filter value outside its allowed set, a filter given more values, or a longer value, than it accepts, or a parameter this operation does not accept. `control`, `mode`, `matcher`, and `file` are refused the same way until your tenant has them. A rule filter given with `kind=deploy` is refused, since the deploy package's folders are not mapped to rules."
+            "description": "A filter value outside its allowed set, a filter given more values, or a longer value, than it accepts, or a parameter this operation does not accept. A rule filter given with `kind=deploy` is refused, since the deploy package's folders are not mapped to rules."
           },
           "401": {
             "content": {
@@ -2165,7 +2161,6 @@
           }
         },
         "summary": "One CCR pack's rules, each listing the files the filters keep.",
-        "x-limited-availability": true,
         "x-required-permission": "api.ccr.read"
       }
     },
@@ -2721,7 +2716,6 @@
           }
         },
         "summary": "Every published OverWatch update.",
-        "x-limited-availability": true,
         "x-required-permission": "api.overwatch.read"
       }
     },
@@ -2821,7 +2815,6 @@
           }
         },
         "summary": "One published OverWatch update.",
-        "x-limited-availability": true,
         "x-required-permission": "api.overwatch.read"
       }
     },

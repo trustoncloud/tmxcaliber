@@ -201,7 +201,7 @@ def test_the_pack_archive_is_a_binary_command() -> None:
     assert route is not None
     assert route.binary is True
     assert route.path == "/v1/ccr/packs/{tmId}/archive"
-    assert route.filters == ("kind", "release")
+    assert route.filters == ("kind", "release", "control", "mode", "matcher", "file")
     assert route.positional == "tm_id"
 
 

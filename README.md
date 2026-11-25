@@ -211,6 +211,10 @@ tmxcaliber ccr packs list --provider aws --service s3
 tmxcaliber ccr packs get aws-s3
 tmxcaliber ccr packs archive aws-s3 --output aws-s3-source.zip
 tmxcaliber ccr packs archive aws-s3 --kind deploy --output aws-s3.zip
+tmxcaliber ccr packs rules aws-s3 --control "S3.C1*"
+tmxcaliber ccr packs archive aws-s3 --control "S3.C1*" --matcher terraform --output s3-c1.zip
+tmxcaliber overwatch updates list --provider aws --since 2026-11-01
+tmxcaliber overwatch updates get Overwatch.Aws.U14500
 ```
 
 `ccr packs list` shows the Wiz Cloud Configuration Rule packs your key can
@@ -223,15 +227,25 @@ Terraform package. `--release` pins the download to the release that
 publishes, so the archive matches the manifest you read. `--output` names the
 file and is required; the command says on stderr how many bytes it wrote and
 where. Each option's help, and the values it accepts, come from the API's
-contract. Selecting individual rules from a pack is planned through the API,
-and these commands will gain it from the API's contract.
+contract.
+
+`ccr packs rules` lists a pack's rules, each with the files it ships.
+`--control`, `--mode`, `--matcher` and `--file` narrow both it and
+`ccr packs archive` to the rules and files you need; repeat one to match any
+of several values. The API refuses them with `--kind deploy`, since the
+Terraform package's folders are not mapped to rules.
+
+`overwatch updates list` lists the published OverWatch updates, narrowed by
+`--provider`, `--service`, `--security-level` and `--since`, and
+`overwatch updates get` prints one by the id the OverWatch email carries.
 
 A mistyped or renamed name gets a "Did you mean ...?" suggestion, drawn only
 from what your key can list: `ccr packs get aws-ec3` ends with
 `Did you mean aws-ec2?`, and `ccr packs get "Gemini Agent Platform"` suggests
 `gcp-vertex`. The `threatmodels` commands do the same, and also match a
-ThreatModel's title. Errors and suggestions go to stderr, in color only on a
-terminal; set `NO_COLOR` to turn the color off there too.
+ThreatModel's title. An OverWatch id gets no suggestion, since finding one
+would read every update ever published. Errors and suggestions go to stderr,
+in color only on a terminal; set `NO_COLOR` to turn the color off there too.
 
 A list command reads one page, in one call, and writes
 `{"items": [...], "nextCursor": ...}`. `--limit` is the most rows to return,
@@ -243,9 +257,9 @@ exactly after the last row; it is null once there are no more. Each request
 draws on your key's hourly budget.
 
 ```sh
-tmxcaliber overwatch updates list --provider aws --limit 3 --live
-tmxcaliber overwatch updates list --provider aws --limit 3 --cursor "$NEXT" --live
-tmxcaliber overwatch updates list --provider aws --limit 2000 --page-size 500 --live
+tmxcaliber overwatch updates list --provider aws --limit 3
+tmxcaliber overwatch updates list --provider aws --limit 3 --cursor "$NEXT"
+tmxcaliber overwatch updates list --provider aws --limit 2000 --page-size 500
 ```
 
 When the API reports
@@ -259,18 +273,14 @@ commands do not cover, the API takes the same key directly:
 curl -H "Authorization: Bearer $TOC_API_KEY" https://api.trustoncloud.com/v1/apis
 ```
 
-Some routes reach organizations in turn before every organization has them,
-OverWatch updates among them. The commands are built from the API contract
-this release ships with, which leaves those routes out. `--live`, short for
-`--contract live`, builds the commands from the definition the API serves
-your key instead, so whatever your organization already has becomes a
-command:
+Some routes reach organizations in turn before every organization has them.
+The commands are built from the API contract this release ships with, which
+leaves those routes out. `--live`, short for `--contract live`, builds the
+commands from the definition the API serves your key instead, so whatever
+your organization already has becomes a command, and its help lists them:
 
 ```sh
-tmxcaliber overwatch updates list --live
-tmxcaliber overwatch updates list --provider aws --since 2026-11-01 --live
-tmxcaliber overwatch updates get Overwatch.Aws.U14500 --live
-tmxcaliber --live overwatch --help
+tmxcaliber --live --help
 ```
 
 The flag goes anywhere on an API command line. It costs two extra calls per
@@ -299,7 +309,9 @@ api.threatmodels.list(provider="aws", cursor=page["nextCursor"])
 api.threatmodels.list(provider="aws", limit=300)  # up to 300 rows
 api.threatmodels.threats("aws-s3", feature_class_id="S3.FC1", limit=5)
 api.ccr.packs.archive("aws-s3", kind="deploy")  # the zip, as bytes
+api.ccr.packs.archive("aws-s3", control=["S3.C1*"], matcher=["terraform"])
 api.compliance.mappings.list(framework_id="nist-800-53-r5")
+api.overwatch.updates.list(provider="aws", since="2026-11-01")
 ```
 
 `Client()` finds the key and endpoint exactly as the CLI does. To use a key

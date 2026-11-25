@@ -43,7 +43,7 @@ from .test_remote_client import (
 from .test_remote_config import HAZARD, KEY, OTHER, STORED_URL, write_config
 
 #: A value for each kind of positional the contract's routes use.
-POSITIONAL_VALUES = {"tm_id": "aws-s3"}
+POSITIONAL_VALUES = {"tm_id": "aws-s3", "overwatch_id": "Overwatch.Aws.U14500"}
 
 
 @pytest.fixture(autouse=True)

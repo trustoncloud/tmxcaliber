@@ -632,8 +632,14 @@ def resolve_command_source(source: str) -> str:
 #: `threatmodels list`. Both lists name their rows by `tmId`, and both kinds of
 #: route call their positional `tm_id`, so the positional alone cannot say
 #: which list to read.
-NAME_LISTS: Mapping[str, tuple[str, str | None]] = {
+#:
+#: None means no suggestion, by decision rather than by omission. A suggestion
+#: walks the whole list, and `overwatch updates list` holds every update ever
+#: published, so one mistyped id would spend tens of requests of the key's
+#: hourly budget.
+NAME_LISTS: Mapping[str, tuple[str, str | None] | None] = {
     "/v1/ccr/packs": ("tmId", None),
+    "/v1/overwatch/updates": None,
     "/v1/threatmodels": ("tmId", "title"),
 }
 
@@ -661,7 +667,8 @@ def _did_you_mean(
         after its id. A ThreatModel's own title and the short form in its
         brackets both lead to it, as the list publishes them, so its official
         name typed back is never a stranger to the suggestion. Empty when the
-        route names nothing the API lists, when no name was typed, when
+        route names nothing the API lists, when `NAME_LISTS` suggests from
+        no list for it, when no name was typed, when
         nothing listed is close, when the name is itself listed (as when only
         its release is unknown), or when the list cannot be read, in which
         case the API's own error is the one worth reporting.
