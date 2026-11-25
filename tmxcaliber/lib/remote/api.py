@@ -14,9 +14,10 @@ is a method here and a command there, with no naming decision in between:
     api.threatmodels.list(provider="aws", cursor=page["nextCursor"])
     api.threatmodels.list(provider="aws", limit=300)  # up to 300 rows
     api.threatmodels.threats("aws-s3", feature_class_id="S3.FC1")
+    api.overwatch.updates.list(provider="aws")
 
-    live = Client(contract="live")         # tmxcaliber overwatch updates list --live
-    live.overwatch.updates.list()
+    live = Client(contract="live")         # tmxcaliber threatmodels list --live
+    live.threatmodels.list()
 
 A route's positional is the method's one positional argument, its filters are
 keyword arguments, and a paged route returns one page, as the CLI does, or up

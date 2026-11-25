@@ -332,7 +332,6 @@ are methods too.
 
 ```python
 live = Client(contract="live")
-live.overwatch.updates.list(provider="aws", since="2026-11-01")
 ```
 
 Building one costs two calls, so build it once and reuse it. Each client keeps

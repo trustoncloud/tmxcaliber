@@ -15,7 +15,7 @@ The shape mirrors the API:
     tmxcaliber threatmodels threats aws-s3 --feature-class-id S3.FC1
     tmxcaliber threatmodels dfd aws-s3@1611187200
     tmxcaliber compliance mappings list --framework-id nist-800-53-r5
-    tmxcaliber overwatch updates list --live
+    tmxcaliber overwatch updates list --provider aws
 """
 
 from __future__ import annotations
