@@ -1,9 +1,10 @@
 """The live contract: the API's own definition, read for one credential.
 
-The served definition is the vendored document with its marks, which is what
-the API serves today, so these tests read the real OverWatch routes rather
-than synthetic ones. Every transport is a fake: discovery first, then the
-definition it points at.
+The served definition is the vendored document with marks these tests put on
+it, on the OverWatch routes and some of the archive's filters. The marks are
+the tests' own because the API drops a mark once a route reaches every
+tenant, and a test that borrowed today's would break with each such release.
+Every transport is a fake: discovery first, then the definition it points at.
 """
 
 from __future__ import annotations
@@ -41,6 +42,9 @@ DEFINITION_URL = f"{BASE}/v1/apis/openapi.json"
 UPDATES = "/v1/overwatch/updates"
 UPDATE = "/v1/overwatch/updates/{overwatchId}"
 ARCHIVE = "/v1/ccr/packs/{tmId}/archive"
+#: The routes and the archive filters `marked_document` marks.
+MARKED_ROUTES = (UPDATES, UPDATE)
+MARKED_FILTERS = ("control", "mode", "matcher", "file")
 
 
 @pytest.fixture(autouse=True)
@@ -135,13 +139,46 @@ def page(*rows: dict[str, Any], cursor: str | None = None) -> FakeResponse:
     return FakeResponse({"items": list(rows), "nextCursor": cursor, "pageSize": 50})
 
 
-def served() -> dict[str, Any]:
-    """Build the definition the API serves: the vendored one, marks included.
+def marked_document() -> dict[str, Any]:
+    """Copy the vendored document with `MARKED_ROUTES` and `MARKED_FILTERS` marked.
 
     Returns:
         A copy safe to change.
     """
-    return copy.deepcopy(contract.contract())
+    document = copy.deepcopy(contract.contract())
+    paths = document["paths"]
+    for path in MARKED_ROUTES:
+        paths[path]["get"][contract.LIMITED_AVAILABILITY] = True
+    for parameter in paths[ARCHIVE]["get"]["parameters"]:
+        if parameter["name"] in MARKED_FILTERS:
+            parameter[contract.LIMITED_AVAILABILITY] = True
+    return document
+
+
+def served() -> dict[str, Any]:
+    """Build the definition the API serves: the vendored one, with the marks.
+
+    Returns:
+        A copy safe to change.
+    """
+    return marked_document()
+
+
+@pytest.fixture
+def marked_vendored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ship the marked document as the vendored contract, as a release does.
+
+    Patched wherever the vendored contract is looked up by name, since the
+    real one is cached for the process.
+
+    Args:
+        monkeypatch: Used to replace the lookups.
+    """
+    document = marked_document()
+    shipped = contract.Contract.from_document(document)
+    monkeypatch.setattr(contract, "contract", lambda: document)
+    for module in (contract, api_module, remote_cli):
+        monkeypatch.setattr(module, "vendored", lambda: shipped)
 
 
 def every_operation() -> list[dict[str, Any]]:
@@ -219,7 +256,7 @@ def test_a_parameterized_route_binds_although_discovery_spells_its_path_apart() 
     assert listed["path"] == "/v1/overwatch/updates/:overwatchId"
     assert live.route_for(("overwatch", "updates", "get")) is not None
     assert route is not None and "matcher" in route.filters
-    assert contract.route_for(("overwatch", "updates", "list")) is None
+    assert live.route_for(("overwatch", "updates", "list")) is None
 
 
 def test_a_marked_route_discovery_does_not_list_stays_out() -> None:
@@ -417,6 +454,7 @@ def test_a_discovery_failure_is_the_apis_own(
         load_live_contract(client)
 
 
+@pytest.mark.usefixtures("marked_vendored")
 def test_a_live_client_has_the_overwatch_methods_and_others_do_not() -> None:
     # Arrange
     before = Client(opener=FakeOpener([]))

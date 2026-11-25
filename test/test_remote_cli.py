@@ -525,9 +525,12 @@ def test_every_positional_route_suggests_from_a_list_that_carries_its_name() -> 
         if route.positional:
             collection = route.path.partition("{")[0].rstrip("/")
             assert collection in remote_cli.NAME_LISTS, route.path
-    for collection, (name, title) in remote_cli.NAME_LISTS.items():
+    for collection, lookup in remote_cli.NAME_LISTS.items():
         listing = route_for_path(collection)
         assert listing is not None and listing.paged, collection
+        if lookup is None:
+            continue
+        name, title = lookup
         fields = row_properties(collection)
         assert name in fields, collection
         assert title is None or title in fields, collection
@@ -905,9 +908,10 @@ def test_the_archive_command_writes_the_bytes(tmp_path: pathlib.Path) -> None:
 
     assert kind == "bytes"
     assert (tmp_path / "pack.zip").read_bytes() == BytesStubClient.archive
-    assert client.calls == [
-        ("/v1/ccr/packs/aws-s3/archive", {"kind": "deploy", "release": ""})
-    ]
+    # Every filter not given goes out empty, so the API applies none of them.
+    given = {"kind": "deploy", "release": ""}
+    unset = {name: () for name in route.filters if name not in given}
+    assert client.calls == [("/v1/ccr/packs/aws-s3/archive", {**given, **unset})]
     # The answer is held to the type the contract publishes for the route.
     assert (
         client.media_types == [response_media_type(route.path)] == ["application/zip"]
@@ -1139,6 +1143,11 @@ def test_the_list_a_suggestion_reads_is_walked_at_its_largest_page(
             id="no pack is readable",
         ),
         pytest.param(["me"], [http_error(404, MISSING)], id="no name was typed"),
+        pytest.param(
+            ["overwatch", "updates", "get", "Overwatch.Aws.U1450"],
+            [http_error(404, MISSING)],
+            id="a list too long to walk",
+        ),
     ],
 )
 def test_a_not_found_with_nothing_to_suggest_is_reported_as_it_was(
